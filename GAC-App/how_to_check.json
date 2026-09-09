@@ -1,0 +1,722 @@
+﻿[
+    {
+        "No":  "1",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Facade",
+        "CheckItem":  "Fascia or badge sign and letterings are complete, undamaged, clean, no watermarks, no obstructions, no discoloration and stains",
+        "HowToCheck":  "1. Check through observation if it meets the MMPC VI Standard Requirements"
+    },
+    {
+        "No":  "2",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Facade",
+        "CheckItem":  "Pylon (Single/Two-Post / Tower / Wall Projecting) sign/s and letterings are complete, undamaged, clean, no watermarks, no obstructions, no discoloration and stains",
+        "HowToCheck":  "1. Check through observation if it meets the MMPC VI Standard Requirements"
+    },
+    {
+        "No":  "3",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Facade",
+        "CheckItem":  "All exterior Visual Identity including building walls, exterior paint and finishes, are clean and free from damage.",
+        "HowToCheck":  "1. Check through observation if it meets the MMPC VI Standard Requirements"
+    },
+    {
+        "No":  "4",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Facade",
+        "CheckItem":  "Showroom glass is clean, free from cracks, scratches, damage, dust, stains and water marks",
+        "HowToCheck":  "1. Check through observation if compliant"
+    },
+    {
+        "No":  "5",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Facade",
+        "CheckItem":  "\"Customer Parking\" signs are available, undamaged and well maintained",
+        "HowToCheck":  "1. Check through observation if it meets the MMPC VI Standard Requirements"
+    },
+    {
+        "No":  "6",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Facade",
+        "CheckItem":  "No new units \"stock\" parked in customer parking area.",
+        "HowToCheck":  "1. Check through observation if compliant"
+    },
+    {
+        "No":  "7",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Facade",
+        "CheckItem":  "PWD parking slot and ramp with railings should be unobstructed and painted with standard PWD Logo.",
+        "HowToCheck":  "1. Check through observation if compliant"
+    },
+    {
+        "No":  "8",
+        "Category":  "Basic",
+        "Coverage":  "Product Presentation and Test Drive",
+        "Subject":  "Test Drive",
+        "CheckItem":  "Test drive vehicle are maintained clean, fully functional and is readily available for use.",
+        "HowToCheck":  "1. Check if the designated test drive units is compliant"
+    },
+    {
+        "No":  "9",
+        "Category":  "Beyond",
+        "Coverage":  "Product Presentation and Test Drive",
+        "Subject":  "Test Drive",
+        "CheckItem":  "\u003e Test drive parking area with a roof (tent) should be installed in front of the showroom\n\u003e Test drive advertisement with Dealer\u0027s contact number visibly displayed at the dealership",
+        "HowToCheck":  "1. Check through observation if the testdrive advertisement and dealership contact details are updated"
+    },
+    {
+        "No":  "10",
+        "Category":  "Standard",
+        "Coverage":  "Product Presentation and Test Drive",
+        "Subject":  "Test Drive",
+        "CheckItem":  "Test drive route map is available",
+        "HowToCheck":  "1. Check if the testdrive route map is available at the showroom area\n2. Check if there are 2 - 3 test drive route map available"
+    },
+    {
+        "No":  "11",
+        "Category":  "Standard",
+        "Coverage":  "Customer Engagement and Showroom Operations",
+        "Subject":  "Greetings",
+        "CheckItem":  "MMPC greeting standard is done by all dealer staff.",
+        "HowToCheck":  "1. Check if all dealer staff follow the standard greeting (Smile, Greet \u0026 Bow) and are consistently done."
+    },
+    {
+        "No":  "12",
+        "Category":  "Standard",
+        "Coverage":  "Customer Engagement and Showroom Operations",
+        "Subject":  "Greetings",
+        "CheckItem":  "Customers were escorted during the entrance and sent off with an umbrella service (if necessary).",
+        "HowToCheck":  "1. Check through observation if the available umbrella at the dealership is either within MMPC branding or has no branding/logos."
+    },
+    {
+        "No":  "13",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Reception Desk is installed in the entrance following the VI Standards; desk is clean, organized, and free of unecessary items; accent wall remains free of any designs",
+        "HowToCheck":  "1. Check if it meets the MMPC VI Standard Requirements\n2. Check if there are no designs on the accent wall\n3. Check if the reception desk is clean, organized, and free of unnecessary items (5S)"
+    },
+    {
+        "No":  "14",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "No duplicate vehicle model variants were displayed",
+        "HowToCheck":  "1. Check if all displayed units have no duplicate vehicle model variants\n\nNote: Check the unit inventory (if necessary)"
+    },
+    {
+        "No":  "15",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Display units are clean and in good condition (no dents, scratches, fingerprints, etc.)",
+        "HowToCheck":  "1. Check if the display units are compliant"
+    },
+    {
+        "No":  "16",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "All displayed cars have their corresponding and updated specs stands.",
+        "HowToCheck":  "1. Check if all displayed units have corresponding specs stands\n2. Check if the specs sheet is updated and matches the displayed unit"
+    },
+    {
+        "No":  "17",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Dealer Training Facilities and Equipment Standards",
+        "CheckItem":  "Training facility/room shall be within standard room size based on Circular NTD-STS-2024-010",
+        "HowToCheck":  "1. Standard training room \nRoom size must be sufficient based on dealer category:\nA – 37 \u0026 above m²\nB - 30 to 36 m²\nC – 25 to 29 m²\nD – 18 to 24 m²\nE – 16 to 18 m²\nF – 15 to 16 m²"
+    },
+    {
+        "No":  "18",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Dealer Training Facilities and Equipment Standards",
+        "CheckItem":  "Training facility/room shall have complete tools and equipment for training based on Circular NTD-STS-2024-010",
+        "HowToCheck":  "1. Check tools and equipment:\n• Table and chairs\n• Projector/TV\n• External speaker with 3.5mm jack \n• HDMI and/or VGA cable \n• Presentation clicker\n• Office Supplies\n• Whiteboard"
+    },
+    {
+        "No":  "19",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Dealer Training Facilities and Equipment Standards",
+        "CheckItem":  "Sales Executives/Sales CROs must have a secured and stable internet connection during training",
+        "HowToCheck":  "1. Check connection being used by SE."
+    },
+    {
+        "No":  "20",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Dealer Training Facilities and Equipment Standards",
+        "CheckItem":  "Dealers must have a dedicated computer/laptop within the required specification for training and other tools/software.",
+        "HowToCheck":  "1. Check if the dealer follows the minimum requirement for desktop/laptop\n\n• CPU: At least Ryzen 5/Intel Core i5 or \nhigher \n• RAM: At least 8GB DDR4 or higher \n• Web camera: At least 720p or higher \n• Microphone: Internal microphone \n• SSD/HDD: At least 512GB internal \nstorage or higher \n• OS: Licensed Windows 10 or higher \n• Productivity: Licensed Microsoft Office \n(Excel, PowerPoint \u0026 Word)"
+    },
+    {
+        "No":  "21",
+        "Category":  "Standard",
+        "Coverage":  "Customer Engagement and Showroom Operations",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Hero Car Display (new model) is displayed on a standard black platform.",
+        "HowToCheck":  "1. Check if the Hero Car is compliant"
+    },
+    {
+        "No":  "22",
+        "Category":  "Beyond",
+        "Coverage":  "Customer Engagement and Showroom Operations",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Has a display car with recommended MMPC accessories",
+        "HowToCheck":  "1. Check if there is a display car is equipped with accessories\n2. Check if the display accessories are MMPC merchandise"
+    },
+    {
+        "No":  "23",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Showroom Tiles or tiles has no damages",
+        "HowToCheck":  "1. Check if there are no broken or damaged tiles on the showroom floor"
+    },
+    {
+        "No":  "24",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Ceiling of showroom should be cob web free; no discoloration and stains",
+        "HowToCheck":  "1. Check if the showroom ceiling is clean and free from cob web, no discolorations and stains"
+    },
+    {
+        "No":  "25",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "No busted lights in the Showroom Area and Customer Lounge",
+        "HowToCheck":  "1. Check if there are no busted lights in the showroom"
+    },
+    {
+        "No":  "26",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Directional signs to Sales, Service, and Parts follow MMPC VI standards, undamaged and visible.",
+        "HowToCheck":  "1. Check if the directional signages are compliant"
+    },
+    {
+        "No":  "27",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "All showroom lighted signages, banners and tarpaulins are up to date and in good condition and no damages",
+        "HowToCheck":  "1. Check if the displays are within the current lineup only, no FUSO, Adventure, or any old model and no damages"
+    },
+    {
+        "No":  "28",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "All installed A/C systems in the showroom and sales lounge are functioning properly",
+        "HowToCheck":  "1. Check all A/C systems if they are properly functioning\n2. Check the thermometer in the following areas and ensure the thermostat does not exceed 27°C:\n-Showroom/Negotiation Area\n-Showroom lounge"
+    },
+    {
+        "No":  "29",
+        "Category":  "Basic",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "The sofas/chairs in the customer lounge and the negotiation area are in good condition, sufficient, organized, clean, and comply with MMPC VI Standard Requirements",
+        "HowToCheck":  "1. Check if the customer lounge and negotiation area have enough sofas/chairs that are comfortable, well-maintained, free from tears, and meet the MMPC VI Standard Requirements\n2. Check if the dealer is not using monobloc chairs in the showroom area"
+    },
+    {
+        "No":  "30",
+        "Category":  "Standard",
+        "Coverage":  "Customer Engagement and Showroom Operations",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Showroom and customer lounge have designated amenity corner with the required signage",
+        "HowToCheck":  "1. Check if the amenity corner signage clearly states that it is intended for customers\n2. Check if the amenity corner signage is clearly visible."
+    },
+    {
+        "No":  "31",
+        "Category":  "Standard",
+        "Coverage":  "Customer Engagement and Showroom Operations",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Amenity corner has minimum of 3 beverage options available (water, juice, coffee, etc.)",
+        "HowToCheck":  "1. Check if the amenity corner is compliant"
+    },
+    {
+        "No":  "32",
+        "Category":  "Standard",
+        "Coverage":  "Customer Engagement and Showroom Operations",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Amenity corner has available snacks (biscuits, cupcakes, candies)",
+        "HowToCheck":  "1. Check if the amenity corner is compliant"
+    },
+    {
+        "No":  "33",
+        "Category":  "Beyond",
+        "Coverage":  "Customer Engagement and Showroom Operations",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Sales Executives proactively offer beverages, snacks, Wi-Fi access, and lounge entertainment (TV)",
+        "HowToCheck":  "1. Check if the TV is working and accessible for viewing\n2. Check if the Wi-Fi is available and  instruction on how to connect  to the Wi-Fi is available\n3. Check if SE is doing proactive offering"
+    },
+    {
+        "No":  "34",
+        "Category":  "Standard",
+        "Coverage":  "Facilities",
+        "Subject":  "Showroom Area",
+        "CheckItem":  "Rest Rooms must have clean water supply, toilet bowl, sink, urinal, bidet, trash cans, tissue, paper towel or hand dryer, and hand wash soap; no foul smell",
+        "HowToCheck":  "1. Check all restrooms designated for customers (Male, Female, PWD)\n2. Check if the restrooms are well-lit"
+    },
+    {
+        "No":  "35",
+        "Category":  "Standard",
+        "Coverage":  "Sales Operation Management",
+        "Subject":  "Sales Operation",
+        "CheckItem":  "Availability of Sales Performance Control Board with correct format /pattern and updated with corresponding progress indicator.",
+        "HowToCheck":  "1. Check the actual SPC board.\n- 1 General SPC Board for Branch Head\n- 1 for each Sales Team\n2. Check the ff:\n- Complete and correct data\n- Correct Pattern\n- With progress indicator"
+    },
+    {
+        "No":  "36",
+        "Category":  "Standard",
+        "Coverage":  "Sales Operation Management",
+        "Subject":  "Sales Operation",
+        "CheckItem":  "Availability of sales activity with 2 months rolling plan, including SE duties.",
+        "HowToCheck":  "1. Check Sales Activity Plan\n2. Check if it follows a two-month rolling format\n3. Check if the plan aligns with the actual activity"
+    },
+    {
+        "No":  "37",
+        "Category":  "Standard",
+        "Coverage":  "Sales Operation Management",
+        "Subject":  "Sales Operation",
+        "CheckItem":  "Conduct Gap analysis",
+        "HowToCheck":  "1. Check the Gap analysis of the previous month\n2. Check the Minutes of the Meeting (MOM) of the latest monthly Team Meeting to confirm if the Gap analysis was discussed"
+    },
+    {
+        "No":  "38",
+        "Category":  "Standard",
+        "Coverage":  "Product Presentation and Test Drive",
+        "Subject":  "Sales Operation",
+        "CheckItem":  "Low-performing SEs based on Sales and SSI Performance are identified and given corrective measures.",
+        "HowToCheck":  "1. Check List of low performing SEs for both Sales and SSI\n2. Check training schedule\n3. Check the coaching forms compiled by the SM/TL or Sales Trainer.\n4. Check the latest role play records"
+    },
+    {
+        "No":  "39",
+        "Category":  "Standard",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "Sales Operation",
+        "CheckItem":  "Check plan including area setting, evaluation of the area and  assigned SE",
+        "HowToCheck":  "1. Check the availability of the area setting\n2. Check market evaluation of the area\n3. Check the assigned team in the area for saturation activity\n\nNote: Check if the activity has been properly executed"
+    },
+    {
+        "No":  "40",
+        "Category":  "Beyond",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "Sales Operation",
+        "CheckItem":  "Conduct Prospect Party atleast once a year",
+        "HowToCheck":  "For 1st half, check if dealer has plan to conduct Prospect Party.\nFor 2nd half, check if dealer conducted Prospect Party. Check proof such as photo and attendance list."
+    },
+    {
+        "No":  "41",
+        "Category":  "Beyond",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "Sales Operation",
+        "CheckItem":  "Conduct Key Opinion Leaders (KOLs) atleast once a year",
+        "HowToCheck":  "For 1st half, check if dealer has plan to have KOL.\nFor 2nd half, check if dealer conducted collaborated with KOL. Check proof such as photo and attendance list."
+    },
+    {
+        "No":  "42",
+        "Category":  "Standard",
+        "Coverage":  "Manpower",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executives wear the proper uniform (showroom duty, vehicle release, or field duty attire)",
+        "HowToCheck":  "Check all SEs are in the prescribed uniform."
+    },
+    {
+        "No":  "43",
+        "Category":  "Standard",
+        "Coverage":  "Sales Operation Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executives are well informed on the structure of SPC and  targets are cascaded.",
+        "HowToCheck":  "1. Interview 2-3 Ses\n2. Ask about their understanding of the SPC structure\n3. Ask the targets they recognize and follow\n4. Check if their stated targets align with the actual SPC board"
+    },
+    {
+        "No":  "44",
+        "Category":  "Standard",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executives understand the Source of Sales",
+        "HowToCheck":  "1. Interview to 2-3 SEs\n2. Check if SEs can identify the sources of new leads and repeat customers."
+    },
+    {
+        "No":  "45",
+        "Category":  "Standard",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executives can identify the correct definition of Hot, Warm and Cold",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Check if the definition of (Hot, Warm, Cold) is correct"
+    },
+    {
+        "No":  "46",
+        "Category":  "Standard",
+        "Coverage":  "Needs Analysis",
+        "Subject":  "SE Process",
+        "CheckItem":  "Tagging of rating status (Hot, Warm and Cold) in the Otoleap is accurate.",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Check the Otoleap of SEs\n2. Check if the date of lead creation matches the correct tagged rating status"
+    },
+    {
+        "No":  "47",
+        "Category":  "Standard",
+        "Coverage":  "Needs Analysis",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executives are knowledgable on the 10 Basic Needs.",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Check if the SEs can identify at least 3 items under Key Needs Item"
+    },
+    {
+        "No":  "48",
+        "Category":  "Standard",
+        "Coverage":  "Needs Analysis",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executives know the right approach for customers who owns other brands or customers who are likely to buy to other brands.",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Check the approach of the SEs"
+    },
+    {
+        "No":  "49",
+        "Category":  "Standard",
+        "Coverage":  "Product Presentation and Test Drive",
+        "Subject":  "SE Process",
+        "CheckItem":  "Updated KANBAN materials of all units are available",
+        "HowToCheck":  "Ask SEs to present the updated hard copy of KANBAN material"
+    },
+    {
+        "No":  "50",
+        "Category":  "Standard",
+        "Coverage":  "Product Presentation and Test Drive",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executive knows the MMPC 6pt Walk-around Product Presentation",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Check if the SEs can correctly enumerate the 6-point walk-around"
+    },
+    {
+        "No":  "51",
+        "Category":  "Standard",
+        "Coverage":  "Deal and Closing Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executives are informed on the latest discount policies",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Ask how they stay informed about the latest discount policies\n3. Request proof, such as a group chat message or minutes of the meeting (MOM)"
+    },
+    {
+        "No":  "52",
+        "Category":  "Standard",
+        "Coverage":  "Application Process Support",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executives are informed on the latest updates on banks/financial institutions",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Ask how they stay informed about the latest updates\n3. Request proof, such as a group chat message or minutes of the meeting (MOM)"
+    },
+    {
+        "No":  "53",
+        "Category":  "Standard",
+        "Coverage":  "Application Process Support",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executive provide a list of required documents to the customers.",
+        "HowToCheck":  "1. Interview 2-3 Ses\n2. Check the requirement list provided to the customers"
+    },
+    {
+        "No":  "54",
+        "Category":  "Beyond",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Dealers must have an official FB page following MMPC Branding and is properly maintained",
+        "HowToCheck":  "1. Look for the actual Facebook page of the Dealer\n2. Check if it follows MMPC Branding\n3. Check who is responsible for marketing posts on the page, ideally from the Marketing Department"
+    },
+    {
+        "No":  "55",
+        "Category":  "Standard",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Responses to online inquiries are within the standard response time.",
+        "HowToCheck":  "1. Check the actual Facebook page of SEs\n2. Check if the response time is within 15 minutes as per the standard"
+    },
+    {
+        "No":  "56",
+        "Category":  "Standard",
+        "Coverage":  "Deal and Closing Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executive provides a formal vehicle cost computation and digital copy of an updated specification sheet",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2.  Check the most recent Facebook inquiry that includes a price discussion\n3. Check If SEs provided formal computation and updated specification sheet"
+    },
+    {
+        "No":  "57",
+        "Category":  "Standard",
+        "Coverage":  "Application Process Support",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executive informed customers of the status of their loan approvals.",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Check if there are on-going loan application\n3. Check if SEs actively inform customers about their loan status by requesting proof of communication or documentation"
+    },
+    {
+        "No":  "58",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Sales Executive informed customers of the release date and time",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Check if SEs can provide proof of informing customers about the release date and time of their recent vehicle release"
+    },
+    {
+        "No":  "59",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "The Release Ceremony was conducted",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Check the most recent photos of released customers Proof should have the ff:\n- Thank you board with customer name\n- Congratualtions Banner"
+    },
+    {
+        "No":  "60",
+        "Category":  "Beyond",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "SE Process",
+        "CheckItem":  "Have special gift/amenities for new vehicle-releasing customers.",
+        "HowToCheck":  "1. Interview 2-3 SEs\n2. Ask if they have special gift / amenities provided for releasing customers"
+    },
+    {
+        "No":  "61",
+        "Category":  "Standard",
+        "Coverage":  "Sales Operation Management",
+        "Subject":  "Documentation",
+        "CheckItem":  "Dealer facilitates monthly General Sales Meetings, supported by Minutes of the Meeting (MOM).",
+        "HowToCheck":  "1. Check the latest Minutes of the Meeting (MOM) for the General Sales Meeting from the BH"
+    },
+    {
+        "No":  "62",
+        "Category":  "Standard",
+        "Coverage":  "Sales Operation Management",
+        "Subject":  "Documentation",
+        "CheckItem":  "SMs facilitates daily meetings with the SEs in front of the SPC Board, supported by  Minutes of the Meeting (MOM).",
+        "HowToCheck":  "1. Check the latest Minutes of the Meeting (MOM) for the daily meeting from the SMs/TLs"
+    },
+    {
+        "No":  "63",
+        "Category":  "Standard",
+        "Coverage":  "Sales Operation Management",
+        "Subject":  "Documentation",
+        "CheckItem":  "Monitoring and reporting of SSI Score Evaluation including the Voice of the Customer (VOC)",
+        "HowToCheck":  "1. Check the previous month\u0027s report:\n- SSI score trend \n-SSI by SE \n-VOC (Voice of Customers)\n2. Check the Minutes of the Meeting (MOM) from the previous month to confirm if the SSI analysis was reported during GSM."
+    },
+    {
+        "No":  "64",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "Documentation",
+        "CheckItem":  "All required documents are complete and duly signed by the customer, including:\n1. Customer Information Sheet (CIS) and DPA Form  \n2. Copy of Customer ID  \n3. MMVSO (Vehicle Sales Order)  \n4. SE Delivery Declaration Form (SDDF)\n5. New Vehicle Releasing Checklist (NVRC)  \n4. Sales Invoice (SI)  \n5. Delivery Receipt (DR)\n6. MMPC and Dealer’s copy of Warranty Certificate",
+        "HowToCheck":  "1. Request the actual folder of release for the previous month from the Sales Admin/Accounting Staff; choose (3) samples.\n2.Check if all required documents are complete and properly filled out with customer\u0027s signature"
+    },
+    {
+        "No":  "65",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "Documentation",
+        "CheckItem":  "All customer\u0027s  document has digital backup",
+        "HowToCheck":  "1. Request the actual folder of release for the previous month from the Sales Admin/Accounting Staff; choose (3) samples.\n2. Check if all key documents have been scanned and securely stored on a shared network or online drive and password-protected"
+    },
+    {
+        "No":  "66",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "Documentation",
+        "CheckItem":  "Customer documents are stored in a dedicated folder labeled with Customer Name, Plate/CS No., and Purchase Date and all folders are stored in a locked filing cabinet.",
+        "HowToCheck":  "1. Check if all customer folders have proper labels and contain all necessary documents\n2. Check if hard copies are securely stored in a locked filing cabinet."
+    },
+    {
+        "No":  "67",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "Vehicle Delivery",
+        "CheckItem":  "The time duration recorded in the New Vehicle Releasing Checklist is within the standard 2-hour releasing",
+        "HowToCheck":  "1. Request the actual folder of release for the previous month from the Sales Admin/Accounting Staff; choose (3) samples.\n2. Check NVRC attachment: \"Arrival Time\" and \"Departure Time\" should be within 2hrs for Cash / PO Transaction"
+    },
+    {
+        "No":  "68",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "Vehicle Delivery",
+        "CheckItem":  "Release area is clean and with good atmosphere",
+        "HowToCheck":  "1. Check the actual release area\n2. Check if there are no vehicles parked in the release area aside from \"for release\" unit/s"
+    },
+    {
+        "No":  "69",
+        "Category":  "Beyond",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "Vehicle Delivery",
+        "CheckItem":  "Releasing Area is inside the showroom",
+        "HowToCheck":  "Check if the vehicle releasing area is located inside the showroom"
+    },
+    {
+        "No":  "70",
+        "Category":  "Standard",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "Monitoring",
+        "CheckItem":  "Leads Database contains customer data from the past 5 years and is being monitored",
+        "HowToCheck":  "1. Check if the Leads Database is available and includes customer data from the past 5 years\n2. Check if the database is being utilized, monitored, and updated.\n\nSample:\nCurrent year = 2025 → Extract customer database for 2019 and below"
+    },
+    {
+        "No":  "71",
+        "Category":  "Beyond",
+        "Coverage":  "Lead Generation and Management",
+        "Subject":  "Monitoring",
+        "CheckItem":  "Fleet Account Monitoring is available and updated",
+        "HowToCheck":  "1. Check if there are fleet accounts\n2. Check if fleet monitoring exists\n3. Check if the fleet monitoring contact plan and tracking is updated"
+    },
+    {
+        "No":  "72",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "Monitoring",
+        "CheckItem":  "PDI is done 3 days prior to customer release",
+        "HowToCheck":  "1. Check the Daily Release Monitoring\n2. Check if the date in the PDI column is 3 days prior to delivery date"
+    },
+    {
+        "No":  "73",
+        "Category":  "Standard",
+        "Coverage":  "Vehicle Release Management",
+        "Subject":  "Monitoring",
+        "CheckItem":  "Daily Release Monitoring is being utilized.",
+        "HowToCheck":  "1. Check if all releases for the day are recorded on the Daily Release Monitoring\n2. Check the current status of the vehicle vs. the monitoring sheet\n\nNote: If no release for the day, check the scheduled release for the next 2 days."
+    },
+    {
+        "No":  "74",
+        "Category":  "Standard",
+        "Coverage":  "Post-Release Customer Management",
+        "Subject":  "Monitoring",
+        "CheckItem":  "Birthday/Anniversary Message Greeting was sent to customers with proper monitoring and tracking",
+        "HowToCheck":  "1. Check photo or message of sending Birthday and Anniversary Greetings\n2. Check if the monitoring is updated"
+    },
+    {
+        "No":  "75",
+        "Category":  "Standard",
+        "Coverage":  "Post-Release Customer Management",
+        "Subject":  "Monitoring",
+        "CheckItem":  "Sales CROs have their monitoring file for valid complaints and negative feedback",
+        "HowToCheck":  "1. Check if there are valid red alert items\n2. Check if the valid Red Alert items are recorded in the complaint monitoring file\n3. Check if the monitoring file is updated\n4. Check if the monitoring file was submitted to MMPC on time by reviewing the submission date"
+    },
+    {
+        "No":  "76",
+        "Category":  "Standard",
+        "Coverage":  "Sales Operation Management",
+        "Subject":  "Monitoring",
+        "CheckItem":  "Sales KPI Monitoring Sheet is up to date",
+        "HowToCheck":  "1. Check if the KPI Monitoring Sheet is updated with complete details, including data from the previous month"
+    },
+    {
+        "No":  "77",
+        "Category":  "Standard",
+        "Coverage":  "Systems",
+        "Subject":  "YANA",
+        "CheckItem":  "New release vehicle is updated in YANA NVDO within 2 business days",
+        "HowToCheck":  "1. Access the YANA and select New Vehicle \u003e Delivery\n2. Extract all data with a Delivery Date exactly three business days from the actual visit\n3. Check if the \"Created On\" date falls within two business days of the Delivery Date"
+    },
+    {
+        "No":  "78",
+        "Category":  "Beyond",
+        "Coverage":  "Systems",
+        "Subject":  "Sales Information Portal (SIP)",
+        "CheckItem":  "Sales has an access to Sales Information Portal",
+        "HowToCheck":  "1. Based on the monitoring list of those with SIP access, request them to open and navigate the system.\n2. Check if the sales staff are aware of other members who have access to SIP"
+    },
+    {
+        "No":  "79",
+        "Category":  "Standard",
+        "Coverage":  "Systems",
+        "Subject":  "Sales Executive Information System (SEIS)",
+        "CheckItem":  "Manpower report is updated monthly by assigned SEIS officer-in-charge",
+        "HowToCheck":  "1. Check if PIC submitted monthly manpower report"
+    },
+    {
+        "No":  "80",
+        "Category":  "Standard",
+        "Coverage":  "Systems",
+        "Subject":  "Sales Executive Information System (SEIS)",
+        "CheckItem":  "Manpower report (based on latest submission) is matched on the actual personnel count in the dealership",
+        "HowToCheck":  "1. Check actual manpower list in the dealership"
+    },
+    {
+        "No":  "81",
+        "Category":  "Standard",
+        "Coverage":  "Post-Release Customer Management",
+        "Subject":  "Quick VOC System",
+        "CheckItem":  "All red alerts are reflected on the Complaint Tracker Monitoring",
+        "HowToCheck":  "1. All red alerts received should be reflected on the Complaint Tracker Monitoring"
+    },
+    {
+        "No":  "82",
+        "Category":  "Standard",
+        "Coverage":  "Mandatory Reports",
+        "Subject":  "GVD Report",
+        "CheckItem":  "Report shall be sent on or before 5pm of the set deadline.",
+        "HowToCheck":  "Check actual through respective FSM for the accomplishment"
+    },
+    {
+        "No":  "83",
+        "Category":  "Standard",
+        "Coverage":  "Mandatory Reports",
+        "Subject":  "Gross Sales and Actual Dealer Inventory Reports",
+        "CheckItem":  "100% accuracy of the reports; shall be sent 2 working days after closing date.",
+        "HowToCheck":  "Check actual through respective FSM for the accomplishment"
+    },
+    {
+        "No":  "84",
+        "Category":  "Standard",
+        "Coverage":  "Mandatory Reports",
+        "Subject":  "Customer Waiting List",
+        "CheckItem":  "Report shall be sent 2 working days after closing date.",
+        "HowToCheck":  "Check actual through respective FSM for the accomplishment"
+    },
+    {
+        "No":  "85",
+        "Category":  "Standard",
+        "Coverage":  "Mandatory Reports",
+        "Subject":  "BH Finance Report",
+        "CheckItem":  "Report shall be sent 3 working days after closing Date",
+        "HowToCheck":  "Check actual through respective FSM for the accomplishment"
+    },
+    {
+        "No":  "86",
+        "Category":  "Standard",
+        "Coverage":  "Mandatory Reports",
+        "Subject":  "Billing Documents and Subsidy Claims",
+        "CheckItem":  "Timeliness and accuracy of submitted billing documents and Subsidy Claim Requirements (please refer to monthly email advice and circular for the complete mechanics of the said documents)",
+        "HowToCheck":  "Check actual through Sales Control for the accomplishment"
+    },
+    {
+        "No":  "87",
+        "Category":  "Standard",
+        "Coverage":  "Manpower",
+        "Subject":  "Training",
+        "CheckItem":  "All CROs are accredited following these timelines:\n*Level 1: Introductory Course -  within 1 month upon hiring\n*Level 2: Basic Sales CRO Training - within 3 to 6 months upon hiring",
+        "HowToCheck":  "1. Check the training record from Training Department"
+    },
+    {
+        "No":  "88",
+        "Category":  "Standard",
+        "Coverage":  "Manpower",
+        "Subject":  "Training",
+        "CheckItem":  "All SEs are accredited following these timelines:\n*Level 1: Introductory Course -  within 30 days upon hiring\n*Level 2: Basic Course - within 6 months upon hiring\n*Level 3: Advanced Course   - within 1 year upon hiring",
+        "HowToCheck":  "1. Check the training record from Training Department"
+    },
+    {
+        "No":  "89",
+        "Category":  "Standard",
+        "Coverage":  "Manpower",
+        "Subject":  "Person-in-Charge",
+        "CheckItem":  "Dealer has a designated Sales Training PIC",
+        "HowToCheck":  "1. Check the training record from Training Department"
+    },
+    {
+        "No":  "90",
+        "Category":  "Standard",
+        "Coverage":  "Manpower",
+        "Subject":  "Documentation",
+        "CheckItem":  "Sales Training Accreditation monthly report is updated by assigned dealer personnel",
+        "HowToCheck":  "1. Check if PIC submitted monthly report"
+    }
+]

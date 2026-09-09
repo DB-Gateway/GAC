@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+    <title id="title">CCTV camera</title>
+    <path fill="#195e83" d="M8 15h38c3.3 0 6 2.7 6 6v18c0 3.3-2.7 6-6 6H8c-3.3 0-6-2.7-6-6V21c0-3.3 2.7-6 6-6Z"/>
+    <path fill="#163c66" d="M27 15h19c3.3 0 6 2.7 6 6v18c0 3.3-2.7 6-6 6H27V15Z"/>
+    <circle cx="38" cy="30" r="10" fill="#edf2f7"/>
+    <circle cx="38" cy="30" r="6" fill="#195e83"/>
+    <circle cx="38" cy="30" r="3" fill="#163c66"/>
+    <path fill="#a9c2ac" d="M12 45h8v7h18v6H17a5 5 0 0 1-5-5v-8Z"/>
+    <path fill="#163c66" d="m52 23 10-5v24l-10-5V23Z"/>
+</svg>
