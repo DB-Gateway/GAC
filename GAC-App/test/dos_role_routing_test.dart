@@ -60,6 +60,8 @@ void main() {
         'WS.SUP': 'WS SUP',
         'Workshop Supervisor': 'WS SUP',
         'Worshop Sup': 'WS SUP',
+        'WORKSHOPSUPERVISOR': 'WS SUP',
+        'WORKSHOPSUP': 'WS SUP',
       };
 
       var id = 100;

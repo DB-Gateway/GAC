@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
 import '../models/user_notification.dart';
+import 'local_notification_service.dart';
+
+typedef SystemNotificationPresenter = Future<int> Function(
+  Iterable<UserNotification> notifications,
+);
 
 abstract interface class NotificationRepository {
   Future<NotificationInbox> fetchNotifications();
@@ -20,12 +26,14 @@ class NotificationApiService implements NotificationRepository {
     http.Client? client,
     this.apiUrl = gacApiUrl,
     Future<SharedPreferences> Function()? preferencesLoader,
+    this.authToken,
   }) : _client = client ?? http.Client(),
        _preferencesLoader = preferencesLoader ?? SharedPreferences.getInstance;
 
   final http.Client _client;
   final String apiUrl;
   final Future<SharedPreferences> Function() _preferencesLoader;
+  final String? authToken;
 
   @override
   Future<NotificationInbox> fetchNotifications() async {
@@ -33,7 +41,7 @@ class NotificationApiService implements NotificationRepository {
     final items = data['notifications'];
     if (items is! List || data['unread_count'] is! num) {
       throw const NotificationApiException(
-        'Laravel returned an invalid notification inbox.',
+        'Server returned an invalid notification inbox.',
       );
     }
     try {
@@ -56,7 +64,7 @@ class NotificationApiService implements NotificationRepository {
     );
     if (data['unread_count'] is! num) {
       throw const NotificationApiException(
-        'Laravel returned an invalid notification update.',
+        'Server returned an invalid notification update.',
       );
     }
     try {
@@ -75,7 +83,7 @@ class NotificationApiService implements NotificationRepository {
     final count = data['unread_count'];
     if (count is! num) {
       throw const NotificationApiException(
-        'Laravel returned an invalid notification update.',
+        'Server returned an invalid notification update.',
       );
     }
     return count.toInt();
@@ -83,7 +91,15 @@ class NotificationApiService implements NotificationRepository {
 
   Future<Map<String, dynamic>> _request(String method, String endpoint) async {
     final preferences = await _preferencesLoader();
-    final token = preferences.getString(gacAuthTokenKey);
+    await preferences.reload();
+    final deviceToken = authToken == null
+        ? preferences.getString(gacNotificationTokenKey)
+        : null;
+    final token =
+        deviceToken ??
+        authToken ??
+        preferences.getString(gacAuthTokenKey) ??
+        preferences.getString(gacPreviousAuthTokenKey);
     if (token == null || token.isEmpty) {
       throw const NotificationApiException(
         'Your session has expired. Sign in again.',
@@ -92,7 +108,10 @@ class NotificationApiService implements NotificationRepository {
     }
 
     final base = apiUrl.replaceFirst(RegExp(r'/$'), '');
-    final request = http.Request(method, Uri.parse('$base$endpoint'))
+    final path = deviceToken != null
+        ? endpoint.replaceFirst('/notifications', '/device-notifications')
+        : endpoint;
+    final request = http.Request(method, Uri.parse('$base$path'))
       ..headers.addAll({
         'Accept': 'application/json',
         'Content-Type': 'application/json',
@@ -102,10 +121,10 @@ class NotificationApiService implements NotificationRepository {
     try {
       response = await http.Response.fromStream(
         await _client.send(request).timeout(const Duration(seconds: 20)),
-      );
+      ).timeout(const Duration(seconds: 20));
     } catch (_) {
       throw NotificationApiException(
-        'Cannot reach Laravel at $base. Check your connection.',
+        'Cannot reach Server at $base. Check your connection.',
       );
     }
 
@@ -129,21 +148,53 @@ class NotificationApiService implements NotificationRepository {
         status: response.statusCode,
       );
     }
+    await preferences.reload();
+    if (deviceToken != null &&
+        preferences.getString(gacNotificationTokenKey) != deviceToken) {
+      throw const NotificationApiException('The notification account changed.');
+    }
     return data;
   }
 }
 
 class UserNotificationController extends ChangeNotifier {
-  UserNotificationController({NotificationRepository? repository})
-    : _repository = repository ?? NotificationApiService();
+  UserNotificationController({
+    NotificationRepository? repository,
+    SystemNotificationPresenter? systemNotificationPresenter,
+  }) : _repository = repository ?? NotificationApiService(),
+       _systemNotificationPresenter =
+           systemNotificationPresenter ??
+           LocalNotificationService.instance.showUnreadInboxNotifications;
 
   final NotificationRepository _repository;
+  final SystemNotificationPresenter _systemNotificationPresenter;
   List<UserNotification> _notifications = const [];
   int _unreadCount = 0;
   bool _loading = false;
   bool _requesting = false;
   bool _initialized = false;
   String? _error;
+  Timer? _pollTimer;
+  bool _disposed = false;
+
+  void startPolling() {
+    if (_disposed) return;
+    _pollTimer ??= Timer.periodic(const Duration(seconds: 15), (_) {
+      unawaited(load(showSpinner: false));
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
 
   List<UserNotification> get notifications => _notifications;
   int get unreadCount => _unreadCount;
@@ -152,7 +203,7 @@ class UserNotificationController extends ChangeNotifier {
   String? get error => _error;
 
   Future<void> load({bool showSpinner = true}) async {
-    if (_requesting) return;
+    if (_requesting || _disposed) return;
     _requesting = true;
     _loading = showSpinner;
     _error = null;
@@ -162,11 +213,17 @@ class UserNotificationController extends ChangeNotifier {
       _notifications = inbox.notifications;
       _unreadCount = inbox.unreadCount;
       _initialized = true;
+      try {
+        await _systemNotificationPresenter(_notifications);
+      } catch (_) {
+        // A system-notification failure must not hide a successfully loaded
+        // in-app inbox. The next polling cycle can retry the Android bridge.
+      }
     } on NotificationApiException catch (error) {
       _error = error.message;
       _initialized = true;
     } catch (_) {
-      _error = 'Your notifications could not be loaded from Laravel.';
+      _error = 'Your notifications could not be loaded from Server.';
       _initialized = true;
     } finally {
       _requesting = false;
@@ -195,6 +252,32 @@ class UserNotificationController extends ChangeNotifier {
         .map((item) => item.unread ? item.markRead() : item)
         .toList(growable: false);
     notifyListeners();
+  }
+
+  void updateNotificationData(String id, Map<String, dynamic> data) {
+    var changed = false;
+    _notifications = [
+      for (final item in _notifications)
+        if (item.id == id) ...[
+          (() {
+            changed = true;
+            return UserNotification(
+              id: item.id,
+              type: item.type,
+              title: item.title,
+              message: item.message,
+              unread: item.unread,
+              data: {...item.data, ...data},
+              readAt: item.readAt,
+              createdAt: item.createdAt,
+            );
+          })(),
+        ] else
+          item,
+    ];
+    if (changed) {
+      notifyListeners();
+    }
   }
 }
 

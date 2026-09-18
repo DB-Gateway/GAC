@@ -1,0 +1,309 @@
+.database-checklist .checklist-view-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line, #e7edf3);
+}
+
+.database-checklist .checklist-view-label {
+    color: var(--slate-600, #526176);
+    font-size: 11px;
+    font-weight: 750;
+}
+
+.database-checklist .checklist-view-toggle {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid var(--line, #e7edf3);
+    border-radius: 8px;
+    background: var(--fog-100, #f5f6f8);
+}
+
+.database-checklist .checklist-view-toggle button {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 8px 12px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--slate-600, #526176);
+    background: transparent;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 750;
+    cursor: pointer;
+}
+
+.database-checklist .checklist-view-toggle button[aria-pressed="true"] {
+    border-color: var(--line-dark, #cbd5e1);
+    color: var(--graphite-900, #122033);
+    background: #fff;
+    box-shadow: 0 1px 3px rgb(11 15 26 / 6%);
+}
+
+.database-checklist .checklist-view-toggle button:hover {
+    color: var(--gateway-red-500, #e8193f);
+}
+
+.database-checklist .checklist-view-toggle button:focus-visible,
+.database-checklist .checklist-step-navigation button:focus-visible {
+    outline: 3px solid rgb(232 25 63 / 25%);
+    outline-offset: 2px;
+}
+
+.database-checklist .checklist-step-navigation {
+    display: grid;
+    grid-template-columns: auto minmax(100px, 300px) auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 16px;
+    border-top: 1px solid var(--line, #e7edf3);
+    background: #fff;
+}
+
+.database-checklist .checklist-step-navigation[hidden],
+.database-checklist .checklist-view-empty[hidden] {
+    display: none !important;
+}
+
+.database-checklist .checklist-step-navigation button {
+    min-height: 40px;
+}
+
+.database-checklist .checklist-step-navigation button:disabled {
+    opacity: .45;
+    cursor: default;
+}
+
+.database-checklist .checklist-step-progress {
+    display: grid;
+    min-width: 0;
+    gap: 7px;
+    color: var(--slate-600, #526176);
+    font-size: 11px;
+    font-weight: 750;
+    text-align: center;
+}
+
+.database-checklist .checklist-step-progress progress {
+    width: 100%;
+    height: 6px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 10px;
+    appearance: none;
+    background: var(--fog-100, #f5f6f8);
+    accent-color: var(--gateway-red-500, #e8193f);
+}
+
+.database-checklist .checklist-step-progress progress::-webkit-progress-bar {
+    border-radius: 10px;
+    background: var(--fog-100, #f5f6f8);
+}
+
+.database-checklist .checklist-step-progress progress::-webkit-progress-value {
+    border-radius: 10px;
+    background: var(--gateway-red-500, #e8193f);
+}
+
+.database-checklist .checklist-step-progress progress::-moz-progress-bar {
+    border-radius: 10px;
+    background: var(--gateway-red-500, #e8193f);
+}
+
+.database-checklist .checklist-view-empty {
+    margin: 0;
+    padding: 28px 18px;
+    color: var(--slate-600, #526176);
+    font-size: 12px;
+    text-align: center;
+}
+
+@media screen {
+    .database-checklist .checklist-view-items [hidden],
+    .database-checklist .checklist-step-hidden,
+    .database-checklist [data-checklist-view-mode="step"] > .column-headings {
+        display: none !important;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .item-row {
+        grid-template-columns: 48px minmax(0, 1fr);
+        align-items: start;
+        padding: 10px 12px 18px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .item-row > div {
+        min-width: 0;
+        padding: 10px 12px;
+        border-right: 0;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .item-row > div:nth-child(2),
+    .database-checklist [data-checklist-view-mode="step"] .item-row > div:nth-child(3),
+    .database-checklist [data-checklist-view-mode="step"] .item-row > div:nth-child(4) {
+        grid-column: 2;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .item-row .row-spacer {
+        display: none;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .item-text {
+        font-size: 15px;
+        line-height: 1.6;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .status-options {
+        max-width: 380px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .status-option span {
+        min-height: 42px;
+        font-size: 11px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .response-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        max-width: 850px;
+        gap: 12px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .response-fields > :first-child,
+    .database-checklist [data-checklist-view-mode="step"] .standard-attachment-block {
+        grid-column: 1 / -1;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .response-fields label {
+        font-size: 9px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .response-fields textarea {
+        min-height: 72px;
+        font-size: 12px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-scroll {
+        overflow: visible;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table,
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table tbody {
+        display: block;
+        min-width: 0;
+        width: 100%;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table thead {
+        display: none;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table tbody tr {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        padding: 18px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table tbody th,
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table tbody td {
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table tbody th,
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table tbody td:last-child {
+        grid-column: 1 / -1;
+        text-align: left;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table td[data-step-label]::before {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--slate-600, #526176);
+        content: attr(data-step-label);
+        font-size: 10px;
+        font-weight: 750;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table .slot-select {
+        min-height: 40px;
+        font-size: 11px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table .restroom-remark {
+        min-height: 72px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] [data-item-key]:focus {
+        outline: 0;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] [data-item-key]:focus-visible {
+        outline: 2px solid var(--gateway-red-500, #e8193f);
+        outline-offset: -2px;
+    }
+}
+
+@media screen and (max-width: 680px) {
+    .database-checklist .checklist-step-navigation {
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+
+    .database-checklist .checklist-step-progress {
+        grid-column: 1 / -1;
+        grid-row: 1;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .item-row {
+        grid-template-columns: 30px minmax(0, 1fr);
+        padding: 8px 6px 14px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .item-row > div {
+        padding: 9px 6px;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .item-row > div:nth-child(3),
+    .database-checklist [data-checklist-view-mode="step"] .item-row > div:nth-child(4) {
+        grid-column: 1 / -1;
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .response-fields {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .database-checklist [data-checklist-view-mode="step"] .restroom-table tbody tr {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        padding: 14px;
+    }
+}
+
+@media print {
+    .database-checklist .checklist-view-controls,
+    .database-checklist .checklist-step-navigation,
+    .database-checklist .checklist-view-empty {
+        display: none !important;
+    }
+
+    .database-checklist .checklist-view-items section[data-section-key] {
+        display: block !important;
+    }
+
+    .database-checklist .checklist-view-items .item-row[data-item-key] {
+        display: grid !important;
+    }
+
+    .database-checklist .checklist-view-items tbody tr[data-item-key] {
+        display: table-row !important;
+    }
+}

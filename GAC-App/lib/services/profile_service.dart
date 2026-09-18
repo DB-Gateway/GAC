@@ -81,7 +81,7 @@ class ProfileApiService implements ProfileRepository {
     required String password,
     required String passwordConfirmation,
   }) async {
-    await _jsonRequest(
+    final data = await _jsonRequest(
       'PUT',
       '/profile/password',
       body: {
@@ -90,6 +90,9 @@ class ProfileApiService implements ProfileRepository {
         'password_confirmation': passwordConfirmation,
       },
     );
+    if (data['user'] is Map) {
+      await _profileFromResponse(data);
+    }
   }
 
   @override
@@ -116,7 +119,7 @@ class ProfileApiService implements ProfileRepository {
       );
     } catch (_) {
       throw ProfileApiException(
-        'Cannot reach Laravel at ${_baseUrl()}. Check your connection.',
+        'Cannot reach Server at ${_baseUrl()}. Check your connection.',
       );
     }
     final data = _decodeResponse(response);
@@ -177,7 +180,7 @@ class ProfileApiService implements ProfileRepository {
       );
     } catch (_) {
       throw ProfileApiException(
-        'Cannot reach Laravel at ${_baseUrl()}. Check your connection.',
+        'Cannot reach Server at ${_baseUrl()}. Check your connection.',
       );
     }
     final data = _decodeResponse(response);

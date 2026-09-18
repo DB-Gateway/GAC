@@ -27,7 +27,9 @@ class PinDots extends StatelessWidget {
         final isFilled = index < length;
         return AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutBack,
+          // Overshooting curves can make an outgoing BoxShadow's interpolated
+          // blur radius negative, which is rejected by dart:ui while painting.
+          curve: Curves.easeOutCubic,
           margin: const EdgeInsets.symmetric(horizontal: 10),
           width: isFilled ? 18 : 14,
           height: isFilled ? 18 : 14,
@@ -215,10 +217,8 @@ Future<bool> showPinSetupDialog(
     backgroundColor: Colors.transparent,
     isDismissible: true,
     enableDrag: true,
-    builder: (sheetContext) => _PinSetupSheet(
-      isChanging: isChanging,
-      email: email,
-    ),
+    builder: (sheetContext) =>
+        _PinSetupSheet(isChanging: isChanging, email: email),
   );
   return result ?? false;
 }
@@ -416,7 +416,9 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
               border: Border.all(color: const Color(0xFF334155)),
             ),
             child: Icon(
-              _step == 3 ? Icons.check_circle_outline_rounded : Icons.lock_outline_rounded,
+              _step == 3
+                  ? Icons.check_circle_outline_rounded
+                  : Icons.lock_outline_rounded,
               color: _step == 3 ? const Color(0xFF4CAF50) : GacColors.cyan,
               size: 26,
             ),
@@ -444,10 +446,7 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
           const SizedBox(height: 24),
 
           if (_step != 3) ...[
-            PinDots(
-              length: _activePin.length,
-              hasError: _errorMessage != null,
-            ),
+            PinDots(length: _activePin.length, hasError: _errorMessage != null),
             const SizedBox(height: 12),
             if (_errorMessage != null)
               Text(
@@ -461,10 +460,7 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
             else
               const SizedBox(height: 16),
             const SizedBox(height: 12),
-            PinKeypad(
-              onDigit: _onDigit,
-              onBackspace: _onBackspace,
-            ),
+            PinKeypad(onDigit: _onDigit, onBackspace: _onBackspace),
             const SizedBox(height: 12),
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -523,7 +519,8 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
                     Switch(
                       value: _biometricsEnabled,
                       activeThumbColor: GacColors.cyan,
-                      onChanged: (val) => setState(() => _biometricsEnabled = val),
+                      onChanged: (val) =>
+                          setState(() => _biometricsEnabled = val),
                     ),
                   ],
                 ),

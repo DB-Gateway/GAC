@@ -6,9 +6,16 @@ import 'package:flutter/services.dart';
 import '../models/authenticated_user.dart';
 import '../models/user_notification.dart';
 import '../services/notification_service.dart';
+import '../services/checklist_service.dart';
+import 'user_checklist_detail_screen.dart';
 import '../theme/gac_theme.dart';
 import '../widgets/gac_surfaces.dart';
 import '../widgets/user_avatar.dart';
+import '../widgets/escalation_details_dialog.dart';
+
+enum NotificationTab { recent, history }
+
+enum NotificationCategoryFilter { all, notices, followUps }
 
 class UserNotificationsScreen extends StatefulWidget {
   const UserNotificationsScreen({
@@ -18,6 +25,8 @@ class UserNotificationsScreen extends StatefulWidget {
     this.profile = AuthenticatedUser.fallback,
     this.controller,
     this.onOpenNotification,
+    this.checklistRepository,
+    this.initialTab = NotificationTab.recent,
     super.key,
   });
 
@@ -27,6 +36,8 @@ class UserNotificationsScreen extends StatefulWidget {
   final AuthenticatedUser profile;
   final UserNotificationController? controller;
   final ValueChanged<String>? onOpenNotification;
+  final ChecklistRepository? checklistRepository;
+  final NotificationTab initialTab;
 
   @override
   State<UserNotificationsScreen> createState() =>
@@ -36,23 +47,31 @@ class UserNotificationsScreen extends StatefulWidget {
 class _UserNotificationsScreenState extends State<UserNotificationsScreen> {
   late UserNotificationController _controller;
   late bool _ownsController;
+  late NotificationTab _selectedTab;
+  NotificationCategoryFilter _selectedFilter = NotificationCategoryFilter.all;
 
   @override
   void initState() {
     super.initState();
+    _selectedTab = widget.initialTab;
     _controller = widget.controller ?? UserNotificationController();
     _ownsController = widget.controller == null;
     if (!_controller.initialized) unawaited(_controller.load());
+    if (_ownsController) _controller.startPolling();
   }
 
   @override
   void didUpdateWidget(covariant UserNotificationsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialTab != widget.initialTab) {
+      _selectedTab = widget.initialTab;
+    }
     if (oldWidget.controller == widget.controller) return;
     if (_ownsController) _controller.dispose();
     _controller = widget.controller ?? UserNotificationController();
     _ownsController = widget.controller == null;
     if (!_controller.initialized) unawaited(_controller.load());
+    if (_ownsController) _controller.startPolling();
   }
 
   @override
@@ -78,10 +97,72 @@ class _UserNotificationsScreenState extends State<UserNotificationsScreen> {
   }
 
   Future<void> _openNotification(UserNotification notification) async {
+    if (notification.type == 'finding_escalated') {
+      unawaited(
+        _controller.markRead(notification.id).catchError((Object error) {
+          if (mounted) {
+            _showError('The notification could not be marked as read.');
+          }
+        }),
+      );
+      final followUp = await showEscalationDetailsDialog(
+        context,
+        notification,
+        onFollowUpSubmitted: (submitted) {
+          _controller.updateNotificationData(notification.id, {
+            'has_follow_up': true,
+            'follow_up_submitted_at': DateTime.now().toIso8601String(),
+            'follow_up_recipient_name': submitted.recipientName,
+            'follow_up_action_taken': submitted.remarks,
+          });
+        },
+      );
+      if (followUp != null) {
+        _controller.updateNotificationData(notification.id, {
+          'has_follow_up': true,
+          'follow_up_submitted_at': DateTime.now().toIso8601String(),
+          'follow_up_recipient_name': followUp.recipientName,
+          'follow_up_action_taken': followUp.remarks,
+        });
+      }
+      return;
+    }
     try {
       await _controller.markRead(notification.id);
     } on NotificationApiException catch (error) {
       if (mounted) _showError(error.message);
+      return;
+    }
+    if (!mounted) return;
+    if (notification.type == 'checklist_draft_reminder') {
+      final slug = notification.data['template_slug'];
+      final date = notification.data['audit_date'];
+      final draftId = notification.data['submission_id'];
+      if (slug is! String ||
+          slug.isEmpty ||
+          date is! String ||
+          DateTime.tryParse(date) == null ||
+          draftId is! num) {
+        _showError('This reminder does not contain a valid checklist.');
+        return;
+      }
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => UserChecklistDetailScreen(
+            slug: slug,
+            repository: widget.checklistRepository ?? ChecklistApiService(),
+            user: widget.profile.id > 0 ? widget.profile : null,
+            auditDate: date,
+            expectedDraftId: draftId.toInt(),
+            onOpenNotifications: () => Navigator.of(context).pop(),
+            unreadNotifications: _controller.unreadCount,
+            initialItemKey: notification.data['item_key'] as String?,
+            initialSlotKey: notification.data['slot_key'] as String?,
+            initialCustomerIndex: (notification.data['customer_index'] as num?)
+                ?.toInt(),
+          ),
+        ),
+      );
       return;
     }
     widget.onOpenNotification?.call(notification.id);
@@ -106,59 +187,68 @@ class _UserNotificationsScreenState extends State<UserNotificationsScreen> {
         statusBarBrightness: Brightness.dark,
       ),
       child: GacScreenBackground(
-        child: SafeArea(
-          bottom: false,
-          child: Column(
-            children: [
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  horizontalPadding,
-                  8,
-                  horizontalPadding,
-                  0,
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    8,
+                    horizontalPadding,
+                    0,
+                  ),
+                  child: _NotificationsHeader(
+                    profile: widget.profile,
+                    onBack: _goBack,
+                    onOpenProfile: widget.onOpenProfile,
+                  ),
                 ),
-                child: _NotificationsHeader(
-                  profile: widget.profile,
-                  onBack: _goBack,
-                  onOpenProfile: widget.onOpenProfile,
-                ),
-              ),
-              Expanded(
-                child: ListenableBuilder(
-                  listenable: _controller,
-                  builder: (context, _) => RefreshIndicator(
-                    onRefresh: () => _controller.load(showSpinner: false),
-                    child: ListView(
-                      key: const PageStorageKey<String>(
-                        'user-notifications-scroll',
-                      ),
-                      physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics(),
-                      ),
-                      padding: EdgeInsets.fromLTRB(
-                        horizontalPadding,
-                        24,
-                        horizontalPadding,
-                        40 + MediaQuery.paddingOf(context).bottom,
-                      ),
-                      children: [
-                        Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 620),
-                            child: _InboxBody(
-                              controller: _controller,
-                              onRetry: _controller.load,
-                              onMarkAllRead: _markAllRead,
-                              onOpenNotification: _openNotification,
+                Expanded(
+                  child: ListenableBuilder(
+                    listenable: _controller,
+                    builder: (context, _) => RefreshIndicator(
+                      onRefresh: () => _controller.load(showSpinner: false),
+                      child: ListView(
+                        key: const PageStorageKey<String>(
+                          'user-notifications-scroll',
+                        ),
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
+                        ),
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          24,
+                          horizontalPadding,
+                          40 + MediaQuery.paddingOf(context).bottom,
+                        ),
+                        children: [
+                          Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 620),
+                              child: _InboxBody(
+                                controller: _controller,
+                                selectedTab: _selectedTab,
+                                selectedFilter: _selectedFilter,
+                                onTabChanged: (tab) =>
+                                    setState(() => _selectedTab = tab),
+                                onFilterChanged: (filter) =>
+                                    setState(() => _selectedFilter = filter),
+                                onRetry: _controller.load,
+                                onMarkAllRead: _markAllRead,
+                                onOpenNotification: _openNotification,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -239,12 +329,20 @@ class _NotificationsHeader extends StatelessWidget {
 class _InboxBody extends StatelessWidget {
   const _InboxBody({
     required this.controller,
+    required this.selectedTab,
+    required this.selectedFilter,
+    required this.onTabChanged,
+    required this.onFilterChanged,
     required this.onRetry,
     required this.onMarkAllRead,
     required this.onOpenNotification,
   });
 
   final UserNotificationController controller;
+  final NotificationTab selectedTab;
+  final NotificationCategoryFilter selectedFilter;
+  final ValueChanged<NotificationTab> onTabChanged;
+  final ValueChanged<NotificationCategoryFilter> onFilterChanged;
   final VoidCallback onRetry;
   final VoidCallback onMarkAllRead;
   final ValueChanged<UserNotification> onOpenNotification;
@@ -271,10 +369,36 @@ class _InboxBody extends StatelessWidget {
       );
     }
 
+    final recentNotifications = <UserNotification>[];
+    final historyNotifications = <UserNotification>[];
+
+    for (final notification in controller.notifications) {
+      if (notification.unread) {
+        recentNotifications.add(notification);
+      } else {
+        historyNotifications.add(notification);
+      }
+    }
+
+    final tabNotifications = selectedTab == NotificationTab.recent
+        ? recentNotifications
+        : historyNotifications;
+
+    final displayNotifications = tabNotifications.where((notification) {
+      switch (selectedFilter) {
+        case NotificationCategoryFilter.all:
+          return true;
+        case NotificationCategoryFilter.notices:
+          return notification.isNotice;
+        case NotificationCategoryFilter.followUps:
+          return notification.isFollowUp;
+      }
+    }).toList(growable: false);
+
     final today = <UserNotification>[];
     final earlier = <UserNotification>[];
     final now = DateTime.now();
-    for (final notification in controller.notifications) {
+    for (final notification in displayNotifications) {
       if (notification.createdAt != null &&
           DateUtils.isSameDay(notification.createdAt, now)) {
         today.add(notification);
@@ -283,41 +407,380 @@ class _InboxBody extends StatelessWidget {
       }
     }
 
+    final allCount = tabNotifications.length;
+    final noticesCount = tabNotifications.where((n) => n.isNotice).length;
+    final followUpsCount = tabNotifications.where((n) => n.isFollowUp).length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _TitleRow(
-          unreadCount: controller.unreadCount,
+          unreadCount: selectedTab == NotificationTab.recent
+              ? controller.unreadCount
+              : 0,
           onMarkAllRead: onMarkAllRead,
         ),
         const SizedBox(height: 16),
-        _SummaryCard(
-          unreadCount: controller.unreadCount,
-          totalCount: controller.notifications.length,
+        _NotificationTabSwitcher(
+          selectedTab: selectedTab,
+          onChanged: onTabChanged,
+          recentCount: recentNotifications.length,
+          historyCount: historyNotifications.length,
+        ),
+        const SizedBox(height: 12),
+        _NotificationCategoryFilterBar(
+          selectedFilter: selectedFilter,
+          onFilterChanged: onFilterChanged,
+          allCount: allCount,
+          noticesCount: noticesCount,
+          followUpsCount: followUpsCount,
         ),
         const SizedBox(height: 16),
-        if (controller.notifications.isEmpty)
-          const _EmptyInbox()
-        else ...[
-          if (today.isNotEmpty) ...[
-            const _SectionLabel('TODAY'),
-            const SizedBox(height: 8),
-            _NotificationGroup(
-              notifications: today,
-              onOpen: onOpenNotification,
-            ),
+        if (selectedTab == NotificationTab.recent) ...[
+          _SummaryCard(
+            unreadCount: recentNotifications.length,
+            totalCount: controller.notifications.length,
+          ),
+          if (recentNotifications.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            if (displayNotifications.isEmpty)
+              _EmptyFilteredNotifications(
+                filter: selectedFilter,
+                tab: NotificationTab.recent,
+              )
+            else ...[
+              if (today.isNotEmpty) ...[
+                const _SectionLabel('TODAY'),
+                const SizedBox(height: 8),
+                _NotificationGroup(
+                  notifications: today,
+                  onOpen: onOpenNotification,
+                ),
+              ],
+              if (earlier.isNotEmpty) ...[
+                if (today.isNotEmpty) const SizedBox(height: 18),
+                const _SectionLabel('EARLIER'),
+                const SizedBox(height: 8),
+                _NotificationGroup(
+                  notifications: earlier,
+                  onOpen: onOpenNotification,
+                ),
+              ],
+            ],
           ],
-          if (earlier.isNotEmpty) ...[
-            if (today.isNotEmpty) const SizedBox(height: 18),
-            const _SectionLabel('EARLIER'),
-            const SizedBox(height: 8),
-            _NotificationGroup(
-              notifications: earlier,
-              onOpen: onOpenNotification,
-            ),
+        ] else ...[
+          if (historyNotifications.isEmpty)
+            const _EmptyHistory()
+          else if (displayNotifications.isEmpty)
+            _EmptyFilteredNotifications(
+              filter: selectedFilter,
+              tab: NotificationTab.history,
+            )
+          else ...[
+            if (today.isNotEmpty) ...[
+              const _SectionLabel('TODAY'),
+              const SizedBox(height: 8),
+              _NotificationGroup(
+                notifications: today,
+                onOpen: onOpenNotification,
+              ),
+            ],
+            if (earlier.isNotEmpty) ...[
+              if (today.isNotEmpty) const SizedBox(height: 18),
+              const _SectionLabel('EARLIER'),
+              const SizedBox(height: 8),
+              _NotificationGroup(
+                notifications: earlier,
+                onOpen: onOpenNotification,
+              ),
+            ],
           ],
         ],
       ],
+    );
+  }
+}
+
+class _NotificationTabSwitcher extends StatelessWidget {
+  const _NotificationTabSwitcher({
+    required this.selectedTab,
+    required this.onChanged,
+    required this.recentCount,
+    required this.historyCount,
+  });
+
+  final NotificationTab selectedTab;
+  final ValueChanged<NotificationTab> onChanged;
+  final int recentCount;
+  final int historyCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return GacGlassSurface(
+      height: 48,
+      padding: const EdgeInsets.all(4),
+      borderRadius: 16,
+      color: GacColors.navy950.withValues(alpha: 0.94),
+      borderColor: GacColors.navy700,
+      shadowBlurRadius: 16,
+      shadowOffset: const Offset(0, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: _TabButton(
+              key: const ValueKey('tab-recent'),
+              title: 'Recent',
+              icon: Icons.notifications_none_rounded,
+              badgeCount: recentCount,
+              isSelected: selectedTab == NotificationTab.recent,
+              onTap: () => onChanged(NotificationTab.recent),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: _TabButton(
+              key: const ValueKey('tab-history'),
+              title: 'History',
+              icon: Icons.history_rounded,
+              badgeCount: historyCount,
+              isSelected: selectedTab == NotificationTab.history,
+              onTap: () => onChanged(NotificationTab.history),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationCategoryFilterBar extends StatelessWidget {
+  const _NotificationCategoryFilterBar({
+    required this.selectedFilter,
+    required this.onFilterChanged,
+    required this.allCount,
+    required this.noticesCount,
+    required this.followUpsCount,
+  });
+
+  final NotificationCategoryFilter selectedFilter;
+  final ValueChanged<NotificationCategoryFilter> onFilterChanged;
+  final int allCount;
+  final int noticesCount;
+  final int followUpsCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: [
+          _NotificationFilterChip(
+            key: const ValueKey('filter-all'),
+            label: 'All',
+            count: allCount,
+            icon: Icons.all_inbox_rounded,
+            selected: selectedFilter == NotificationCategoryFilter.all,
+            onTap: () => onFilterChanged(NotificationCategoryFilter.all),
+          ),
+          const SizedBox(width: 8),
+          _NotificationFilterChip(
+            key: const ValueKey('filter-notices'),
+            label: 'Notices',
+            count: noticesCount,
+            icon: Icons.notifications_none_rounded,
+            selected: selectedFilter == NotificationCategoryFilter.notices,
+            onTap: () => onFilterChanged(NotificationCategoryFilter.notices),
+          ),
+          const SizedBox(width: 8),
+          _NotificationFilterChip(
+            key: const ValueKey('filter-follow-ups'),
+            label: 'Follow-ups',
+            count: followUpsCount,
+            icon: Icons.reply_rounded,
+            selected: selectedFilter == NotificationCategoryFilter.followUps,
+            onTap: () => onFilterChanged(NotificationCategoryFilter.followUps),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationFilterChip extends StatelessWidget {
+  const _NotificationFilterChip({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+    super.key,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Filter $label, $count notifications',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: selected
+                  ? GacColors.primary.withValues(alpha: 0.22)
+                  : GacColors.navy950.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected ? GacColors.primary : GacColors.navy700,
+                width: selected ? 1.5 : 1.0,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(
+                    icon,
+                    size: 13,
+                    color: selected ? GacColors.cyan : GacColors.slate,
+                  ),
+                  const SizedBox(width: 5),
+                ],
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? GacColors.white : GacColors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected ? GacColors.primary : GacColors.navy800,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    count > 99 ? '99+' : '$count',
+                    style: TextStyle(
+                      color: selected ? GacColors.white : GacColors.mist,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TabButton extends StatelessWidget {
+  const _TabButton({
+    required this.title,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+    this.badgeCount = 0,
+    super.key,
+  });
+
+  final String title;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final int badgeCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            color: isSelected ? GacColors.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: isSelected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x402979FF),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 15,
+                color: isSelected ? GacColors.white : GacColors.slate,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: TextStyle(
+                  color: isSelected ? GacColors.white : GacColors.slate,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              if (badgeCount > 0) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1.5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? GacColors.white.withValues(alpha: 0.25)
+                        : GacColors.navy800,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Text(
+                    badgeCount > 99 ? '99+' : '$badgeCount',
+                    style: TextStyle(
+                      color: isSelected ? GacColors.white : GacColors.mist,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -481,8 +944,12 @@ class _NotificationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => GacContentPanel(
-    color: notification.unread ? const Color(0xFF0E223D) : const Color(0xFF0A1628),
-    borderColor: notification.unread ? const Color(0xFF1A3A5C) : const Color(0xFF122238),
+    color: notification.unread
+        ? const Color(0xFF0E223D)
+        : const Color(0xFF0A1628),
+    borderColor: notification.unread
+        ? const Color(0xFF1A3A5C)
+        : const Color(0xFF122238),
     borderRadius: 19,
     shadowBlurRadius: notification.unread ? 16 : 9,
     shadowOffset: const Offset(0, 5),
@@ -571,6 +1038,61 @@ class _NotificationCard extends StatelessWidget {
                           ),
                         ],
                         const SizedBox(height: 8),
+                        if (notification.type ==
+                            'checklist_draft_reminder') ...[
+                          const Text(
+                            'Resume drafted checklist →',
+                            style: TextStyle(
+                              color: GacColors.primary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                        if (notification.type == 'finding_escalated') ...[
+                          if (notification.isFollowedUp) ...[
+                            const Row(
+                              children: [
+                                Icon(
+                                  Icons.check_circle_rounded,
+                                  size: 13,
+                                  color: GacColors.green200,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Follow-up submitted',
+                                  style: TextStyle(
+                                    color: GacColors.green200,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                          ] else ...[
+                            const Row(
+                              children: [
+                                Icon(
+                                  Icons.reply_rounded,
+                                  size: 13,
+                                  color: GacColors.amber200,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Follow-up required →',
+                                  style: TextStyle(
+                                    color: GacColors.amber200,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                        ],
                         Text(
                           _formatTimestamp(notification.createdAt),
                           style: const TextStyle(
@@ -592,8 +1114,8 @@ class _NotificationCard extends StatelessWidget {
   );
 }
 
-class _EmptyInbox extends StatelessWidget {
-  const _EmptyInbox();
+class _EmptyHistory extends StatelessWidget {
+  const _EmptyHistory();
 
   @override
   Widget build(BuildContext context) => GacContentPanel(
@@ -601,14 +1123,10 @@ class _EmptyInbox extends StatelessWidget {
     borderRadius: 20,
     child: const Column(
       children: [
-        Icon(
-          Icons.notifications_off_outlined,
-          size: 36,
-          color: GacColors.slate,
-        ),
+        Icon(Icons.history_rounded, size: 36, color: GacColors.slate),
         SizedBox(height: 12),
         Text(
-          'No notifications yet',
+          'No notification history',
           style: TextStyle(
             color: GacColors.textPrimary,
             fontSize: 14,
@@ -617,13 +1135,71 @@ class _EmptyInbox extends StatelessWidget {
         ),
         SizedBox(height: 5),
         Text(
-          'Updates about your Gateway tasks will appear here.',
+          'Previously viewed updates will appear here.',
           textAlign: TextAlign.center,
           style: TextStyle(color: GacColors.slate, fontSize: 10, height: 1.4),
         ),
       ],
     ),
   );
+}
+
+class _EmptyFilteredNotifications extends StatelessWidget {
+  const _EmptyFilteredNotifications({
+    required this.filter,
+    required this.tab,
+  });
+
+  final NotificationCategoryFilter filter;
+  final NotificationTab tab;
+
+  @override
+  Widget build(BuildContext context) {
+    final isFollowUps = filter == NotificationCategoryFilter.followUps;
+    final isRecent = tab == NotificationTab.recent;
+    final title = isFollowUps
+        ? (isRecent ? 'No unread follow-ups' : 'No follow-up history')
+        : (isRecent ? 'No unread notices' : 'No notice history');
+    final message = isFollowUps
+        ? (isRecent
+            ? 'When a manager escalates a checklist finding, it will appear here.'
+            : 'Previously reviewed follow-ups and escalations will appear here.')
+        : (isRecent
+            ? 'Draft reminders and general notifications will appear here.'
+            : 'Previously viewed notices will appear here.');
+    final icon = isFollowUps
+        ? Icons.reply_rounded
+        : Icons.notifications_none_rounded;
+
+    return GacContentPanel(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 34),
+      borderRadius: 20,
+      child: Column(
+        children: [
+          Icon(icon, size: 36, color: GacColors.slate),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: const TextStyle(
+              color: GacColors.textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: GacColors.slate,
+              fontSize: 10,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _LoadingInbox extends StatelessWidget {

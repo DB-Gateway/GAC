@@ -8,19 +8,35 @@ import 'package:flutter/services.dart';
 import '../models/checklist_models.dart';
 import '../models/authenticated_user.dart';
 import '../services/checklist_service.dart';
+import '../services/utilities_missed_checklist_service.dart';
 import '../theme/gac_theme.dart';
 import '../widgets/gac_surfaces.dart';
 import '../widgets/user_floating_header.dart';
+import '../utils/checklist_time_slot.dart';
+import '../utils/checklist_attention.dart';
 import 'dos_dashboard_screen.dart';
 import 'user_checklist_detail_screen.dart';
 
-enum _TaskFilter { all, todo, inProgress, completed }
+enum _TaskFilter { all, todo, inProgress, completed, attention }
 
 enum _TaskStatus { todo, inProgress, completed }
 
-typedef UserChecklistOpenCallback = void Function(
+typedef UserChecklistOpenCallback = FutureOr<void> Function(
   String checklistSlug,
   String auditDate,
+);
+
+typedef UserChecklistOpenWithSlotCallback = FutureOr<void> Function(
+  String checklistSlug,
+  String auditDate,
+  String? initialSlotKey,
+);
+
+typedef UserChecklistOpenWithQuestionCallback = FutureOr<void> Function(
+  String checklistSlug,
+  String auditDate,
+  String? initialSlotKey,
+  String? initialItemKey,
 );
 
 class ProgressRing extends StatelessWidget {
@@ -83,6 +99,8 @@ class UserHomeScreen extends StatefulWidget {
     this.repository,
     this.now,
     this.onOpenChecklist,
+    this.onOpenChecklistWithSlot,
+    this.onOpenChecklistWithQuestion,
     this.activeTrack,
     this.onTrackChanged,
     super.key,
@@ -97,6 +115,8 @@ class UserHomeScreen extends StatefulWidget {
   final ChecklistRepository? repository;
   final DateTime Function()? now;
   final UserChecklistOpenCallback? onOpenChecklist;
+  final UserChecklistOpenWithSlotCallback? onOpenChecklistWithSlot;
+  final UserChecklistOpenWithQuestionCallback? onOpenChecklistWithQuestion;
   final DosAuditTrack? activeTrack;
   final ValueChanged<DosAuditTrack>? onTrackChanged;
 
@@ -111,12 +131,14 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   late DateTime _selectedDate;
 
   List<ChecklistCatalogItem> _tasks = const [];
+  bool _attentionUnavailable = false;
   _TaskFilter _selectedFilter = _TaskFilter.all;
   bool _loading = true;
   bool _topBarExpanded = true;
   String? _error;
   int _requestGeneration = 0;
   DosAuditTrack? _internalTrack;
+  String? _activeDueSlotKey;
 
   bool get _isDos {
     if (widget.user.is5sUtilities ||
@@ -164,36 +186,37 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
   List<ChecklistCatalogItem> get _trackFilteredTasks {
     final user = widget.user;
-    final tasks = _tasks
-        .where((task) => task.slug != 'dealer-operations-standards-subform')
-        .toList(growable: false);
     if (user.is5sSales) {
-      return tasks.where((t) => t.slug == 'sales').toList(growable: false);
+      return _tasks.where((t) => t.slug == 'sales').toList(growable: false);
     }
     if (user.is5sService) {
-      return tasks.where((t) => t.slug == 'service').toList(growable: false);
+      return _tasks.where((t) => t.slug == 'service').toList(growable: false);
     }
     if (user.is5sUtilities || user.isUtilities) {
-      return tasks
+      return _tasks
           .where((t) => t.slug == 'restroom' || t.slug == 'utilities')
           .toList(growable: false);
     }
     if (user.isSalesService5s) {
-      return tasks
+      return _tasks
           .where(
             (t) => const {'sales', 'service', 'gateway-5s'}.contains(t.slug),
           )
           .toList(growable: false);
     }
     if (user.isDosSales || user.isSalesManager) {
-      return tasks
+      return _tasks
           .where((t) => t.slug == 'dealer-operations-standards-sales')
           .toList(growable: false);
     }
     if (user.isDosAftersales || user.isAftersalesChecker) {
-      return tasks
+      return _tasks
           .where((t) {
             if (t.slug == 'dealer-operations-standards') return true;
+            if (user.canAccessSubform &&
+                t.slug == 'dealer-operations-standards-subform') {
+              return true;
+            }
             if (user.canAccessDocumentation &&
                 t.slug == 'dealer-operations-standards-documentation') {
               return true;
@@ -202,29 +225,30 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           })
           .toList(growable: false);
     }
-    if (!_isDos) return tasks;
-    final hasAftersales = tasks.any(
+    if (!_isDos) return _tasks;
+    final hasAftersales = _tasks.any(
       (t) => t.slug == 'dealer-operations-standards',
     );
-    final hasSales = tasks.any(
+    final hasSales = _tasks.any(
       (t) => t.slug == 'dealer-operations-standards-sales',
     );
     if (hasAftersales && hasSales) {
       if (_effectiveTrack == DosAuditTrack.aftersales) {
-        return tasks
+        return _tasks
             .where(
               (t) => const {
                 'dealer-operations-standards',
+                'dealer-operations-standards-subform',
                 'dealer-operations-standards-documentation',
               }.contains(t.slug),
             )
             .toList(growable: false);
       }
-      return tasks
+      return _tasks
           .where((t) => t.slug == 'dealer-operations-standards-sales')
           .toList(growable: false);
     }
-    return tasks;
+    return _tasks;
   }
 
   List<DateTime> get _overviewDays => [
@@ -238,11 +262,13 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
     return tasks
         .where((task) {
+          final isOptional = _isOptionalChecklist(task);
           final status = _statusFor(task);
           return switch (_selectedFilter) {
-            _TaskFilter.todo => status == _TaskStatus.todo,
+            _TaskFilter.todo => status == _TaskStatus.todo && !isOptional,
             _TaskFilter.inProgress => status == _TaskStatus.inProgress,
             _TaskFilter.completed => status == _TaskStatus.completed,
+            _TaskFilter.attention => (task.submission?.issues ?? 0) > 0,
             _TaskFilter.all => true,
           };
         })
@@ -306,35 +332,108 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     }
 
     try {
+      final isToday = DateUtils.isSameDay(_selectedDate, _today);
+      if (isToday && (widget.user.is5sUtilities || widget.user.isUtilities)) {
+        final now = (widget.now ?? DateTime.now)();
+        final syncResult =
+            await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+              repository: _repository,
+              user: widget.user,
+              now: now,
+              date: requestedDate,
+            );
+        if (syncResult != null && mounted && generation == _requestGeneration) {
+          _activeDueSlotKey = syncResult.activeDueSlot;
+          if (syncResult.autoSubmitted && syncResult.missedSlots.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Missed ${syncResult.formattedMissedSlots} Utilities inspection was automatically submitted as NO.',
+                    ),
+                    backgroundColor: GacColors.navy950,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
+            });
+          }
+        }
+      } else {
+        _activeDueSlotKey = null;
+      }
+
       final tasks = await _repository.fetchCatalog(date: requestedDate);
       if (!mounted || generation != _requestGeneration) return;
       final catalog = tasks
-          .where((task) => task.slug != 'dealer-operations-standards-subform')
+          .where((t) => t.slug != 'dealer-operations-standards-subform')
           .toList(growable: false);
-      final existingSlugs = catalog.map((t) => t.slug).toSet();
       final merged = List<ChecklistCatalogItem>.of(catalog);
       final user = widget.user;
-      if (user.canAccessDocumentation &&
-          !existingSlugs.contains(
+      ChecklistSubmissionData? docSubmission;
+      final records = <String, ChecklistLoadResult>{};
+      if (user.canAccessDocumentation) {
+        try {
+          final docRecord = await _repository.fetchChecklist(
             'dealer-operations-standards-documentation',
-          )) {
-        merged.add(
-          const ChecklistCatalogItem(
-            id: 11,
-            slug: 'dealer-operations-standards-documentation',
-            name: 'Dealer Operations Standards - Documentation',
-            description: 'FY2025 Aftersales Standards Compliance Audit Documentation Sheet',
-            version: 1,
-            settings: {'validation_mode': 'dos_documentation'},
-            sectionCount: 3,
-            itemCount: 17,
-            workUnitCount: 17,
-            submission: null,
-          ),
-        );
+            date: requestedDate,
+          );
+          docSubmission = docRecord.submission;
+          records['dealer-operations-standards-documentation'] = docRecord;
+        } catch (_) {
+          // Fallback gracefully
+        }
       }
+
+      final docIndex = merged.indexWhere(
+        (t) => t.slug == 'dealer-operations-standards-documentation',
+      );
+      if (user.canAccessDocumentation) {
+        if (docIndex >= 0) {
+          if (docSubmission != null) {
+            merged[docIndex] = merged[docIndex].copyWith(
+              submission: docSubmission,
+            );
+          }
+        } else {
+          merged.add(
+            ChecklistCatalogItem(
+              id: 11,
+              slug: 'dealer-operations-standards-documentation',
+              name: 'Dealer Operations Standards - Documentation',
+              description:
+                  'FY2025 Aftersales Standards Compliance Audit Documentation Sheet',
+              version: 1,
+              settings: const {'validation_mode': 'dos_documentation'},
+              sectionCount: 3,
+              itemCount: 17,
+              workUnitCount: 17,
+              submission: docSubmission,
+            ),
+          );
+        }
+      }
+      var attentionUnavailable = false;
+      final verified = await Future.wait(merged.map((task) async {
+        if (task.submission == null) return task;
+        try {
+          final record = records[task.slug] ??
+              await _repository.fetchChecklist(task.slug, date: requestedDate);
+          return _withAttentionCount(
+            task,
+            checklistAttentionTargets(record, user).length,
+          );
+        } catch (_) {
+          // Unverified summary counts must never create attention links.
+          attentionUnavailable = true;
+          return _withAttentionCount(task, 0);
+        }
+      }));
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
-        _tasks = merged;
+        _tasks = verified;
+        _attentionUnavailable = attentionUnavailable;
         _loading = false;
         _error = null;
       });
@@ -546,26 +645,137 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         else if (_error != null)
           _ErrorPanel(message: _error!, onRetry: _load)
         else ...[
-          _OverviewPanel(tasks: _trackFilteredTasks),
+          if (_activeDueSlotKey != null &&
+              DateUtils.isSameDay(_selectedDate, _today) &&
+              (widget.user.is5sUtilities || widget.user.isUtilities)) ...[
+            _buildActiveSlotDueBanner(_activeDueSlotKey!),
+            const SizedBox(height: 14),
+          ],
+          _OverviewPanel(tasks: _trackFilteredTasks, user: widget.user),
           const SizedBox(height: 14),
           if (_visibleTasks.isEmpty)
-            _EmptyPanel(hasAssignments: _trackFilteredTasks.isNotEmpty)
+            _EmptyPanel(
+              hasAssignments: _trackFilteredTasks.isNotEmpty,
+              isAttentionFilter: _selectedFilter == _TaskFilter.attention,
+              attentionUnavailable: _attentionUnavailable,
+            )
           else
             for (var index = 0; index < _visibleTasks.length; index++) ...[
               _TaskCard(
                 task: _visibleTasks[index],
-                onOpen: () => _openTask(_visibleTasks[index]),
+                onOpen: () => _openTask(
+                  _visibleTasks[index],
+                  attentionOnly: _selectedFilter == _TaskFilter.attention,
+                ),
               ),
               if (index != _visibleTasks.length - 1) const SizedBox(height: 12),
             ],
+          if (_attentionUnavailable) ...[
+            const SizedBox(height: 12),
+            const Text('Some responses could not be checked. Refresh to verify attention items.'),
+          ],
           if (_trackFilteredTasks.any(
             (task) => (task.submission?.issues ?? 0) > 0,
           )) ...[
             const SizedBox(height: 20),
-            _IssueSummary(tasks: _trackFilteredTasks, onOpen: _openTask),
+            _IssueSummary(
+              tasks: _trackFilteredTasks,
+              onOpen: (task) => _openTask(task, attentionOnly: true),
+            ),
           ],
         ],
       ],
+    );
+  }
+
+  Widget _buildActiveSlotDueBanner(String slotKey) {
+    final slotLabel = UtilitiesChecklistSyncResult.formatSlotKey(slotKey);
+    final utilitiesTask = _tasks.where(_isUtilitiesChecklist).firstOrNull;
+
+    return Container(
+      key: const ValueKey('utilities-active-slot-banner'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F2642),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: GacColors.amber600.withValues(alpha: 0.65),
+          width: 1.5,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22F59E0B),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: GacColors.amber600.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.schedule_rounded,
+              color: GacColors.amber600,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$slotLabel INSPECTION DUE',
+                  style: const TextStyle(
+                    color: GacColors.amber600,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                const Text(
+                  'Please complete and submit your 5S Utilities inspection.',
+                  style: TextStyle(
+                    color: GacColors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton(
+            key: const ValueKey('submit-active-slot-button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: GacColors.amber600,
+              foregroundColor: const Color(0xFF081325),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            onPressed: utilitiesTask == null
+                ? null
+                : () => _openTask(utilitiesTask, initialSlotKey: slotKey),
+            child: const Text(
+              'SUBMIT',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 12,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -573,32 +783,188 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     final tasks = _trackFilteredTasks;
     if (filter == _TaskFilter.all) return tasks.length;
     return tasks.where((task) {
+      final isOptional = _isOptionalChecklist(task);
       final status = _statusFor(task);
       return switch (filter) {
-        _TaskFilter.todo => status == _TaskStatus.todo,
+        _TaskFilter.todo => status == _TaskStatus.todo && !isOptional,
         _TaskFilter.inProgress => status == _TaskStatus.inProgress,
         _TaskFilter.completed => status == _TaskStatus.completed,
+        _TaskFilter.attention => (task.submission?.issues ?? 0) > 0,
         _TaskFilter.all => true,
       };
     }).length;
   }
 
-  Future<void> _openTask(ChecklistCatalogItem task) async {
-    final callback = widget.onOpenChecklist;
-    if (callback != null) {
-      callback(task.slug, _dateParameter(_selectedDate));
-      return;
-    }
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => UserChecklistDetailScreen(
-          slug: task.slug,
-          auditDate: _dateParameter(_selectedDate),
-          repository: _repository,
-          user: widget.user,
-        ),
+  ChecklistCatalogItem _withAttentionCount(ChecklistCatalogItem task, int count) {
+    final submission = task.submission;
+    if (submission == null) return task;
+    return task.copyWith(
+      submission: ChecklistSubmissionData(
+        id: submission.id,
+        status: submission.status,
+        auditDate: submission.auditDate,
+        templateVersion: submission.templateVersion,
+        scores: submission.scores,
+        responses: submission.responses,
+        answeredItems: submission.answeredItems,
+        totalItems: submission.totalItems,
+        completionPercentage: submission.completionPercentage,
+        submittedAt: submission.submittedAt,
+        issueCount: count,
       ),
     );
+  }
+
+  ChecklistCatalogItem? _latestResumeTarget(List<ChecklistCatalogItem> tasks) {
+    final candidates = tasks
+        .where((task) {
+          final submission = task.submission;
+          if (submission == null) return false;
+          if (submission.isSubmitted && !_isUtilitiesChecklist(task)) {
+            return false;
+          }
+          final total = (submission.totalItems ?? 0) > 0
+              ? submission.totalItems!
+              : task.totalWorkUnits;
+          final answered = submission.effectiveAnsweredItems;
+          return (answered > 0 || (submission.completionPercentage ?? 0) > 0) &&
+              (total == 0 || answered < total);
+        })
+        .toList(growable: false);
+
+    if (candidates.isEmpty) return null;
+
+    candidates.sort((left, right) {
+      final leftAnswered = left.submission!.effectiveAnsweredItems;
+      final rightAnswered = right.submission!.effectiveAnsweredItems;
+      final leftTotal = (left.submission!.totalItems ?? 0) > 0
+          ? left.submission!.totalItems!
+          : left.totalWorkUnits;
+      final rightTotal = (right.submission!.totalItems ?? 0) > 0
+          ? right.submission!.totalItems!
+          : right.totalWorkUnits;
+      final leftProgress = leftTotal == 0
+          ? left.submission!.completionPercentage ?? 0
+          : (leftAnswered / leftTotal) * 100;
+      final rightProgress = rightTotal == 0
+          ? right.submission!.completionPercentage ?? 0
+          : (rightAnswered / rightTotal) * 100;
+
+      final progressDelta = rightProgress.compareTo(leftProgress);
+      if (progressDelta != 0) return progressDelta;
+      return rightAnswered.compareTo(leftAnswered);
+    });
+
+    return candidates.first;
+  }
+
+  Future<void> _openTask(
+    ChecklistCatalogItem task, {
+    bool attentionOnly = false,
+    String? initialSlotKey,
+  }) async {
+    final submission = task.submission;
+    final isUtilities = _isUtilitiesChecklist(task);
+    final hasIssues = attentionOnly || (submission?.issues ?? 0) > 0;
+    final resumeTarget = !hasIssues &&
+            submission != null &&
+            (!submission.isSubmitted || isUtilities) &&
+            (submission.effectiveAnsweredItems > 0 ||
+                (submission.completionPercentage ?? 0) > 0) &&
+            !_isOptionalChecklist(task)
+        ? _latestResumeTarget(
+            _visibleTasks.where((t) => !_isOptionalChecklist(t)).toList(growable: false),
+          )
+        : null;
+    final target = resumeTarget ?? task;
+    final targetSubmission = target.submission;
+    final isContinuing =
+        targetSubmission != null &&
+        (!targetSubmission.isSubmitted || _isUtilitiesChecklist(target)) &&
+        targetSubmission.hasStarted;
+    final localNow = (widget.now ?? DateTime.now)();
+    final defaultSlotKey = isContinuing
+        ? checklistSlotForLocalTime(target, localNow)
+        : null;
+    final auditDate = _dateParameter(_selectedDate);
+
+    String? initialItemKey;
+    int? initialCustomerIndex;
+    String? resolvedInitialSlotKey = initialSlotKey ?? defaultSlotKey;
+
+    if (hasIssues) {
+      try {
+        final record = await _repository.fetchChecklist(target.slug, date: auditDate);
+        if (!mounted || auditDate != _dateParameter(_selectedDate)) return;
+        final targets = checklistAttentionTargets(record, widget.user);
+        if (targets.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No responses currently need review.')),
+          );
+          await _load(showSpinner: false);
+          return;
+        }
+        final attention = targets.first;
+        initialItemKey = attention.itemKey;
+        resolvedInitialSlotKey = attention.slotKey;
+        initialCustomerIndex = attention.customerIndex;
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to verify responses. Please try again.')),
+        );
+        return;
+      }
+    }
+
+    final questionCallback = widget.onOpenChecklistWithQuestion;
+    final slotCallback = widget.onOpenChecklistWithSlot;
+    final callback = widget.onOpenChecklist;
+    if (questionCallback != null &&
+        initialCustomerIndex == null &&
+        !attentionOnly) {
+      await questionCallback(
+        target.slug,
+        auditDate,
+        resolvedInitialSlotKey,
+        initialItemKey,
+      );
+    } else if (slotCallback != null && !hasIssues) {
+      try {
+        await (slotCallback as dynamic)(
+          target.slug,
+          auditDate,
+          resolvedInitialSlotKey,
+          initialItemKey,
+        );
+      } on NoSuchMethodError {
+        await slotCallback(target.slug, auditDate, resolvedInitialSlotKey);
+      }
+    } else if (callback != null && !hasIssues) {
+      try {
+        await (callback as dynamic)(target.slug, auditDate, initialItemKey);
+      } on NoSuchMethodError {
+        await callback(target.slug, auditDate);
+      }
+    } else {
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => UserChecklistDetailScreen(
+            slug: target.slug,
+            auditDate: auditDate,
+            initialSlotKey: resolvedInitialSlotKey,
+            initialItemKey: initialItemKey,
+            initialCustomerIndex: initialCustomerIndex,
+            attentionOnly: attentionOnly,
+            repository: _repository,
+            user: widget.user,
+            nowProvider: widget.now,
+            onOpenNotifications: widget.onOpenNotifications,
+            unreadNotifications: widget.unreadNotifications,
+          ),
+        ),
+      );
+    }
     if (mounted) {
       await _load(showSpinner: false);
     }
@@ -747,9 +1113,10 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 }
 
 class _OverviewPanel extends StatelessWidget {
-  const _OverviewPanel({required this.tasks});
+  const _OverviewPanel({required this.tasks, this.user});
 
   final List<ChecklistCatalogItem> tasks;
+  final AuthenticatedUser? user;
 
   @override
   Widget build(BuildContext context) {
@@ -758,7 +1125,10 @@ class _OverviewPanel extends StatelessWidget {
           t.slug == 'dealer-operations-standards' ||
           t.slug == 'dealer-operations-standards-sales',
     );
-    final countTasks = primaryDos.isNotEmpty ? primaryDos : tasks;
+    final mandatoryTasks = tasks.where((t) => !_isOptionalChecklist(t));
+    final countTasks = primaryDos.isNotEmpty ? primaryDos : mandatoryTasks;
+    final totalMandatoryCount =
+        primaryDos.isNotEmpty ? primaryDos.length : mandatoryTasks.length;
     final total = countTasks.fold<int>(0, (sum, task) {
       final submittedTotal = task.submission?.totalItems;
       return sum +
@@ -770,9 +1140,35 @@ class _OverviewPanel extends StatelessWidget {
       0,
       (sum, task) => sum + (task.submission?.answeredItems ?? 0),
     );
-    final completed = countTasks
-        .where((task) => task.submission?.isSubmitted == true)
-        .length;
+
+    final isUtilities = (user != null &&
+            (user!.is5sUtilities || user!.isUtilities)) ||
+        (tasks.isNotEmpty && tasks.every(_isUtilitiesChecklist));
+
+    final int completed;
+    final int totalCount;
+    final String countLabel;
+
+    if (isUtilities && tasks.isNotEmpty) {
+      final totalSlots = tasks.fold<int>(
+        0,
+        (sum, task) => sum + _totalSlotsFor(task),
+      );
+      final completedSlots = tasks.fold<int>(
+        0,
+        (sum, task) => sum + _completedSlotsFor(task),
+      );
+      completed = completedSlots;
+      totalCount = totalSlots > 0 ? totalSlots : 9;
+      countLabel = 'checklists submitted';
+    } else {
+      completed = countTasks
+          .where((task) => _statusFor(task) == _TaskStatus.completed)
+          .length;
+      totalCount = totalMandatoryCount;
+      countLabel = 'tasks submitted';
+    }
+
     final issues = countTasks.fold<int>(
       0,
       (sum, task) => sum + (task.submission?.issues ?? 0),
@@ -803,8 +1199,8 @@ class _OverviewPanel extends StatelessWidget {
                 const SizedBox(height: 9),
                 _MetricLine(
                   icon: Icons.task_alt_rounded,
-                  value: '$completed/${tasks.length}',
-                  label: 'tasks submitted',
+                  value: '$completed/$totalCount',
+                  label: countLabel,
                   color: GacColors.green600,
                 ),
                 const SizedBox(height: 5),
@@ -831,7 +1227,12 @@ class _TaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isOptional = _isOptionalChecklist(task);
     final status = _statusFor(task);
+    final isDone = status == _TaskStatus.completed;
+    final cardColor = isOptional && !isDone
+        ? const Color(0xFF06B6D4)
+        : _statusColor(status);
     final submission = task.submission;
     final total = (submission?.totalItems ?? 0) > 0
         ? submission!.totalItems!
@@ -863,14 +1264,16 @@ class _TaskCard extends StatelessWidget {
                       width: 42,
                       height: 42,
                       decoration: BoxDecoration(
-                        color: _statusColor(status).withValues(alpha: 0.12),
+                        color: cardColor.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(
-                        task.slug == 'restroom'
-                            ? Icons.wc_rounded
-                            : Icons.fact_check_outlined,
-                        color: _statusColor(status),
+                        isOptional
+                            ? Icons.description_rounded
+                            : (task.slug == 'restroom'
+                                ? Icons.wc_rounded
+                                : Icons.fact_check_outlined),
+                        color: cardColor,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -899,7 +1302,7 @@ class _TaskCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _StatusBadge(status: status),
+                    _StatusBadge(status: status, isOptional: isOptional),
                   ],
                 ),
                 if (task.description?.isNotEmpty == true) ...[
@@ -923,7 +1326,7 @@ class _TaskCard extends StatelessWidget {
                     value: progress.clamp(0, 100) / 100,
                     minHeight: 7,
                     backgroundColor: const Color(0xFF153A56),
-                    color: _statusColor(status),
+                    color: cardColor,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -952,7 +1355,7 @@ class _TaskCard extends StatelessWidget {
                       ),
                     const SizedBox(width: 8),
                     Text(
-                      _actionLabel(status),
+                      _actionLabel(status, task),
                       style: const TextStyle(
                         color: GacColors.primary,
                         fontSize: 10,
@@ -1216,22 +1619,27 @@ class _FilterChip extends StatelessWidget {
 }
 
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
+  const _StatusBadge({required this.status, this.isOptional = false});
 
   final _TaskStatus status;
+  final bool isOptional;
 
   @override
   Widget build(BuildContext context) {
+    final showOptional = isOptional && status != _TaskStatus.completed;
+    final color = showOptional ? const Color(0xFF06B6D4) : _statusColor(status);
+    final label = showOptional ? 'OPTIONAL' : _statusLabel(status).toUpperCase();
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
-        color: _statusColor(status).withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        _statusLabel(status).toUpperCase(),
+        label,
         style: TextStyle(
-          color: _statusColor(status),
+          color: color,
           fontSize: 8,
           fontWeight: FontWeight.w900,
           letterSpacing: 0.45,
@@ -1353,29 +1761,46 @@ class _ErrorPanel extends StatelessWidget {
 }
 
 class _EmptyPanel extends StatelessWidget {
-  const _EmptyPanel({required this.hasAssignments});
+  const _EmptyPanel({
+    required this.hasAssignments,
+    this.isAttentionFilter = false,
+    this.attentionUnavailable = false,
+  });
 
   final bool hasAssignments;
+  final bool isAttentionFilter;
+  final bool attentionUnavailable;
 
   @override
   Widget build(BuildContext context) {
+    final message = isAttentionFilter
+        ? (attentionUnavailable
+            ? 'Attention items could not be fully verified. Please refresh.'
+            : 'No checklists currently need attention.')
+        : (hasAssignments
+            ? 'No tasks match this status.'
+            : 'No tasks are assigned for this date.');
+    final icon = isAttentionFilter
+        ? (attentionUnavailable
+            ? Icons.refresh_rounded
+            : Icons.check_circle_outline_rounded)
+        : (hasAssignments
+            ? Icons.filter_alt_off_rounded
+            : Icons.assignment_turned_in_outlined);
+
     return GacContentPanel(
       padding: const EdgeInsets.all(24),
       borderRadius: 18,
       child: Column(
         children: [
           Icon(
-            hasAssignments
-                ? Icons.filter_alt_off_rounded
-                : Icons.assignment_turned_in_outlined,
-            color: GacColors.slate,
+            icon,
+            color: isAttentionFilter ? GacColors.green600 : GacColors.slate,
             size: 36,
           ),
           const SizedBox(height: 10),
           Text(
-            hasAssignments
-                ? 'No tasks match this status.'
-                : 'No tasks are assigned for this date.',
+            message,
             textAlign: TextAlign.center,
             style: const TextStyle(
               color: GacColors.textPrimary,
@@ -1473,11 +1898,63 @@ class _HomeTopBarDelegate extends SliverPersistentHeaderDelegate {
       oldDelegate.onOpenNotifications != onOpenNotifications;
 }
 
+bool _isOptionalChecklist(ChecklistCatalogItem task) {
+  return task.slug == 'dealer-operations-standards-documentation';
+}
+
+bool _isUtilitiesChecklist(ChecklistCatalogItem task) {
+  return task.slug == 'restroom' ||
+      task.slug == 'utilities' ||
+      task.settings['validation_mode'] == 'time_slots' ||
+      task.categoryLabel == 'UTILITIES';
+}
+
+int _totalSlotsFor(ChecklistCatalogItem task) {
+  final rawSlots = task.settings['time_slots'];
+  if (rawSlots is List && rawSlots.isNotEmpty) {
+    return rawSlots.length;
+  }
+  return 9;
+}
+
+int _completedSlotsFor(ChecklistCatalogItem task) {
+  final submission = task.submission;
+  if (submission == null) return 0;
+  final totalSlots = _totalSlotsFor(task);
+
+  final scores = submission.scores;
+  if (scores['completed_slots'] is int) {
+    return (scores['completed_slots'] as int).clamp(0, totalSlots);
+  }
+  final answered = submission.effectiveAnsweredItems;
+  if (task.itemCount > 0 && answered > 0) {
+    return (answered / task.itemCount).floor().clamp(0, totalSlots);
+  }
+  if (submission.isSubmitted) return totalSlots;
+  return 0;
+}
+
+bool _isUtilitiesAllFinished(ChecklistCatalogItem task) {
+  final totalSlots = _totalSlotsFor(task);
+  final completedSlots = _completedSlotsFor(task);
+  return completedSlots >= totalSlots && totalSlots > 0;
+}
+
 _TaskStatus _statusFor(ChecklistCatalogItem task) {
   final submission = task.submission;
   if (submission == null) {
     return _TaskStatus.todo;
   }
+
+  // 5S Utilities checklist consists of 9 scheduled hourly inspections throughout the day.
+  // It remains in To-do until all 9 inspections are completed.
+  if (_isUtilitiesChecklist(task)) {
+    if (_isUtilitiesAllFinished(task)) {
+      return _TaskStatus.completed;
+    }
+    return _TaskStatus.todo;
+  }
+
   final status = submission.status.trim().toLowerCase();
   if (submission.isSubmitted ||
       status == 'submitted' ||
@@ -1495,6 +1972,7 @@ String _filterLabel(_TaskFilter filter) => switch (filter) {
   _TaskFilter.todo => 'To do',
   _TaskFilter.inProgress => 'In progress',
   _TaskFilter.completed => 'Completed',
+  _TaskFilter.attention => 'Attention needed',
 };
 
 String _statusLabel(_TaskStatus status) => switch (status) {
@@ -1503,11 +1981,18 @@ String _statusLabel(_TaskStatus status) => switch (status) {
   _TaskStatus.completed => 'Completed',
 };
 
-String _actionLabel(_TaskStatus status) => switch (status) {
-  _TaskStatus.todo => 'START',
-  _TaskStatus.inProgress => 'CONTINUE',
-  _TaskStatus.completed => 'VIEW',
-};
+String _actionLabel(_TaskStatus status, [ChecklistCatalogItem? task]) {
+  if (task != null &&
+      (task.submission?.hasStarted ?? false) &&
+      status != _TaskStatus.completed) {
+    return 'CONTINUE';
+  }
+  return switch (status) {
+    _TaskStatus.todo => 'START',
+    _TaskStatus.inProgress => 'CONTINUE',
+    _TaskStatus.completed => 'VIEW',
+  };
+}
 
 Color _statusColor(_TaskStatus status) => switch (status) {
   _TaskStatus.todo => GacColors.amber600,
@@ -1516,6 +2001,10 @@ Color _statusColor(_TaskStatus status) => switch (status) {
 };
 
 String _scheduleLabel(ChecklistCatalogItem task) {
+  if (_isOptionalChecklist(task)) {
+    return 'Optional compliance checklist';
+  }
+
   final schedule = task.settings['schedule'];
   if (schedule is Map) {
     final end = schedule['end'];

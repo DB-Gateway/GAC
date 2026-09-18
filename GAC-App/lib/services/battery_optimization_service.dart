@@ -22,8 +22,9 @@ class BatteryOptimizationService {
   Future<bool> isIgnoringBatteryOptimizations() async {
     if (!_isAndroid) return true;
     try {
-      final result =
-          await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations');
+      final result = await _channel.invokeMethod<bool>(
+        'isIgnoringBatteryOptimizations',
+      );
       return result ?? false;
     } on PlatformException {
       return false;

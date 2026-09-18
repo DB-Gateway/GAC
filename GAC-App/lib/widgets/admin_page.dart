@@ -170,9 +170,9 @@ class AdminHeader extends StatelessWidget {
                     onTap: () => onNavigate(AdminDestination.settings),
                     child: const Icon(
                       Icons.settings_outlined,
-                        size: 21,
-                        color: GacColors.black,
-                      ),
+                      size: 21,
+                      color: GacColors.black,
+                    ),
                   ),
                 ],
               ),

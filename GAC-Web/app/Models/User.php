@@ -37,8 +37,6 @@ class User extends Authenticatable
 
     public const ROLE_WORKSHOP_SUPERVISOR = 'WORKSHOP SUP';
 
-    public const ROLE_WORKSHOP = 'WORKSHOP';
-
     public const ROLE_PURCHASING = 'PURCHASING';
 
     public const ROLE_PROPERTY_MANAGEMENT = 'PROPERTY_MANAGEMENT';
@@ -61,7 +59,6 @@ class User extends Authenticatable
         self::ROLE_JOB_CONTROLLER => ['dealer-operations-standards'],
         self::ROLE_PARTS_SUPERVISOR => ['dealer-operations-standards'],
         self::ROLE_WORKSHOP_SUPERVISOR => ['dealer-operations-standards'],
-        self::ROLE_WORKSHOP => ['dealer-operations-standards'],
     ];
 
     protected $fillable = [
@@ -71,6 +68,7 @@ class User extends Authenticatable
         'user_type',
         'pic_assignment_type',
         'account_status',
+        'must_change_password',
         'password',
     ];
 
@@ -85,6 +83,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'must_change_password' => 'boolean',
         ];
     }
 
@@ -120,7 +119,6 @@ class User extends Authenticatable
             self::ROLE_JOB_CONTROLLER => 'Job Controller',
             self::ROLE_PARTS_SUPERVISOR => 'Parts Supervisor',
             self::ROLE_WORKSHOP_SUPERVISOR => 'Workshop Supervisor',
-            self::ROLE_WORKSHOP => 'Workshop',
             self::ROLE_PURCHASING => 'Purchasing',
             self::ROLE_PROPERTY_MANAGEMENT => 'Property Management',
             self::ROLE_INVENTORY => 'Inventory',
@@ -163,6 +161,7 @@ class User extends Authenticatable
             'Workshop_Sup',
             'Worshop Sup',
             'WS',
+            'Workshop',
             'Purchasing Team',
             'PM',
             'Property Management',
@@ -210,9 +209,9 @@ class User extends Authenticatable
             'parts', 'part supervisor', 'parts supervisor', 'parts_supervisor',
             'part supervisor/analys', 'parts supervisor/analys',
             'part supervisor/analyst', 'parts supervisor/analyst' => self::ROLE_PARTS_SUPERVISOR,
-            'ws sup', 'ws.sup', 'workshop sup', 'workshop_sup', 'workshop supervisor',
-            'worshop sup', 'worshop supervisor' => self::ROLE_WORKSHOP_SUPERVISOR,
-            'ws', 'workshop' => self::ROLE_WORKSHOP,
+            'ws', 'ws sup', 'ws.sup', 'workshop', 'workshop sup', 'workshop_sup',
+            'workshop supervisor', 'worshop sup',
+            'worshop supervisor' => self::ROLE_WORKSHOP_SUPERVISOR,
             'purchasing', 'purchasing team', 'purchasing_team' => self::ROLE_PURCHASING,
             'pm', 'property management', 'property_management', 'property management (pm)',
             'pm (property management)', 'property mgmt',
@@ -355,12 +354,6 @@ class User extends Authenticatable
             return true;
         }
 
-        if ($role === self::ROLE_WORKSHOP && $normalizedSlug === 'dealer-operations-standards-subform') {
-            $checkerCode = self::roleCodeFor($checker);
-
-            return in_array($checkerCode, [self::ROLE_WORKSHOP, self::ROLE_WORKSHOP_SUPERVISOR], true);
-        }
-
         return filled($checker) && self::roleCodeFor($checker) === $role;
     }
 
@@ -383,7 +376,6 @@ class User extends Authenticatable
                     self::ROLE_AFTERSALES_MANAGER,
                     self::ROLE_CE_SERVICE,
                     self::ROLE_WORKSHOP_SUPERVISOR,
-                    self::ROLE_WORKSHOP,
                 ], true);
             }
             if ($normalized === 'dealer-operations-standards-documentation') {

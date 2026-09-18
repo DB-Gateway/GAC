@@ -11,10 +11,14 @@
     $escalationCount = (int) ($summary['escalation_count'] ?? 0);
     $overdueCount = (int) ($summary['overdue_count'] ?? 0);
     $overriddenCount = (int) ($summary['overridden_count'] ?? 0);
+    $canViewFindings = $canViewFindings ?? false;
+    $canManageEscalations = $canManageEscalations ?? false;
+    $followUpResponseId = (int) ($followUpResponseId ?? 0);
 @endphp
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    @include('partials.browser-push-head')
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
@@ -258,6 +262,13 @@
                     </div>
                 </div>
 
+                @if ($followUpResponseId)
+                    <div class="summary-follow-up-guidance">
+                        <i class="fas fa-location-dot" aria-hidden="true"></i>
+                        <span>The GM requested follow-up on the highlighted finding. Complete its escalation details below.</span>
+                    </div>
+                @endif
+
                 <div class="table-wrap register-table-wrap">
                     <table class="findings-table" id="findingsTable">
                         <thead>
@@ -281,14 +292,20 @@
                                         $finding['is_overdue'] ? 'is-overdue-row' : '',
                                         $finding['escalation_target'] ? 'is-escalated-row' : '',
                                         $finding['is_overridden'] ? 'is-overridden-row' : '',
+                                        (int) $followUpResponseId === (int) $finding['response_id'] ? 'is-follow-up-highlight' : '',
                                     ];
                                 @endphp
-                                <tr class="{{ implode(' ', array_filter($rowClasses)) }}"
+                                <tr id="findingRow{{ $finding['response_id'] }}"
+                                    class="{{ implode(' ', array_filter($rowClasses)) }}"
                                     data-finding-id="{{ $finding['response_id'] }}"
                                     data-is-no="{{ $isNo ? 'true' : 'false' }}"
                                     data-is-overdue="{{ $finding['is_overdue'] ? 'true' : 'false' }}"
                                     data-is-escalated="{{ $finding['escalation_target'] ? 'true' : 'false' }}"
-                                    data-is-overridden="{{ $finding['is_overridden'] ? 'true' : 'false' }}">
+                                    data-is-overridden="{{ $finding['is_overridden'] ? 'true' : 'false' }}"
+                                    @if ((int) $followUpResponseId === (int) $finding['response_id'])
+                                        data-follow-up-highlight
+                                        tabindex="-1"
+                                    @endif>
 
                                     <!-- Date & Branch -->
                                     <td class="meta-cell">
@@ -300,20 +317,37 @@
                                             <i class="fas fa-user-check" aria-hidden="true"></i> <span>{{ $finding['auditor'] }}</span>
                                             <small class="role-pill-micro {{ strtolower($finding['auditor_role']) }}">{{ $finding['auditor_role'] }}</small>
                                         </div>
+                                        @if (!empty($finding['checker_role']))
+                                            <div class="meta-subtext"><small><i class="fas fa-clipboard-user" aria-hidden="true"></i> Checker: {{ $finding['checker_role'] }}</small></div>
+                                        @endif
+                                        @if (!empty($finding['person_accountable']))
+                                            <div class="meta-subtext"><small><i class="fas fa-user-gear" aria-hidden="true"></i> Accountable: {{ $finding['person_accountable'] }}</small></div>
+                                        @endif
                                     </td>
 
                                     <!-- Checklist & Item Details -->
                                     <td class="item-cell">
-                                        <span class="template-chip-sm">{{ $finding['template_name'] }}</span>
-                                        @if ($finding['is_restroom'] && $finding['slot'])
-                                            <span class="slot-badge"><i class="fas fa-clock" aria-hidden="true"></i> Slot {{ $finding['slot'] }}</span>
-                                        @endif
+                                        <div class="item-tags-row">
+                                            <span class="template-chip-sm">{{ $finding['template_name'] }}</span>
+                                            @if (!empty($finding['category']))
+                                                <span class="category-chip">{{ $finding['category'] }}</span>
+                                            @endif
+                                            @if ($finding['is_restroom'] && $finding['slot'])
+                                                <span class="slot-badge"><i class="fas fa-clock" aria-hidden="true"></i> Slot {{ $finding['slot'] }}</span>
+                                            @endif
+                                        </div>
                                         <div class="item-area-label">{{ $finding['area'] }}</div>
                                         <div class="item-prompt-text">
+                                            @if (!empty($finding['question_number']))
+                                                <span class="question-number">{{ $finding['question_number'] }}.</span>
+                                            @endif
+                                            <strong>{{ $finding['item'] }}</strong>
+                                            @if (!empty($finding['subject']))
+                                                <small class="item-subject">{{ $finding['subject'] }}</small>
+                                            @endif
                                             @if ($finding['item_key'])
                                                 <code class="item-code">{{ $finding['item_key'] }}</code>
                                             @endif
-                                            <strong>{{ $finding['item'] }}</strong>
                                         </div>
                                     </td>
 
@@ -323,6 +357,12 @@
                                             <span class="detail-label">Finding:</span>
                                             <p>{{ $finding['detail'] }}</p>
                                         </div>
+                                        @if (!empty($finding['bom_task']))
+                                            <div class="finding-bom-task">
+                                                <span class="detail-label"><i class="fas fa-list-check" aria-hidden="true"></i> BOM Task:</span>
+                                                <p>{{ $finding['bom_task'] }}</p>
+                                            </div>
+                                        @endif
                                         @if ($finding['action_plan'])
                                             <div class="finding-action-plan">
                                                 <span class="detail-label"><i class="fas fa-wrench" aria-hidden="true"></i> Action Plan:</span>
@@ -330,32 +370,52 @@
                                             </div>
                                         @endif
                                         @if ($finding['attachment_url'])
-                                            <div class="finding-attachment">
-                                                <a href="{{ $finding['attachment_url'] }}" target="_blank" rel="noopener noreferrer" class="attachment-link">
-                                                    <i class="fas fa-image" aria-hidden="true"></i> View Photo Attachment
+                                            <div class="finding-attachment-wrap">
+                                                <a href="{{ $finding['attachment_url'] }}"
+                                                   target="_blank"
+                                                   rel="noopener noreferrer"
+                                                   class="summary-photo-link">
+                                                    <img src="{{ $finding['attachment_url'] }}"
+                                                         alt="Photo evidence for {{ $finding['item_key'] }}"
+                                                         loading="lazy">
+                                                    <span><i class="fas fa-up-right-from-square" aria-hidden="true"></i> View full photo</span>
                                                 </a>
                                             </div>
+                                        @else
+                                            <span class="summary-no-photo"><i class="fas fa-image" aria-hidden="true"></i> No photo attached</span>
                                         @endif
                                     </td>
 
                                     <!-- BOM Suggested Escalation -->
                                     <td class="escalation-cell">
+                                        @if (!empty($finding['recommended_escalation']))
+                                            <div class="workbook-target-label" title="Workbook recommended recipient">
+                                                <small>Workbook target:</small>
+                                                <span class="summary-workbook-target">{{ $finding['recommended_escalation'] }}</span>
+                                            </div>
+                                        @endif
                                         @if ($finding['escalation_target'])
                                             <div class="escalation-badge {{ strtolower(str_replace('_', '-', $finding['escalation_target'])) }}">
-                                                @if ($finding['escalation_target'] === 'general_manager')
-                                                    <i class="fas fa-shield-halved" aria-hidden="true"></i>
-                                                @elseif ($finding['escalation_target'] === 'purchasing')
-                                                    <i class="fas fa-cart-shopping" aria-hidden="true"></i>
-                                                @elseif ($finding['escalation_target'] === 'property_management')
-                                                    <i class="fas fa-user-tie" aria-hidden="true"></i>
-                                                @elseif ($finding['escalation_target'] === 'inventory')
-                                                    <i class="fas fa-boxes-stacked" aria-hidden="true"></i>
-                                                @else
-                                                    <i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i>
-                                                @endif
+                                                <i class="fas {{ match ($finding['escalation_target']) {
+                                                    'general_manager', 'general_manager_ce_central' => 'fa-shield-halved',
+                                                    'purchasing', 'marketing_purchasing' => 'fa-cart-shopping',
+                                                    'property_management', 'marketing_property_management' => 'fa-user-tie',
+                                                    'inventory' => 'fa-boxes-stacked',
+                                                    'bom' => 'fa-user-gear',
+                                                    'ce_central' => 'fa-building-shield',
+                                                    'central_admin' => 'fa-landmark',
+                                                    'dnd' => 'fa-compass',
+                                                    'as_brand_head', 'brand_head' => 'fa-user-tie',
+                                                    'as_head' => 'fa-wrench',
+                                                    'it' => 'fa-laptop-code',
+                                                    'marketing' => 'fa-bullhorn',
+                                                    'logistic' => 'fa-truck',
+                                                    'mmpc_cs_team', 'mmpc_training_team' => 'fa-users',
+                                                    default => 'fa-arrow-up-right-from-square',
+                                                } }}" aria-hidden="true"></i>
                                                 <span>{{ $finding['escalation_target_label'] }}</span>
                                             </div>
-                                            <small class="bom-escalated-note">BOM Suggested Target</small>
+                                            <small class="bom-escalated-note">BOM Target</small>
                                         @else
                                             <span class="no-escalation-text"><i class="fas fa-minus" aria-hidden="true"></i> None specified</span>
                                         @endif
@@ -401,28 +461,63 @@
                                         </div>
                                     </td>
 
-                                    <!-- BOM / GM Exclusive Actions -->
+                                    <!-- BOM / GM Actions -->
                                     <td class="actions-cell">
-                                        @if ($finding['can_override'])
-                                            <button type="button" class="button button-sm button-override"
-                                                    data-action="open-override"
-                                                    data-response-id="{{ $finding['response_id'] }}"
-                                                    data-template="{{ $finding['template_name'] }}"
-                                                    data-branch="{{ $finding['branch'] }}"
-                                                    data-item-key="{{ $finding['item_key'] }}"
-                                                    data-item-prompt="{{ $finding['item'] }}"
-                                                    data-status="{{ $finding['status'] }}"
-                                                    data-escalation="{{ $finding['escalation_target'] }}"
-                                                    data-commitment="{{ $finding['commitment_date_local'] }}"
-                                                    data-action-plan="{{ $finding['action_plan'] }}"
-                                                    data-finding="{{ $finding['detail'] }}">
-                                                <i class="fas fa-pen-to-square" aria-hidden="true"></i> Override / Edit
-                                            </button>
-                                        @else
-                                            <span class="locked-badge" title="Only BOM &amp; GM users are authorized to override and edit NO answers in the checklist">
-                                                <i class="fas fa-lock" aria-hidden="true"></i> BOM/GM Only
-                                            </span>
-                                        @endif
+                                        <div class="actions-stack">
+                                            @if ($canViewFindings && $isNo)
+                                                <div class="follow-up-action-wrap">
+                                                    <button type="button"
+                                                            class="button button-sm summary-follow-up-btn"
+                                                            data-request-finding-follow-up
+                                                            data-endpoint="{{ route('reports.responses.follow-up', $finding['response_id']) }}"
+                                                            title="Request follow-up from the assigned BOM">
+                                                        <i class="fas fa-bell" aria-hidden="true"></i>
+                                                        <span>Follow-up</span>
+                                                    </button>
+                                                    <small class="summary-follow-up-status" role="status" aria-live="polite"></small>
+                                                </div>
+                                            @endif
+
+                                            @if ($canManageEscalations && $isNo)
+                                                <button type="button" class="button button-sm button-escalate"
+                                                        data-action="open-escalate"
+                                                        data-response-id="{{ $finding['response_id'] }}"
+                                                        data-template="{{ $finding['template_name'] }}"
+                                                        data-branch="{{ $finding['branch'] }}"
+                                                        data-item-key="{{ $finding['item_key'] }}"
+                                                        data-item-prompt="{{ $finding['item'] }}"
+                                                        data-finding="{{ $finding['detail'] }}"
+                                                        data-bom-task="{{ $finding['bom_task'] ?? '' }}"
+                                                        data-escalation="{{ $finding['escalation_target'] }}"
+                                                        data-action-plan="{{ $finding['action_plan'] }}"
+                                                        data-commitment="{{ $finding['commitment_date_input'] ?? '' }}"
+                                                        title="Update escalation target, action plan, and commitment date planned">
+                                                    <i class="fas fa-arrow-up-right-dots" aria-hidden="true"></i> Escalate / Action Plan
+                                                </button>
+                                            @endif
+
+                                            @if ($finding['can_override'])
+                                                <button type="button" class="button button-sm button-override"
+                                                        data-action="open-override"
+                                                        data-response-id="{{ $finding['response_id'] }}"
+                                                        data-template="{{ $finding['template_name'] }}"
+                                                        data-branch="{{ $finding['branch'] }}"
+                                                        data-item-key="{{ $finding['item_key'] }}"
+                                                        data-item-prompt="{{ $finding['item'] }}"
+                                                        data-status="{{ $finding['status'] }}"
+                                                        data-escalation="{{ $finding['escalation_target'] }}"
+                                                        data-commitment="{{ $finding['commitment_date_local'] }}"
+                                                        data-action-plan="{{ $finding['action_plan'] }}"
+                                                        data-finding="{{ $finding['detail'] }}"
+                                                        title="Override checklist finding status with justification">
+                                                    <i class="fas fa-pen-to-square" aria-hidden="true"></i> Override / Edit
+                                                </button>
+                                            @elseif (! $canViewFindings && ! $canManageEscalations)
+                                                <span class="locked-badge" title="Only BOM &amp; GM users are authorized to manage or override NO answers in the checklist">
+                                                    <i class="fas fa-lock" aria-hidden="true"></i> View Only
+                                                </span>
+                                            @endif
+                                        </div>
                                     </td>
                                 </tr>
                             @empty
@@ -746,6 +841,93 @@
         </div>
     </div>
 
+    <!-- BOM EXCLUSIVE ESCALATION / ACTION PLAN MODAL -->
+    @if ($canManageEscalations)
+    <div class="override-modal-backdrop" id="escalateModalBackdrop" aria-hidden="true">
+        <div class="override-modal" id="escalateModal" role="dialog" aria-modal="true" aria-labelledby="escalateModalTitle">
+            <div class="modal-header">
+                <div class="modal-title-wrap">
+                    <span class="modal-eyebrow"><i class="fas fa-arrow-up-right-dots"></i> BOM Action</span>
+                    <h3 id="escalateModalTitle">Escalate Finding &amp; Set Action Plan</h3>
+                </div>
+                <button type="button" class="modal-close-btn" id="closeEscalateModal" aria-label="Close dialog">&times;</button>
+            </div>
+
+            <form id="escalateForm" class="modal-form" data-endpoint="{{ route('reports.responses.escalations') }}">
+                <input type="hidden" id="escalateResponseId" name="response_id">
+
+                <div class="modal-item-summary">
+                    <div class="summary-line">
+                        <strong id="escalateTemplateName">Checklist</strong> &middot;
+                        <span id="escalateBranchName">Branch</span>
+                    </div>
+                    <div class="summary-prompt">
+                        <code id="escalateItemKey">CODE</code>
+                        <strong id="escalateItemPrompt">Item text</strong>
+                    </div>
+                </div>
+
+                <div class="summary-modal-callout">
+                    <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                    <span>Set the recipient, Action Plan, and Commitment Date Planned. Saving these details does not change the original <strong>NO</strong> result.</span>
+                </div>
+
+                <div class="modal-fields-grid">
+                    <!-- Finding Detail (Read-only reference) -->
+                    <div class="form-group span-full">
+                        <label class="form-label"><i class="fas fa-triangle-exclamation"></i> Recorded Finding</label>
+                        <div class="finding-static-box" id="escalateFindingDetail"></div>
+                    </div>
+
+                    <div class="form-group span-full" id="escalateBomTaskGroup" style="display:none;">
+                        <label class="form-label"><i class="fas fa-list-check"></i> BOM Task</label>
+                        <div class="finding-static-box bom-task-box" id="escalateBomTask"></div>
+                    </div>
+
+                    <!-- Escalation Recipient -->
+                    <div class="form-group span-half">
+                        <label for="escalateSelectTarget" class="form-label">
+                            <i class="fas fa-share-nodes"></i> Escalate To
+                        </label>
+                        <select id="escalateSelectTarget" name="escalation_target" class="form-select" required>
+                            <option value="">Select a recipient</option>
+                            @foreach ($escalationOptions as $escKey => $escLabel)
+                                <option value="{{ $escKey }}">{{ $escLabel }}</option>
+                            @endforeach
+                        </select>
+                        <span class="field-hint">Department or manager responsible for addressing this finding.</span>
+                    </div>
+
+                    <!-- Commitment Date Planned -->
+                    <div class="form-group span-half">
+                        <label for="escalateCommitmentDate" class="form-label">
+                            <i class="fas fa-calendar-day"></i> Commitment Date Planned
+                        </label>
+                        <input type="date" id="escalateCommitmentDate" name="commitment_date" class="form-input" required>
+                        <span class="field-hint">Target planned resolution date.</span>
+                    </div>
+
+                    <!-- Action Plan -->
+                    <div class="form-group span-full">
+                        <label for="escalateActionPlan" class="form-label">
+                            <i class="fas fa-wrench"></i> Action Plan
+                        </label>
+                        <textarea id="escalateActionPlan" name="action_plan" class="form-textarea" rows="4" maxlength="10000" placeholder="Write the corrective action plan here..." required></textarea>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <div class="summary-escalation-status" id="escalateStatus" role="status" aria-live="polite"></div>
+                    <button type="button" class="button" id="cancelEscalateBtn">Cancel</button>
+                    <button type="submit" class="button primary" id="saveEscalateBtn">
+                        <i class="fas fa-floppy-disk" aria-hidden="true"></i> Save Changes
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    @endif
+
     <!-- Scripts -->
     <script>
         (() => {
@@ -756,10 +938,21 @@
             const mobileMenuButton = document.getElementById('mobileMenuButton');
             const printButton = document.getElementById('printButton');
 
-            sidebarToggle?.addEventListener('click', () => {
-                const collapsed = sidebar?.classList.toggle('desktop-collapsed') ?? false;
-                mainShell?.classList.toggle('sidebar-collapsed', collapsed);
+            const setDesktopSidebarCollapsed = (collapsed) => {
+                if (!sidebar || !mainShell || !sidebarToggle) return;
+
+                sidebar.classList.toggle('desktop-collapsed', collapsed);
+                mainShell.classList.toggle('sidebar-collapsed', collapsed);
+                sidebarToggle.classList.toggle('is-active', collapsed);
                 sidebarToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                sidebarToggle.setAttribute('aria-label', collapsed ? 'Expand navigation' : 'Collapse navigation');
+                const icon = sidebarToggle.querySelector('i');
+                if (icon) icon.className = collapsed ? 'fas fa-angles-right' : 'fas fa-angles-left';
+                localStorage.setItem('gatewaySidebarCollapsed', collapsed ? '1' : '0');
+            };
+
+            sidebarToggle?.addEventListener('click', () => {
+                setDesktopSidebarCollapsed(!sidebar?.classList.contains('desktop-collapsed'));
             });
 
             mobileMenuButton?.addEventListener('click', () => {
@@ -771,6 +964,10 @@
                 sidebar?.classList.remove('mobile-open');
                 sidebarBackdrop.classList.remove('visible');
             });
+
+            if (localStorage.getItem('gatewaySidebarCollapsed') === '1' && window.innerWidth > 900) {
+                setDesktopSidebarCollapsed(true);
+            }
 
             printButton?.addEventListener('click', () => window.print());
 
@@ -800,13 +997,193 @@
                 });
             });
 
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+            // GM Finding Follow-up
+            @if ($canViewFindings)
+            document.querySelectorAll('[data-request-finding-follow-up]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    if (button.disabled) return;
+
+                    const status = button.closest('.follow-up-action-wrap')?.querySelector('.summary-follow-up-status')
+                        || button.parentElement?.querySelector('.summary-follow-up-status');
+                    const label = button.querySelector('span');
+                    button.disabled = true;
+                    button.classList.add('is-loading');
+                    if (label) label.textContent = 'Sending...';
+                    if (status) {
+                        status.className = 'summary-follow-up-status';
+                        status.textContent = '';
+                    }
+
+                    try {
+                        const response = await fetch(button.dataset.endpoint, {
+                            method: 'POST',
+                            headers: {
+                                Accept: 'application/json',
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': csrfToken,
+                            },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({}),
+                        });
+                        const data = await response.json().catch(() => ({}));
+
+                        if (!response.ok) {
+                            throw new Error(data.message || 'The BOM follow-up notification could not be sent.');
+                        }
+
+                        button.classList.remove('is-loading');
+                        button.classList.add('is-sent');
+                        if (label) label.textContent = 'Follow-up Sent';
+                        if (status) {
+                            status.classList.add('is-success');
+                            status.textContent = data.message || 'Follow-up sent to the BOM user.';
+                        }
+                    } catch (error) {
+                        button.disabled = false;
+                        button.classList.remove('is-loading');
+                        if (label) label.textContent = 'Follow-up';
+                        if (status) {
+                            status.classList.add('is-error');
+                            status.textContent = error.message || 'The BOM follow-up notification could not be sent.';
+                        }
+                    }
+                });
+            });
+            @endif
+
+            // BOM Escalation & Action Plan Modal
+            @if ($canManageEscalations)
+            const escalateModal = document.getElementById('escalateModal');
+            const escalateBackdrop = document.getElementById('escalateModalBackdrop');
+            const closeEscalateBtn = document.getElementById('closeEscalateModal');
+            const cancelEscalateBtn = document.getElementById('cancelEscalateBtn');
+            const escalateForm = document.getElementById('escalateForm');
+            const escalateStatus = document.getElementById('escalateStatus');
+            const saveEscalateBtn = document.getElementById('saveEscalateBtn');
+
+            function openEscalateModal(data) {
+                document.getElementById('escalateResponseId').value = data.responseId || '';
+                document.getElementById('escalateTemplateName').textContent = data.template || 'Checklist';
+                document.getElementById('escalateBranchName').textContent = data.branch || 'Branch';
+                document.getElementById('escalateItemKey').textContent = data.itemKey || 'ITEM';
+                document.getElementById('escalateItemPrompt').textContent = data.itemPrompt || '';
+                document.getElementById('escalateFindingDetail').textContent = data.finding || 'No finding recorded.';
+
+                const bomTaskGroup = document.getElementById('escalateBomTaskGroup');
+                const bomTaskBox = document.getElementById('escalateBomTask');
+                if (data.bomTask && data.bomTask.trim()) {
+                    bomTaskBox.textContent = data.bomTask;
+                    bomTaskGroup.style.display = '';
+                } else {
+                    bomTaskGroup.style.display = 'none';
+                }
+
+                document.getElementById('escalateSelectTarget').value = data.escalation || '';
+                document.getElementById('escalateCommitmentDate').value = data.commitment || '';
+                document.getElementById('escalateActionPlan').value = data.actionPlan || '';
+
+                if (escalateStatus) {
+                    escalateStatus.className = 'summary-escalation-status';
+                    escalateStatus.textContent = '';
+                }
+
+                escalateBackdrop?.classList.add('visible');
+                escalateModal?.classList.add('visible');
+            }
+
+            function closeEscalateModalDialog() {
+                escalateBackdrop?.classList.remove('visible');
+                escalateModal?.classList.remove('visible');
+            }
+
+            document.querySelectorAll('[data-action="open-escalate"]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    openEscalateModal({
+                        responseId: btn.dataset.responseId,
+                        template: btn.dataset.template,
+                        branch: btn.dataset.branch,
+                        itemKey: btn.dataset.itemKey,
+                        itemPrompt: btn.dataset.itemPrompt,
+                        finding: btn.dataset.finding,
+                        bomTask: btn.dataset.bomTask,
+                        escalation: btn.dataset.escalation,
+                        actionPlan: btn.dataset.actionPlan,
+                        commitment: btn.dataset.commitment,
+                    });
+                });
+            });
+
+            closeEscalateBtn?.addEventListener('click', closeEscalateModalDialog);
+            cancelEscalateBtn?.addEventListener('click', closeEscalateModalDialog);
+            escalateBackdrop?.addEventListener('click', (e) => {
+                if (e.target === escalateBackdrop) closeEscalateModalDialog();
+            });
+
+            escalateForm?.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const responseId = Number(document.getElementById('escalateResponseId').value);
+                const escalationTarget = document.getElementById('escalateSelectTarget').value || null;
+                const commitmentDate = document.getElementById('escalateCommitmentDate').value || null;
+                const actionPlan = document.getElementById('escalateActionPlan').value.trim() || null;
+
+                saveEscalateBtn.disabled = true;
+                saveEscalateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+                if (escalateStatus) {
+                    escalateStatus.className = 'summary-escalation-status';
+                    escalateStatus.textContent = 'Saving finding follow-up details...';
+                }
+
+                try {
+                    const res = await fetch(escalateForm.dataset.endpoint, {
+                        method: 'PATCH',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': csrfToken,
+                        },
+                        body: JSON.stringify({
+                            responses: [
+                                {
+                                    id: responseId,
+                                    escalation_target: escalationTarget,
+                                    action_plan: actionPlan,
+                                    commitment_date: commitmentDate,
+                                }
+                            ]
+                        }),
+                    });
+
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        throw new Error(data.message || 'The finding follow-up details could not be saved.');
+                    }
+
+                    if (escalateStatus) {
+                        escalateStatus.classList.add('is-success');
+                        escalateStatus.textContent = data.message || 'Finding follow-up details saved.';
+                    }
+
+                    window.location.reload();
+                } catch (err) {
+                    if (escalateStatus) {
+                        escalateStatus.classList.add('is-error');
+                        escalateStatus.textContent = err.message || 'Failed to save finding details.';
+                    }
+                } finally {
+                    saveEscalateBtn.disabled = false;
+                    saveEscalateBtn.innerHTML = '<i class="fas fa-floppy-disk" aria-hidden="true"></i> Save Changes';
+                }
+            });
+            @endif
+
             // Override Modal Handling
             const overrideModal = document.getElementById('overrideModal');
             const modalBackdrop = document.getElementById('overrideModalBackdrop');
             const closeBtn = document.getElementById('closeOverrideModal');
             const cancelBtn = document.getElementById('cancelOverrideBtn');
             const overrideForm = document.getElementById('overrideForm');
-            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 
             function openModal(data) {
                 document.getElementById('overrideResponseId').value = data.responseId || '';
@@ -863,8 +1240,15 @@
             });
 
             document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape' && modalBackdrop.classList.contains('visible')) {
-                    closeModal();
+                if (e.key === 'Escape') {
+                    if (modalBackdrop?.classList.contains('visible')) {
+                        closeModal();
+                    }
+                    @if ($canManageEscalations)
+                    if (escalateBackdrop?.classList.contains('visible')) {
+                        closeEscalateModalDialog();
+                    }
+                    @endif
                 }
             });
 
@@ -924,6 +1308,15 @@
                     saveBtn.innerHTML = '<i class="fas fa-save"></i> Save &amp; Apply Override';
                 }
             });
+
+            // Auto-scroll and focus to highlighted finding if follow_up_response_id is passed
+            const highlightedFollowUp = document.querySelector('[data-follow-up-highlight]');
+            if (highlightedFollowUp) {
+                window.requestAnimationFrame(() => {
+                    highlightedFollowUp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    highlightedFollowUp.focus({ preventScroll: true });
+                });
+            }
         })();
     </script>
 

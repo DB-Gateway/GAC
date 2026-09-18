@@ -12,6 +12,7 @@ import 'package:gac_flutter/services/notification_service.dart';
 import 'package:gac_flutter/theme/gac_theme.dart';
 import 'package:gac_flutter/widgets/dos_tabs_layout.dart';
 import 'package:gac_flutter/widgets/user_tabs_layout.dart';
+import 'package:gac_flutter/widgets/user_floating_header.dart';
 
 class _FakeNotificationRepository implements NotificationRepository {
   @override
@@ -237,6 +238,7 @@ class _FakeChecklistRepository implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) async {
     saveDraftCalls++;
     savedSlug = slug;
@@ -1015,8 +1017,11 @@ void main() {
         await tester.pumpAndSettle();
         expect(
           find.text('DEALER OPERATIONS STANDARDS — AFTERSALES — BASIC'),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(find.text('Aftersales Audit'), findsOneWidget);
+        expect(find.text('Basic · Audit Compliance App'), findsOneWidget);
+        expect(find.byKey(const ValueKey('user-checklist-top-bar')), findsOneWidget);
       },
     );
 
@@ -1698,6 +1703,27 @@ void main() {
           expect(tester.getSize(button).height, greaterThanOrEqualTo(60));
         }
 
+        final questionScroll = find.descendant(
+          of: find.byKey(const ValueKey('dos-question-flow')),
+          matching: find.byType(Scrollable),
+        ).first;
+        await tester.drag(questionScroll, const Offset(0, -180));
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<UserChecklistFloatingHeader>(
+            find.byType(UserChecklistFloatingHeader),
+          ).expanded,
+          isFalse,
+        );
+        await tester.tap(find.byKey(const ValueKey('checklist-header-title')));
+        await tester.pumpAndSettle();
+        expect(tester.state<ScrollableState>(questionScroll).position.pixels, 0);
+        expect(
+          tester.widget<UserChecklistFloatingHeader>(
+            find.byType(UserChecklistFloatingHeader),
+          ).expanded,
+          isTrue,
+        );
         expect(tester.takeException(), isNull);
       },
     );
@@ -1719,6 +1745,7 @@ void main() {
         );
 
         final repo = _FakeChecklistRepository();
+        var notificationsOpened = false;
 
         await tester.pumpWidget(
           MaterialApp(
@@ -1727,6 +1754,8 @@ void main() {
               slug: 'dealer-operations-standards-sales',
               repository: repo,
               user: smUser,
+              onOpenNotifications: () => notificationsOpened = true,
+              unreadNotifications: 3,
             ),
           ),
         );
@@ -1735,21 +1764,26 @@ void main() {
         // SAVE DRAFT button is completely removed on Sales and Aftersales tabs
         expect(find.text('SAVE DRAFT'), findsNothing);
 
-        // SUBMIT button is located at the top header card and AppBar
+        // SUBMIT button is located at the top header card
         expect(
           find.byKey(const ValueKey('checklist-header-submit-button')),
           findsOneWidget,
         );
         expect(
           find.byKey(const ValueKey('checklist-appbar-submit-button')),
-          findsOneWidget,
+          findsNothing,
         );
 
-        // Role badge displayed at top
+        // The shared floating header replaces the redundant track banner.
         expect(
           find.text('DEALER OPERATIONS STANDARDS — SALES'),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(find.text('Sales Audit'), findsOneWidget);
+        expect(find.text('3'), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('user-header-notifications')));
+        expect(notificationsOpened, isTrue);
+        expect(find.byKey(const ValueKey('user-checklist-top-bar')), findsOneWidget);
       },
     );
 
@@ -1996,7 +2030,7 @@ void main() {
 
         // Verify Sales track is now active
         expect(
-          find.text('Dealer Operations Standards - Sales'),
+          find.text('Sales Audit'),
           findsOneWidget,
         );
       },
@@ -2044,8 +2078,10 @@ void main() {
         // Detail screen opens scoped to Basic category
         expect(
           find.text('DEALER OPERATIONS STANDARDS — SALES — BASIC'),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(find.text('Sales Audit'), findsOneWidget);
+        expect(find.text('Basic · Audit Compliance App'), findsOneWidget);
 
         // Leading back button in detail view returns to the category distribution list
         final backButton = find.byTooltip('Back to checklists');
@@ -2170,6 +2206,104 @@ void main() {
         expect(find.text('A standard category item'), findsOneWidget);
         // Since Beyond does not exist in this fixture, Standard is the last category -> button is SUBMIT CHECKLIST
         expect(find.text('SUBMIT CHECKLIST'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'completing all DOS categories turns the final question button into SUBMIT CHECKLIST and submits the full audit',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final repository = _FakeChecklistRepository(
+          checklistResultOverride: const ChecklistLoadResult(
+            template: ChecklistTemplateData(
+              id: 2,
+              slug: 'dealer-operations-standards',
+              name: 'Dealer Operations Standards - Aftersales',
+              description: 'Category persistence fixture',
+              version: 2,
+              settings: {'validation_mode': 'dos'},
+              sections: [
+                ChecklistSectionData(
+                  id: 1,
+                  key: 'facilities',
+                  title: 'Facilities',
+                  sortOrder: 1,
+                  metadata: {},
+                  items: [
+                    ChecklistItemData(
+                      id: 101,
+                      key: 'basic-1',
+                      prompt: 'First basic standard',
+                      sortOrder: 1,
+                      metadata: {'category': 'Basic', 'number': 1},
+                    ),
+                    ChecklistItemData(
+                      id: 102,
+                      key: 'basic-2',
+                      prompt: 'Second basic standard',
+                      sortOrder: 2,
+                      metadata: {'category': 'Basic', 'number': 2},
+                    ),
+                    ChecklistItemData(
+                      id: 103,
+                      key: 'standard-1',
+                      prompt: 'A standard category item',
+                      sortOrder: 3,
+                      metadata: {'category': 'Standard', 'number': 3},
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            submission: null,
+          ),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: UserChecklistDetailScreen(
+              slug: 'dealer-operations-standards',
+              categoryFilter: 'Basic',
+              repository: repository,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Answer Basic questions
+        await tester.tap(find.byKey(const ValueKey('basic-1-response-yes')));
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('dos-next-question')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('basic-2-response-yes')));
+        await tester.pump();
+
+        // Advance to Standard
+        await tester.tap(find.byKey(const ValueKey('dos-next-question')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pumpAndSettle();
+
+        // Standard is active and is the final category
+        expect(find.text('QUESTION 1 OF 1'), findsOneWidget);
+        expect(find.text('SUBMIT CHECKLIST'), findsOneWidget);
+
+        // Answer Standard
+        await tester.tap(find.byKey(const ValueKey('standard-1-response-yes')));
+        await tester.pump();
+
+        // Tap SUBMIT CHECKLIST
+        await tester.tap(find.byKey(const ValueKey('dos-next-question')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // Audit is submitted!
+        expect(repository.submitCalls, 1);
+        expect(find.text('Checklist submitted'), findsOneWidget);
       },
     );
 
@@ -2400,13 +2534,6 @@ void main() {
             name: 'William Bautista',
             email: 'ws.sup@gateway.com',
             userType: 'WORKSHOP SUP',
-            accountStatus: 'active',
-          ),
-          AuthenticatedUser(
-            id: 113,
-            name: 'Walter Ramos',
-            email: 'ws@gateway.com',
-            userType: 'WORKSHOP',
             accountStatus: 'active',
           ),
         ];

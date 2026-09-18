@@ -83,7 +83,7 @@ class PicAssignmentAccessTest extends TestCase
             ->assertJsonCount(2, 'checklists');
 
         $this->assertSame(['sales', 'service'], $response->collect('checklists')->pluck('slug')->all());
-        $this->assertSame([41, 33], $response->collect('checklists')->pluck('work_unit_count')->all());
+        $this->assertSame([44, 33], $response->collect('checklists')->pluck('work_unit_count')->all());
     }
 
     public function test_catalog_submission_summary_includes_a_stable_issue_count(): void
@@ -106,7 +106,7 @@ class PicAssignmentAccessTest extends TestCase
             ->assertJsonPath('checklists.0.slug', 'sales')
             ->assertJsonPath('checklists.0.submission.issue_count', 1)
             ->assertJsonPath('checklists.0.submission.answered_items', 1)
-            ->assertJsonPath('checklists.0.submission.total_items', 41);
+            ->assertJsonPath('checklists.0.submission.total_items', 44);
     }
 
     public function test_unauthorized_direct_load_save_submit_and_reset_are_all_forbidden(): void

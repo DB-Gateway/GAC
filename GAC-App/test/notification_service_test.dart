@@ -72,6 +72,42 @@ void main() {
       expect(controller.notifications.every((item) => !item.unread), isTrue);
     },
   );
+
+  test(
+    'controller presents newly loaded inbox items to Android bridge',
+    () async {
+      final repository = _InboxRepository();
+      List<UserNotification>? presented;
+      final controller = UserNotificationController(
+        repository: repository,
+        systemNotificationPresenter: (notifications) async {
+          presented = notifications.toList(growable: false);
+          return notifications.where((item) => item.unread).length;
+        },
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+
+      expect(presented?.map((item) => item.id), ['one', 'two']);
+      expect(controller.error, isNull);
+    },
+  );
+
+  test('Android bridge errors do not hide a loaded in-app inbox', () async {
+    final controller = UserNotificationController(
+      repository: _InboxRepository(),
+      systemNotificationPresenter: (_) =>
+          Future<int>.error(StateError('Android notifications unavailable')),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.load();
+
+    expect(controller.notifications, hasLength(2));
+    expect(controller.unreadCount, 2);
+    expect(controller.error, isNull);
+  });
 }
 
 class _InboxRepository implements NotificationRepository {

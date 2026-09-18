@@ -1158,17 +1158,20 @@ a:focus-visible {
     background: var(--success);
 }
 
-.toast strong {
+.toast strong,
+.toast-title {
     display: block;
     margin-bottom: 3px;
     font-size: 12px;
 }
 
-.toast span {
+.toast span:not(.toast-mark),
+.toast-message {
     color: var(--muted);
     font-size: 11px;
     line-height: 1.45;
 }
+
 
 .sidebar-backdrop {
     position: fixed;

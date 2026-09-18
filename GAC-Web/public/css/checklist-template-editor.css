@@ -1,0 +1,136 @@
+.database-checklist .template-editor-dialog {
+    width: min(960px, calc(100vw - 24px));
+}
+
+.database-checklist .editor-order-help {
+    margin: 0 0 16px;
+    padding: 12px;
+    border-radius: 6px;
+    color: var(--slate-600);
+    background: var(--fog-100);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.database-checklist .editor-order-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.database-checklist .editor-section {
+    min-width: 0;
+}
+
+.database-checklist .editor-section-head {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.database-checklist .editor-item {
+    display: block;
+    min-width: 0;
+    margin-top: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.database-checklist .editor-item-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+}
+
+.database-checklist .editor-question-number {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+}
+
+.database-checklist .editor-item-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+}
+
+.database-checklist .editor-item-fields .wide {
+    grid-column: 1 / -1;
+}
+
+.database-checklist .editor-section .field {
+    display: grid;
+    min-width: 0;
+    gap: 6px;
+    margin: 0;
+}
+
+.database-checklist .editor-section .field > span {
+    color: var(--slate-600);
+    font-size: 11px;
+    font-weight: 750;
+}
+
+.database-checklist .editor-section :is(input, select, textarea) {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding: 9px 10px;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.database-checklist .editor-item textarea {
+    min-height: 66px;
+    resize: vertical;
+}
+
+.database-checklist .editor-item .editor-guidance {
+    min-height: 86px;
+}
+
+.database-checklist .editor-section select:disabled {
+    color: var(--slate-600);
+    background: var(--fog-100);
+    cursor: default;
+}
+
+.database-checklist .template-editor-shell .editor-remove {
+    position: static;
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    min-height: 28px;
+    margin: 0;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1;
+    border-radius: 5px;
+}
+
+.database-checklist #checklistInstructions {
+    white-space: pre-line;
+}
+
+.database-checklist :is(#checklistInstructionsNotice, #pageChecklistDescription)[hidden] {
+    display: none !important;
+}
+
+@media (max-width: 680px) {
+    .database-checklist .template-editor-body { padding: 12px; }
+    .database-checklist .editor-section { padding: 10px; }
+    .database-checklist .editor-item-fields { grid-template-columns: 1fr; padding: 11px; }
+    .database-checklist .template-editor-header,
+    .database-checklist .template-editor-footer { padding: 12px; flex-wrap: wrap; }
+}

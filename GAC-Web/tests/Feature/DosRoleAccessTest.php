@@ -34,7 +34,8 @@ class DosRoleAccessTest extends TestCase
             'Parts' => User::ROLE_PARTS_SUPERVISOR,
             'WS SUP' => User::ROLE_WORKSHOP_SUPERVISOR,
             'WORSHOP SUP' => User::ROLE_WORKSHOP_SUPERVISOR,
-            'WS' => User::ROLE_WORKSHOP,
+            'WS' => User::ROLE_WORKSHOP_SUPERVISOR,
+            'Workshop' => User::ROLE_WORKSHOP_SUPERVISOR,
         ];
 
         foreach ($aliases as $alias => $expected) {
@@ -79,8 +80,7 @@ class DosRoleAccessTest extends TestCase
             User::ROLE_CE_SERVICE => ['dealer-operations-standards', 9],
             User::ROLE_JOB_CONTROLLER => ['dealer-operations-standards', 1],
             User::ROLE_PARTS_SUPERVISOR => ['dealer-operations-standards', 3],
-            User::ROLE_WORKSHOP_SUPERVISOR => ['dealer-operations-standards', 1],
-            User::ROLE_WORKSHOP => ['dealer-operations-standards', 11],
+            User::ROLE_WORKSHOP_SUPERVISOR => ['dealer-operations-standards', 12],
         ];
 
         foreach ($cases as $role => [$slug, $expectedItemCount]) {
@@ -147,8 +147,10 @@ class DosRoleAccessTest extends TestCase
         $items = collect($response->json('template.sections'))
             ->flatMap(fn (array $section): array => $section['items']);
 
-        $this->assertCount(1, $items);
-        $this->assertSame($item->key, $items->first()['key']);
+        $this->assertCount(12, $items);
+        $this->assertTrue($items->contains(
+            fn (array $visibleItem): bool => $visibleItem['key'] === $item->key
+        ));
     }
 
     public function test_checker_backfill_migration_normalizes_existing_dos_templates(): void
@@ -188,13 +190,46 @@ class DosRoleAccessTest extends TestCase
             ));
 
         $this->assertSame([User::ROLE_SALES_MANAGER => 22], $salesCounts->all());
-        $this->assertCount(6, $aftersalesCounts);
+        $this->assertCount(5, $aftersalesCounts);
         $this->assertSame(50, $aftersalesCounts->get(User::ROLE_AFTERSALES_MANAGER));
         $this->assertSame(9, $aftersalesCounts->get(User::ROLE_CE_SERVICE));
-        $this->assertSame(11, $aftersalesCounts->get(User::ROLE_WORKSHOP));
+        $this->assertSame(12, $aftersalesCounts->get(User::ROLE_WORKSHOP_SUPERVISOR));
         $this->assertSame(3, $aftersalesCounts->get(User::ROLE_PARTS_SUPERVISOR));
         $this->assertSame(1, $aftersalesCounts->get(User::ROLE_JOB_CONTROLLER));
-        $this->assertSame(1, $aftersalesCounts->get(User::ROLE_WORKSHOP_SUPERVISOR));
+    }
+
+    public function test_workshop_consolidation_migration_normalizes_existing_rows_and_users(): void
+    {
+        $template = ChecklistTemplate::where('slug', 'dealer-operations-standards')->firstOrFail();
+        $workshopItems = $template->items()
+            ->get()
+            ->filter(fn (ChecklistItem $item): bool => User::roleCodeFor(
+                data_get($item->metadata, 'checker')
+            ) === User::ROLE_WORKSHOP_SUPERVISOR)
+            ->values();
+        $this->assertCount(12, $workshopItems);
+
+        $legacyAliases = ['WS', 'WORSHOP SUP', 'WS SUP'];
+        foreach ($workshopItems as $index => $item) {
+            $metadata = $item->metadata;
+            $metadata['checker'] = $legacyAliases[$index % count($legacyAliases)];
+            $item->update(['metadata' => $metadata]);
+        }
+
+        $legacyUser = User::factory()->create(['user_type' => 'WORKSHOP']);
+        $migration = require database_path(
+            'migrations/2026_09_09_000000_consolidate_workshop_supervisor_role.php'
+        );
+        $migration->up();
+
+        $this->assertSame(User::ROLE_WORKSHOP_SUPERVISOR, $legacyUser->fresh()->user_type);
+        $this->assertTrue($template->items()
+            ->whereIn('id', $workshopItems->pluck('id'))
+            ->get()
+            ->every(fn (ChecklistItem $item): bool => data_get(
+                $item->metadata,
+                'checker'
+            ) === User::ROLE_WORKSHOP_SUPERVISOR));
     }
 
     public function test_dos_role_cannot_write_an_item_assigned_to_another_checker(): void

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthController extends Controller
 {
@@ -71,6 +72,7 @@ class AuthController extends Controller
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
             'device_name' => ['nullable', 'string', 'max:100'],
+            'notification_device_id' => ['nullable', 'uuid'],
         ]);
 
         $user = User::query()
@@ -95,10 +97,19 @@ class AuthController extends Controller
             $credentials['device_name'] ?? 'gateway-expo-app'
         )->plainTextToken;
 
+        $notificationToken = null;
+        if (! empty($credentials['notification_device_id'])) {
+            $deviceName = 'notifications:'.$credentials['notification_device_id'];
+            // A successful login replaces this installation's previous recipient.
+            PersonalAccessToken::where('name', $deviceName)->delete();
+            $notificationToken = $user->createToken($deviceName, ['notifications:read'])->plainTextToken;
+        }
+
         return response()->json([
             'message' => 'Login successful.',
             'token' => $token,
             'token_type' => 'Bearer',
+            'notification_token' => $notificationToken,
             'user' => $this->userPayload($user),
         ]);
     }

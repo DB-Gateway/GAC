@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ChecklistCatalogController;
+use App\Http\Controllers\Api\EscalationFollowUpController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\UserApprovalController;
@@ -21,12 +22,21 @@ Route::post('/login', [AuthController::class, 'login'])
 Route::post('/register', [AuthController::class, 'register'])
     ->middleware('throttle:5,1');
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware([\App\Http\Middleware\AuthenticateNotificationDevice::class, 'throttle:120,1'])->group(function () {
+    Route::get('/device-notifications', [NotificationController::class, 'index']);
+    Route::patch('/device-notifications/read-all', [NotificationController::class, 'markAllRead']);
+    Route::patch('/device-notifications/{notification}/read', [NotificationController::class, 'markRead']);
+});
+
+Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureInteractiveApiToken::class])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
     Route::get('/notifications', [NotificationController::class, 'index'])
         ->name('api.notifications.index');
+    Route::post('/notifications/{notification}/follow-ups', [EscalationFollowUpController::class, 'store'])
+        ->middleware('throttle:10,1')
+        ->name('api.notifications.follow-ups.store');
     Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead'])
         ->name('api.notifications.read-all');
     Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead'])
@@ -58,6 +68,10 @@ Route::middleware('auth:sanctum')->group(function () {
         ->name('api.checklists.reset');
     Route::put('/checklists/{template}', [ChecklistController::class, 'updateTemplate'])
         ->name('api.checklists.update');
+    Route::post('/checklists/templates', [ChecklistController::class, 'storeTemplate'])
+        ->name('api.checklists.template.store');
+    Route::post('/checklists/{template}/toggle-item', [ChecklistController::class, 'toggleItem'])
+        ->name('api.checklists.item.toggle');
 
     Route::get('/users/pending', [UserApprovalController::class, 'index']);
     Route::patch('/users/{user}/approve', [UserApprovalController::class, 'approve']);

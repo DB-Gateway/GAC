@@ -75,16 +75,21 @@ class UserManagementController extends Controller
         ]);
     }
 
+    /** The default password assigned to every new account created by the GM. */
+    public const PRESET_PASSWORD = 'Gateway@2026';
+
     public function store(Request $request): RedirectResponse
     {
         $this->ensureCanManageUsers($request);
 
-        $validated = $this->validatedAccountData($request);
+        $validated = $this->validatedAccountData($request, forCreate: true);
         $validated['account_status'] = 'active';
+        $validated['password'] = self::PRESET_PASSWORD;
+        $validated['must_change_password'] = true;
 
         User::create($validated);
 
-        return back()->with('status', 'User account created.');
+        return back()->with('status', 'User account created with the default password.');
     }
 
     public function update(Request $request, User $user): RedirectResponse
@@ -115,13 +120,33 @@ class UserManagementController extends Controller
         ]);
 
         DB::transaction(function () use ($user, $validated): void {
-            $user->forceFill(['password' => $validated['password']]);
+            $user->forceFill([
+                'password' => $validated['password'],
+                'must_change_password' => false,
+            ]);
             $user->setRememberToken(Str::random(60));
             $user->save();
             $user->tokens()->delete();
         });
 
         return back()->with('status', 'User password updated.');
+    }
+
+    public function resetPassword(Request $request, User $user): RedirectResponse
+    {
+        $this->ensureCanManageUsers($request);
+
+        DB::transaction(function () use ($user): void {
+            $user->forceFill([
+                'password' => self::PRESET_PASSWORD,
+                'must_change_password' => true,
+            ]);
+            $user->setRememberToken(Str::random(60));
+            $user->save();
+            $user->tokens()->delete();
+        });
+
+        return back()->with('status', 'Password reset to the default. The user will be asked to change it on next login.');
     }
 
     public function updateStatus(Request $request, User $user): RedirectResponse
@@ -150,7 +175,7 @@ class UserManagementController extends Controller
         );
     }
 
-    private function validatedAccountData(Request $request, ?User $user = null): array
+    private function validatedAccountData(Request $request, ?User $user = null, bool $forCreate = false): array
     {
         $input = $request->all();
         if ($user !== null && ! array_key_exists('pic_assignment_type', $input)) {
@@ -173,7 +198,9 @@ class UserManagementController extends Controller
             'account_status' => [$user === null ? 'nullable' : 'required', Rule::in(['active', 'pending', 'inactive', 'rejected'])],
         ];
 
-        if ($user === null) {
+        if ($forCreate) {
+            // Password is set server-side from the preset constant — no user input needed.
+        } elseif ($user === null) {
             $rules['password'] = ['required', 'string', 'min:8', 'confirmed'];
         } else {
             $rules['password'] = ['prohibited'];

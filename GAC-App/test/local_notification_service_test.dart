@@ -120,15 +120,99 @@ void main() {
         isEmpty,
       );
     });
+
+    test(
+      'plans a same-day month-end reminder for DOS Sales and Aftersales',
+      () {
+        const roles = <String, String>{
+          'DOS_SALES': 'dealer-operations-standards-sales',
+          'SALES MANAGER': 'dealer-operations-standards-sales',
+          'DOS_AFTERSALES': 'dealer-operations-standards',
+          'ASM': 'dealer-operations-standards',
+          'CE SERVICE': 'dealer-operations-standards',
+          'JC': 'dealer-operations-standards',
+          'PARTS': 'dealer-operations-standards',
+          'WS SUP': 'dealer-operations-standards',
+        };
+
+        for (final entry in roles.entries) {
+          final reminders = TaskReminderPlanner.forUser(
+            user: AuthenticatedUser(
+              id: entry.key.hashCode,
+              name: entry.key,
+              email: 'dos@gateway.test',
+              userType: entry.key,
+              accountStatus: 'active',
+            ),
+            checklists: const [],
+          );
+
+          expect(reminders, hasLength(1), reason: entry.key);
+          expect(
+            reminders.single.kind,
+            TaskReminderKind.dosMonthEnd,
+            reason: entry.key,
+          );
+          expect(reminders.single.hour, 8, reason: entry.key);
+          expect(reminders.single.minute, 0, reason: entry.key);
+          expect(reminders.single.body, contains('today'), reason: entry.key);
+          expect(
+            reminders.single.body,
+            contains('11:59 PM'),
+            reason: entry.key,
+          );
+          expect(
+            reminders.single.payload.templateSlug,
+            entry.value,
+            reason: entry.key,
+          );
+          expect(
+            reminders.single.payload.event,
+            'dos_month_end_due',
+            reason: entry.key,
+          );
+        }
+      },
+    );
+
+    test('calculates real month ends including leap years', () {
+      final occurrences = TaskReminderPlanner.monthEndOccurrences(
+        DateTime(2028, 1, 15, 9),
+        count: 4,
+      );
+
+      expect(occurrences, [
+        DateTime(2028, 1, 31, 8),
+        DateTime(2028, 2, 29, 8),
+        DateTime(2028, 3, 31, 8),
+        DateTime(2028, 4, 30, 8),
+      ]);
+    });
+
+    test('moves to next month once the current month-end alarm has passed', () {
+      final occurrences = TaskReminderPlanner.monthEndOccurrences(
+        DateTime(2026, 9, 30, 8),
+        count: 2,
+      );
+
+      expect(occurrences, [
+        DateTime(2026, 10, 31, 8),
+        DateTime(2026, 11, 30, 8),
+      ]);
+    });
   });
 
   group('TaskReminderPayload', () {
     test('round-trips the checklist deep-link fields', () {
       const original = TaskReminderPayload(
-        event: 'utilities_due_soon',
-        templateSlug: 'restroom',
+        event: 'checklist_draft_reminder',
+        templateSlug: 'dealer-operations-standards',
         slotKey: '09:00',
         auditDate: '2026-09-03',
+        notificationId: 'notice-42',
+        submissionId: 42,
+        itemKey: 'documentation-2',
+        customerIndex: 1,
       );
 
       final parsed = TaskReminderPayload.tryParse(original.encode());
@@ -137,6 +221,11 @@ void main() {
       expect(parsed?.templateSlug, original.templateSlug);
       expect(parsed?.slotKey, original.slotKey);
       expect(parsed?.auditDate, original.auditDate);
+      expect(parsed?.notificationId, original.notificationId);
+      expect(parsed?.submissionId, original.submissionId);
+      expect(parsed?.itemKey, original.itemKey);
+      expect(parsed?.customerIndex, original.customerIndex);
+      expect(parsed?.targetsDosChecklist, isTrue);
     });
 
     test('accepts checklist_slug alias and rejects malformed payloads', () {
@@ -449,7 +538,7 @@ void main() {
       },
     );
 
-    testWidgets('DOS settings hide Utilities and 5S test reminders', (
+    testWidgets('DOS settings offer only the DOS month-end reminder test', (
       tester,
     ) async {
       SharedPreferences.setMockInitialValues({});
@@ -485,15 +574,22 @@ void main() {
         findsNothing,
       );
       expect(
+        find.byKey(const ValueKey('test-dos-month-end-notification')),
+        findsOneWidget,
+      );
+      expect(find.text('Month-end DOS reminder'), findsOneWidget);
+      expect(find.textContaining('finish by 11:59 PM'), findsOneWidget);
+      expect(find.text('EDIT'), findsNothing);
+      expect(
         find.byKey(const ValueKey('test-background-alert')),
         findsOneWidget,
       );
-      expect(find.textContaining('DOS assignments do not use'), findsOneWidget);
+      expect(find.textContaining('final calendar day'), findsWidgets);
     });
   });
 
   group('Offline and Role-Based Planning (Timed-Out Users)', () {
-    test('does not schedule Utilities reminders for DOS-only roles', () {
+    test('schedules only the month-end checklist reminder for DOS roles', () {
       for (final role in const [
         'SALES_MANAGER',
         'ASM',
@@ -503,15 +599,14 @@ void main() {
         'WS SUP',
       ]) {
         expect(TaskReminderPlanner.isDosRole(role), isTrue, reason: role);
-        expect(
-          TaskReminderPlanner.forRole(
-            userType: role,
-            assignment: role,
-            checklists: const [],
-          ),
-          isEmpty,
-          reason: role,
+        final plan = TaskReminderPlanner.forRole(
+          userType: role,
+          assignment: role,
+          checklists: const [],
         );
+        expect(plan, hasLength(1), reason: role);
+        expect(plan.single.kind, TaskReminderKind.dosMonthEnd, reason: role);
+        expect(plan.single.body, contains('11:59 PM'), reason: role);
       }
     });
 
@@ -522,13 +617,20 @@ void main() {
           isTrue,
           reason: legacyRole,
         );
+        final plan = TaskReminderPlanner.forRole(
+          userType: legacyRole,
+          assignment: legacyRole,
+          checklists: const [],
+        );
+        expect(plan, hasLength(1), reason: legacyRole);
         expect(
-          TaskReminderPlanner.forRole(
-            userType: legacyRole,
-            assignment: legacyRole,
-            checklists: const [],
-          ),
-          isEmpty,
+          plan.single.kind,
+          TaskReminderKind.dosMonthEnd,
+          reason: legacyRole,
+        );
+        expect(
+          plan.single.payload.templateSlug,
+          'dealer-operations-standards',
           reason: legacyRole,
         );
       }

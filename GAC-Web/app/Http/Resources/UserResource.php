@@ -22,6 +22,7 @@ class UserResource extends JsonResource
             'pic_assignment_type' => $this->picAssignmentType(),
             'pic_assignment_label' => $this->picAssignmentLabel(),
             'account_status' => $this->account_status,
+            'must_change_password' => (bool) $this->must_change_password,
             'avatar_url' => $this->avatarUrl(),
         ];
     }

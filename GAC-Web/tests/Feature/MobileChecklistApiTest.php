@@ -35,7 +35,7 @@ class MobileChecklistApiTest extends TestCase
             ->assertJsonPath('branch', 'Pasong Tamo')
             ->assertJsonCount(2, 'checklists')
             ->assertJsonMissing(['slug' => 'gateway-5s'])
-            ->assertJsonFragment(['slug' => 'sales', 'item_count' => 41])
+            ->assertJsonFragment(['slug' => 'sales', 'item_count' => 44])
             ->assertJsonFragment(['slug' => 'service', 'item_count' => 33])
             ->assertJsonMissing(['slug' => 'dealer-operations-standards'])
             ->assertJsonMissing(['slug' => 'restroom']);

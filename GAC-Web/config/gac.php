@@ -84,7 +84,6 @@ return [
         'Job Controller',
         'Parts Supervisor',
         'Workshop Supervisor',
-        'Workshop',
         'Branch Operations Manager',
         'Compliance Administrator',
     ],

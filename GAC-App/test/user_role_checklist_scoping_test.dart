@@ -111,6 +111,7 @@ class _FakeCatalogRepository implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) => throw UnimplementedError();
 
   @override
@@ -511,7 +512,7 @@ void main() {
         const wsUser = AuthenticatedUser(
           id: 6,
           name: 'Workshop Supervisor',
-          email: 'ws@gateway.com',
+          email: 'ws.sup@gateway.com',
           userType: 'WS SUP',
           accountStatus: 'active',
         );

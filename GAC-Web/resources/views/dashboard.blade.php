@@ -4,32 +4,15 @@
     $reportQuery = array_filter($reportFilters, static fn ($value) => $value !== null && $value !== '');
     $reportsTabUrl = route('dashboard', array_merge(['tab' => 'reports'], $reportQuery));
     $usersTabUrl = route('dashboard', ['tab' => 'users']);
-    [$pageTitle, $topbarTitle, $topbarSubtitle] = match ($activeTab) {
-        'reports' => [
-            'Gateway Audit Compliance | Analytics',
-            'Reports & Analytics',
-            'Compliance performance, trends, and findings across saved audits',
-        ],
-        'users' => [
-            'Gateway Audit Compliance | User Usages',
-            'User Usages',
-            'Account status, role coverage, and branch distribution',
-        ],
-        default => [
-            'Gateway Audit Compliance Dashboard',
-            'Gateway Audit Compliance Dashboard',
-            'Live compliance overview across branches, checklists, and findings',
-        ],
-    };
 @endphp
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    @include('partials.browser-push-head')
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#F5F6F8">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ $pageTitle }}</title>
     <link rel="icon" type="image/png" href="{{ asset('images/G-logo-no-bg.png') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
@@ -42,8 +25,6 @@
 
     <div class="main" id="mainShell">
         @include('partials.app-topbar', [
-            'topbarTitle' => $topbarTitle,
-            'topbarSubtitle' => $topbarSubtitle,
             'notificationId' => 'notificationsBtn',
             'notificationBadge' => (string) $notificationBadgeCount,
             'notificationBadgeId' => 'notificationsBadge',
@@ -51,7 +32,15 @@
         ])
 
         <main class="dashboard-content">
-            @if ($activeTab === 'reports')
+            @if ($activeTab === 'follow-up' && $canAccessFollowUp)
+                <section class="workspace-panel follow-up-workspace" id="workspace-panel-follow-up" aria-label="Finding follow-up">
+                    @include('dashboard.follow-up')
+                </section>
+            @elseif ($activeTab === 'override')
+                <section class="workspace-panel override-workspace" id="workspace-panel-override" aria-label="Checklist override">
+                    @include('dashboard.override')
+                </section>
+            @elseif ($activeTab === 'reports')
                 <section class="workspace-panel" id="workspace-panel-reports" aria-label="Reports and analytics">
                     @include('dashboard.reports')
                 </section>

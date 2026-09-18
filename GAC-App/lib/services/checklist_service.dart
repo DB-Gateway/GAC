@@ -15,6 +15,7 @@ abstract interface class ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   });
 
   Future<ChecklistSubmissionData> submit(
@@ -86,7 +87,14 @@ class ChecklistApiService implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
-  }) => _save(slug, action: 'draft', date: date, responses: responses);
+    Map<String, dynamic>? context,
+  }) => _save(
+    slug,
+    action: 'draft',
+    date: date,
+    responses: responses,
+    context: context,
+  );
 
   @override
   Future<ChecklistSubmissionData> submit(
@@ -163,11 +171,31 @@ class ChecklistApiService implements ChecklistRepository {
     required String action,
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) async {
+    // A local DateTime's ISO string has no UTC offset. Laravel would therefore
+    // parse a Philippine 4 PM value as 4 PM UTC and shift it to midnight on the
+    // following day. Send an absolute instant so hourly-slot validation uses
+    // the same moment on both the device and server.
+    final nowIso = DateTime.now().toUtc().toIso8601String();
     final data = await _request(
       'POST',
       '/checklists/${Uri.encodeComponent(slug)}/$action',
-      body: {'date': date, 'responses': responses},
+      body: {
+        'date': date,
+        'responses': responses,
+        'client_time': nowIso,
+        'client_timezone': gacBusinessTimezone,
+        'context': {
+          ...?context,
+          'client_time': nowIso,
+          'client_timezone': gacBusinessTimezone,
+        },
+      },
+      headers: {
+        'X-Client-Time': nowIso,
+        'X-Client-Timezone': gacBusinessTimezone,
+      },
     );
     try {
       return ChecklistSubmissionData.fromJson(data['submission']);
@@ -181,6 +209,7 @@ class ChecklistApiService implements ChecklistRepository {
     String endpoint, {
     Map<String, String>? query,
     Map<String, dynamic>? body,
+    Map<String, String>? headers,
   }) async {
     final preferences = await _preferencesLoader();
     final token = preferences.getString(gacAuthTokenKey);
@@ -208,6 +237,7 @@ class ChecklistApiService implements ChecklistRepository {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
+          ...?headers,
         });
       if (body != null) request.body = jsonEncode(body);
       response = await http.Response.fromStream(

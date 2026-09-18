@@ -12,7 +12,7 @@ class DosOperationalUserSeederTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_seeder_idempotently_creates_the_seven_dos_accounts_without_resetting_password_or_state(): void
+    public function test_seeder_idempotently_creates_the_six_dos_accounts_without_resetting_password_or_state(): void
     {
         config()->set('gac.seeded_dos_accounts', [
             'branch' => 'Pasong Tamo',
@@ -28,14 +28,14 @@ class DosOperationalUserSeederTest extends TestCase
             'jc@gateway.com' => User::ROLE_JOB_CONTROLLER,
             'parts@gateway.com' => User::ROLE_PARTS_SUPERVISOR,
             'ws.sup@gateway.com' => User::ROLE_WORKSHOP_SUPERVISOR,
-            'ws@gateway.com' => User::ROLE_WORKSHOP,
         ];
 
         $accounts = User::query()
             ->whereIn('email', array_keys($expectedRoles))
             ->get()
             ->keyBy('email');
-        $this->assertCount(7, $accounts);
+        $this->assertCount(6, $accounts);
+        $this->assertDatabaseMissing('users', ['email' => 'ws@gateway.com']);
 
         foreach ($expectedRoles as $email => $role) {
             $account = $accounts->get($email);
@@ -65,7 +65,7 @@ class DosOperationalUserSeederTest extends TestCase
         $this->assertSame('inactive', $salesManager->account_status);
         $this->assertSame($replacementHash, $salesManager->password);
         $this->assertSame(User::ROLE_SALES_MANAGER, $salesManager->user_type);
-        $this->assertSame(7, User::query()->whereIn('email', array_keys($expectedRoles))->count());
+        $this->assertSame(6, User::query()->whereIn('email', array_keys($expectedRoles))->count());
     }
 
     public function test_missing_accounts_require_an_environment_backed_password(): void

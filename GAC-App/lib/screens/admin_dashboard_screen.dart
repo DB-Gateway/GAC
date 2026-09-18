@@ -627,7 +627,8 @@ class _ActivityList extends StatelessWidget {
 
   Widget _buildNotificationCard(UserNotification notification) {
     final data = notification.data;
-    final userName = data['completed_by_name'] as String? ??
+    final userName =
+        data['completed_by_name'] as String? ??
         (data['user_name'] as String? ?? 'Audit Staff');
     final findingCount = (data['finding_count'] as num?)?.toInt() ?? 0;
     final status = findingCount > 0
@@ -673,10 +674,7 @@ class _ActivityList extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    AdminStatusPill(
-                      label: status,
-                      tone: _activityTone(status),
-                    ),
+                    AdminStatusPill(label: status, tone: _activityTone(status)),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -693,10 +691,7 @@ class _ActivityList extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   timeStr,
-                  style: const TextStyle(
-                    color: GacColors.muted,
-                    fontSize: 8,
-                  ),
+                  style: const TextStyle(color: GacColors.muted, fontSize: 8),
                 ),
               ],
             ),
@@ -768,10 +763,7 @@ class _UnreadAlertsBanner extends StatelessWidget {
                 const SizedBox(height: 2),
                 const Text(
                   'Recent 5S and BOM submissions require oversight.',
-                  style: TextStyle(
-                    color: GacColors.muted,
-                    fontSize: 8,
-                  ),
+                  style: TextStyle(color: GacColors.muted, fontSize: 8),
                 ),
               ],
             ),
@@ -830,7 +822,7 @@ String _formatTimestamp(DateTime? timestamp) {
     'Sep',
     'Oct',
     'Nov',
-    'Dec'
+    'Dec',
   ];
   return '${months[timestamp.month - 1]} ${timestamp.day}, ${timestamp.year}';
 }

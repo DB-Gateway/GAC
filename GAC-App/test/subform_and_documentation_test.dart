@@ -13,6 +13,7 @@ import 'package:gac_flutter/theme/gac_theme.dart';
 class _FakeSubformDocRepository implements ChecklistRepository {
   String? savedSlug;
   List<Map<String, dynamic>> savedResponses = [];
+  ChecklistSubmissionData? docSubmission;
 
   @override
   Future<List<ChecklistCatalogItem>> fetchCatalog({String? date}) async {
@@ -70,7 +71,7 @@ class _FakeSubformDocRepository implements ChecklistRepository {
     if (slug == 'dealer-operations-standards-documentation') {
       return ChecklistLoadResult(
         template: buildDocumentationTemplateData(),
-        submission: null,
+        submission: docSubmission,
       );
     }
     throw ChecklistApiException('Unknown checklist slug: $slug');
@@ -81,6 +82,7 @@ class _FakeSubformDocRepository implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) async {
     savedSlug = slug;
     savedResponses = responses;
@@ -194,6 +196,20 @@ void main() {
       expect(restored.mileage, '10,000 km');
       expect(restored.answers['doc-rc-1'], 'yes');
       expect(restored.answers['doc-rc-2'], 'no');
+    });
+
+    test('CustomerAuditSample accepts Server empty answer arrays', () {
+      final restored = CustomerAuditSample.fromJson({
+        'customer_index': 1,
+        'ro_number': null,
+        'mileage': null,
+        'answers': <dynamic>[],
+      });
+
+      expect(restored.customerIndex, 1);
+      expect(restored.roNumber, isEmpty);
+      expect(restored.mileage, isEmpty);
+      expect(restored.answers, isEmpty);
     });
 
     test('AuthenticatedUser permissions for Subform and Documentation', () {
@@ -602,11 +618,368 @@ void main() {
 
         // Verify save draft serializes customers array
         await tester.tap(
-          find.byKey(const ValueKey('checklist-appbar-submit-button')),
+          find.byKey(const ValueKey('checklist-header-submit-button')),
         );
         await tester.pumpAndSettle();
 
         // If submit is tapped, validate it submits or saves
+      },
+    );
+
+    testWidgets(
+      'CE documentation uses working step navigation and list-view toggle',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        const ceUser = AuthenticatedUser(
+          id: 1,
+          name: 'CE Service User',
+          email: 'ce@gateway.com',
+          userType: 'CE SERVICE',
+          accountStatus: 'active',
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: UserChecklistDetailScreen(
+              slug: 'dealer-operations-standards-documentation',
+              repository: _FakeSubformDocRepository(),
+              user: ceUser,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('dos-documentation-step-view')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('doc-item-doc-rc-1-yes')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('doc-item-doc-rc-2-yes')),
+          findsNothing,
+        );
+
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('doc-item-doc-rc-1-yes')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('doc-item-doc-rc-1-yes')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('dos-next-question')));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('doc-item-doc-rc-2-yes')),
+          findsOneWidget,
+        );
+        expect(find.textContaining('QUESTION 2 OF 17'), findsOneWidget);
+
+        await tester.tap(find.byTooltip('Switch to list view'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('dos-documentation-step-view')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('doc-item-doc-rc-1-yes')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('doc-item-doc-rc-2-yes')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'CE customer controls do not overlap and delete persists immediately',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        const ceUser = AuthenticatedUser(
+          id: 1,
+          name: 'CE Service User',
+          email: 'ce@gateway.com',
+          userType: 'CE SERVICE',
+          accountStatus: 'active',
+        );
+        final repository = _FakeSubformDocRepository();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: UserChecklistDetailScreen(
+              slug: 'dealer-operations-standards-documentation',
+              repository: repository,
+              user: ceUser,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final selector = find.byKey(
+          const ValueKey('documentation-customer-selector'),
+        );
+        final add = find.byKey(const ValueKey('add-customer-button'));
+        final delete = find.byKey(const ValueKey('remove-customer-1'));
+        expect(selector, findsOneWidget);
+        expect(add, findsOneWidget);
+        expect(delete, findsOneWidget);
+        expect(tester.getRect(add).overlaps(tester.getRect(delete)), isFalse);
+
+        // Preserve a real customer draft while changing the sample list.
+        await tester.enterText(find.byKey(const ValueKey('doc-ro-number-1')), 'RO-123');
+
+        final selectorTopBefore = tester.getTopLeft(selector).dy;
+        await tester.drag(
+          find.byKey(const ValueKey('dos-documentation-question-position')),
+          const Offset(0, -180),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(selector).dy, selectorTopBefore);
+
+        await tester.tap(add);
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('remove-customer-4')), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('remove-customer-4')));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const ValueKey('remove-customer-4')), findsNothing);
+        expect(find.byKey(const ValueKey('doc-ro-number-3')), findsOneWidget);
+        final details = repository.savedResponses.first['details'] as Map;
+        expect(details['customers'], hasLength(3));
+        expect(repository.savedResponses.first['status'], isNull);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'Tapping YES on a customer with NO answers prompts to reset customer evaluation',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 1200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        const ceUser = AuthenticatedUser(
+          id: 1,
+          name: 'CE Service User',
+          email: 'ce@gac.com',
+          userType: 'CE SERVICE',
+          accountStatus: 'active',
+        );
+        final repo = _FakeSubformDocRepository();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: UserChecklistDetailScreen(
+              slug: 'dealer-operations-standards-documentation',
+              repository: repo,
+              user: ceUser,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Switch to list view so multiple items are accessible
+        await tester.tap(find.byTooltip('Switch to list view'));
+        await tester.pumpAndSettle();
+
+        // Tap NO on item 1 -> triggers Prerequisite Warning
+        final item1No = find.byKey(const ValueKey('doc-item-doc-rc-1-no'));
+        await tester.tap(item1No);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Prerequisite Warning'), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('confirm-prerequisite-warning')));
+        await tester.pumpAndSettle();
+
+        // Now Customer 1 has all NOs.
+        // Tapping YES on item 1 triggers Reset Customer Evaluation
+        final item1Yes = find.byKey(const ValueKey('doc-item-doc-rc-1-yes'));
+        await tester.tap(item1Yes);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Reset Customer Evaluation'), findsOneWidget);
+        expect(
+          find.textContaining('will reset all questions for Customer 1'),
+          findsOneWidget,
+        );
+
+        // Cancel the reset
+        await tester.tap(find.byKey(const ValueKey('cancel-prerequisite-warning')));
+        await tester.pumpAndSettle();
+        expect(find.text('Reset Customer Evaluation'), findsNothing);
+
+        // Tap YES again and confirm
+        await tester.tap(item1Yes);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('confirm-prerequisite-warning')));
+        await tester.pumpAndSettle();
+
+        // Check that item 1 and item 2 are now YES
+        final item2YesMaterial = tester.widget<Material>(
+          find
+              .descendant(
+                of: find.byKey(const ValueKey('doc-item-doc-rc-2-yes')),
+                matching: find.byType(Material),
+              )
+              .first,
+        );
+        expect(item2YesMaterial.color, const Color(0xFF16865B));
+      },
+    );
+
+    testWidgets(
+      'Submitted documentation allows adding a new customer sample and submitting with BOM and GM notification confirmation',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 1200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        const ceUser = AuthenticatedUser(
+          id: 1,
+          name: 'CE Service User',
+          email: 'ce@gac.com',
+          userType: 'CE SERVICE',
+          accountStatus: 'active',
+        );
+        final repo = _FakeSubformDocRepository();
+
+        // Setup already submitted documentation audit with 3 customers
+        final template = buildDocumentationTemplateData();
+        final allAnswers = {
+          for (final item in template.sections.expand((s) => s.items))
+            item.key: 'yes',
+        };
+        final existingCustomers = [
+          {
+            'customer_index': 1,
+            'ro_number': 'RO-001',
+            'mileage': '10,000 km',
+            'answers': Map<String, String>.from(allAnswers),
+          },
+          {
+            'customer_index': 2,
+            'ro_number': 'RO-002',
+            'mileage': '20,000 km',
+            'answers': Map<String, String>.from(allAnswers),
+          },
+          {
+            'customer_index': 3,
+            'ro_number': 'RO-003',
+            'mileage': '30,000 km',
+            'answers': Map<String, String>.from(allAnswers),
+          },
+        ];
+
+        repo.docSubmission = ChecklistSubmissionData(
+          id: 555,
+          status: 'submitted',
+          auditDate: '2026-09-12',
+          templateVersion: 1,
+          scores: const {},
+          responses: {
+            'doc-rc-1': ChecklistResponseData(
+              itemId: 1,
+              itemKey: 'doc-rc-1',
+              status: 'yes',
+              remark: null,
+              finding: null,
+              actionPlan: null,
+              commitmentDate: null,
+              details: {'customers': existingCustomers},
+            ),
+          },
+          answeredItems: 17,
+          totalItems: 17,
+          completionPercentage: 100,
+          submittedAt: DateTime.now(),
+          issueCount: 0,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: UserChecklistDetailScreen(
+              slug: 'dealer-operations-standards-documentation',
+              repository: repo,
+              user: ceUser,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Customer 1 is loaded and has SUBMITTED badge
+        expect(find.text('SUBMITTED'), findsWidgets);
+
+        // Cannot delete submitted customer 1
+        expect(find.byKey(const ValueKey('remove-customer-1')), findsNothing);
+
+        // Add Customer button is visible and active
+        final addBtn = find.byKey(const ValueKey('add-customer-button'));
+        expect(addBtn, findsOneWidget);
+        await tester.tap(addBtn);
+        await tester.pumpAndSettle();
+
+        // Customer 4 added with NEW SAMPLE badge
+        expect(find.text('NEW SAMPLE'), findsOneWidget);
+        expect(find.text('CUSTOMER 4'), findsOneWidget);
+
+        // Fill out Customer 4 fields
+        await tester.enterText(
+          find.byKey(const ValueKey('doc-ro-number-4')),
+          'RO-004',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('doc-mileage-4')),
+          '40,000 km PMS',
+        );
+        await tester.pumpAndSettle();
+
+        // In step view, tap NO on Customer 4's first question and confirm prerequisite warning
+        // This cascades all 17 check items for Customer 4 to NO!
+        final q1No = find.byKey(const ValueKey('doc-item-doc-rc-1-no'));
+        expect(q1No, findsOneWidget);
+        await tester.tap(q1No);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('confirm-prerequisite-warning')));
+        await tester.pumpAndSettle();
+
+        // Submit button in header or list view is enabled
+        final submitBtn = find.byKey(const ValueKey('checklist-header-submit-button'));
+        expect(submitBtn, findsOneWidget);
+        await tester.tap(submitBtn);
+        await tester.pumpAndSettle();
+
+        // Confirmation dialog shown mentioning BOM and GM notification
+        expect(find.text('Documentation audit submitted'), findsOneWidget);
+        expect(
+          find.textContaining(
+            'The Branch Operations Manager (BOM) and General Manager (GM) have been notified.',
+          ),
+          findsOneWidget,
+        );
+
+        // Verify repo received 4 customers in submission payload
+        expect(repo.savedResponses, isNotEmpty);
+        final customersSent = (repo.savedResponses.first['details'] as Map)['customers'] as List;
+        expect(customersSent.length, 4);
       },
     );
   });
@@ -688,7 +1061,7 @@ void main() {
     );
 
     testWidgets(
-      'CE SERVICE sees scoped Subform and Documentation in UserChecklistsScreen',
+      'CE SERVICE does NOT see Subform but sees Documentation in UserChecklistsScreen',
       (tester) async {
         tester.view.physicalSize = const Size(800, 1400);
         tester.view.devicePixelRatio = 1;
@@ -714,8 +1087,9 @@ void main() {
 
         expect(
           find.text('Subform Sheet — Service Reception & Lounge'),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(find.text('SUBFORM AUDIT'), findsNothing);
         expect(
           find.text('Documentation Sheet — Customer Repair Orders'),
           findsOneWidget,
@@ -724,7 +1098,7 @@ void main() {
     );
 
     testWidgets(
-      'Workshop Supervisor sees combined Subform and no Documentation',
+      'Workshop Supervisor does NOT see Subform or Documentation in UserChecklistsScreen',
       (tester) async {
         tester.view.physicalSize = const Size(800, 1400);
         tester.view.devicePixelRatio = 1;
@@ -753,8 +1127,9 @@ void main() {
 
         expect(
           find.text('Subform Sheet — Employee Facilities & MQS'),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(find.text('SUBFORM AUDIT'), findsNothing);
         expect(
           find.text('Documentation Sheet — Customer Repair Orders'),
           findsNothing,
@@ -763,7 +1138,7 @@ void main() {
     );
 
     testWidgets(
-      'ASM sees Meeting Room Subform and NO Documentation in UserChecklistsScreen',
+      'ASM does NOT see Subform or Documentation in UserChecklistsScreen',
       (tester) async {
         tester.view.physicalSize = const Size(800, 1400);
         tester.view.devicePixelRatio = 1;
@@ -787,7 +1162,8 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Subform Sheet — Meeting Room'), findsOneWidget);
+        expect(find.text('Subform Sheet — Meeting Room'), findsNothing);
+        expect(find.text('SUBFORM AUDIT'), findsNothing);
         expect(
           find.text('Documentation Sheet — Customer Repair Orders'),
           findsNothing,
@@ -796,7 +1172,7 @@ void main() {
     );
 
     testWidgets(
-      'Admin sees All Aftersales Sections Subform in UserChecklistsScreen',
+      'Admin does NOT see Subform in UserChecklistsScreen',
       (tester) async {
         tester.view.physicalSize = const Size(800, 1400);
         tester.view.devicePixelRatio = 1;
@@ -826,8 +1202,9 @@ void main() {
 
         expect(
           find.text('Subform Sheet — All Aftersales Sections'),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(find.text('SUBFORM AUDIT'), findsNothing);
       },
     );
 
@@ -862,7 +1239,7 @@ void main() {
     );
 
     testWidgets(
-      'CE SERVICE sees scoped Subform and Documentation in UserHomeScreen',
+      'CE SERVICE does NOT see Subform but sees Documentation in UserHomeScreen',
       (tester) async {
         tester.view.physicalSize = const Size(800, 1400);
         tester.view.devicePixelRatio = 1;
@@ -897,8 +1274,9 @@ void main() {
           find.text(
             'Dealer Operations Standards - Subform (Reception & Lounge)',
           ),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(find.textContaining('Subform'), findsNothing);
         expect(
           find.text('Dealer Operations Standards - Documentation'),
           findsOneWidget,
@@ -906,7 +1284,7 @@ void main() {
       },
     );
 
-    testWidgets('Workshop Supervisor sees combined Subform in UserHomeScreen', (
+    testWidgets('Workshop Supervisor does NOT see Subform in UserHomeScreen', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(800, 1400);
@@ -942,12 +1320,171 @@ void main() {
         find.text(
           'Dealer Operations Standards - Subform (Employee Facilities & MQS)',
         ),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(find.textContaining('Subform'), findsNothing);
       expect(
         find.text('Dealer Operations Standards - Documentation'),
         findsNothing,
       );
     });
+  });
+
+  group('Documentation Optional & Completion Reflection Tests', () {
+    const ceUser = AuthenticatedUser(
+      id: 1,
+      name: 'CE Service User',
+      email: 'ce@gateway.com',
+      userType: 'CE SERVICE',
+      accountStatus: 'active',
+    );
+
+    testWidgets(
+      'UserHomeScreen excludes unsubmitted documentation from To-do tab and count, showing it in All tab with OPTIONAL badge',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final repo = _FakeSubformDocRepository();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: UserHomeScreen(
+              isActive: true,
+              user: ceUser,
+              repository: repo,
+              onOpenChecklists: () {},
+              onOpenProfile: () {},
+              onOpenNotifications: () {},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // 1. To-do count should only be 1 (Dealer Operations Standards), not 2
+        expect(find.text('To do · 1'), findsOneWidget);
+        expect(find.text('All · 2'), findsOneWidget);
+
+        // 2. Tapping To-do should only show the primary DOS checklist, NOT the documentation checklist
+        await tester.tap(find.text('To do · 1'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Dealer Operations Standards'), findsOneWidget);
+        expect(
+          find.text('Dealer Operations Standards - Documentation'),
+          findsNothing,
+        );
+
+        // 3. Tapping All should show both, with Documentation displaying OPTIONAL
+        await tester.tap(find.text('All · 2'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Dealer Operations Standards'), findsOneWidget);
+        expect(
+          find.text('Dealer Operations Standards - Documentation'),
+          findsOneWidget,
+        );
+        expect(find.text('OPTIONAL'), findsOneWidget);
+        expect(find.text('Optional compliance checklist'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'UserHomeScreen shows submitted documentation in Completed tab with COMPLETED badge and 100% progress',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final repo = _FakeSubformDocRepository();
+        repo.docSubmission = ChecklistSubmissionData(
+          id: 777,
+          status: 'submitted',
+          auditDate: '2026-09-12',
+          templateVersion: 1,
+          scores: const {},
+          responses: const {},
+          answeredItems: 17,
+          totalItems: 17,
+          completionPercentage: 100,
+          submittedAt: DateTime.now(),
+          issueCount: 0,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: UserHomeScreen(
+              isActive: true,
+              user: ceUser,
+              repository: repo,
+              onOpenChecklists: () {},
+              onOpenProfile: () {},
+              onOpenNotifications: () {},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Completed · 1'), findsOneWidget);
+
+        // Tapping Completed should show the documentation checklist with COMPLETED badge
+        await tester.tap(find.text('Completed · 1'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Dealer Operations Standards - Documentation'),
+          findsOneWidget,
+        );
+        expect(find.text('COMPLETED'), findsOneWidget);
+        expect(find.text('17 of 17 checks · 100%'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'UserChecklistsScreen shows DOCUMENTATION AUDIT (OPTIONAL) and displays Submitted 17/17 (100%) when submitted',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final repo = _FakeSubformDocRepository();
+        repo.docSubmission = ChecklistSubmissionData(
+          id: 777,
+          status: 'submitted',
+          auditDate: '2026-09-12',
+          templateVersion: 1,
+          scores: const {},
+          responses: const {},
+          answeredItems: 17,
+          totalItems: 17,
+          completionPercentage: 100,
+          submittedAt: DateTime.now(),
+          issueCount: 0,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: UserChecklistsScreen(
+              isActive: true,
+              user: ceUser,
+              repository: repo,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('DOCUMENTATION AUDIT (OPTIONAL)'), findsOneWidget);
+        expect(find.text('17/17 · 100%'), findsOneWidget);
+        expect(find.text('SUBMITTED'), findsWidgets);
+        expect(find.text('VIEW SUBMISSION'), findsOneWidget);
+      },
+    );
   });
 }

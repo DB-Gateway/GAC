@@ -73,6 +73,9 @@ class UserTabsLayout extends StatefulWidget {
     this.initialChecklistSlug,
     this.initialChecklistSlotKey,
     this.initialChecklistAuditDate,
+    this.initialChecklistSubmissionId,
+    this.initialChecklistItemKey,
+    this.initialChecklistCustomerIndex,
     super.key,
   }) : assert(initialIndex >= 0 && initialIndex <= 2);
 
@@ -83,6 +86,9 @@ class UserTabsLayout extends StatefulWidget {
   final String? initialChecklistSlug;
   final String? initialChecklistSlotKey;
   final String? initialChecklistAuditDate;
+  final int? initialChecklistSubmissionId;
+  final String? initialChecklistItemKey;
+  final int? initialChecklistCustomerIndex;
 
   @override
   State<UserTabsLayout> createState() => _UserTabsLayoutState();
@@ -105,6 +111,7 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
         widget.notificationController ?? UserNotificationController();
     _ownsNotificationController = widget.notificationController == null;
     _notificationController.addListener(_handleNotificationChange);
+    if (_ownsNotificationController) _notificationController.startPolling();
     unawaited(_loadCachedProfile());
     if (!_notificationController.initialized) {
       unawaited(_notificationController.load());
@@ -145,8 +152,7 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
     bool requestPermission = false,
   }) async {
     try {
-      final checklistRepo =
-          widget.checklistRepository ?? ChecklistApiService();
+      final checklistRepo = widget.checklistRepository ?? ChecklistApiService();
       final checklists = await checklistRepo.fetchCatalog(
         date: _dateString(DateTime.now()),
       );
@@ -227,6 +233,7 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
           onOpenSettings: _replaceSubpageWithSettings,
           profile: _profile,
           controller: _notificationController,
+          checklistRepository: widget.checklistRepository,
         ),
       ),
     );
@@ -251,18 +258,26 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
     _openSettings();
   }
 
-  Future<void> _openChecklistFromHome(String slug, String auditDate) async {
+  Future<void> _openChecklistFromHome(
+    String slug,
+    String auditDate,
+    String? initialSlotKey, [
+    String? initialItemKey,
+  ]) async {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => UserChecklistDetailScreen(
           slug: slug,
           repository: widget.checklistRepository ?? ChecklistApiService(),
           auditDate: auditDate,
+          initialSlotKey: initialSlotKey,
+          initialItemKey: initialItemKey,
           user: _profile,
+          onOpenNotifications: _openNotifications,
+          unreadNotifications: _notificationController.unreadCount,
         ),
       ),
     );
-    if (mounted) setState(() {});
   }
 
   Future<void> _signOut() async {
@@ -325,7 +340,8 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
               UserHomeScreen(
                 isActive: _selectedIndex == 0,
                 onOpenChecklists: () => _selectTab(1),
-                onOpenChecklist: _openChecklistFromHome,
+                onOpenChecklistWithSlot: _openChecklistFromHome,
+                onOpenChecklistWithQuestion: _openChecklistFromHome,
                 onOpenProfile: () => _selectTab(2),
                 onOpenNotifications: _openNotifications,
                 user: _profile,
@@ -333,15 +349,22 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
                 unreadNotifications: _notificationController.unreadCount,
               ),
               UserChecklistsScreen(
+                isActive: _selectedIndex == 1,
                 key: ValueKey(
                   'user_checklists_${_profile.userType}_${_profile.picAssignmentType}',
                 ),
                 user: _profile,
                 repository: widget.checklistRepository,
                 onBack: _goHome,
+                onOpenNotifications: _openNotifications,
+                onOpenProfile: () => _selectTab(2),
+                unreadNotifications: _notificationController.unreadCount,
                 initialSlug: widget.initialChecklistSlug,
                 initialSlotKey: widget.initialChecklistSlotKey,
                 initialAuditDate: widget.initialChecklistAuditDate,
+                initialSubmissionId: widget.initialChecklistSubmissionId,
+                initialItemKey: widget.initialChecklistItemKey,
+                initialCustomerIndex: widget.initialChecklistCustomerIndex,
               ),
               UserProfileScreen(
                 initialProfile: _profile,
@@ -350,6 +373,8 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
                 onOpenSettings: _openSettings,
                 onSignOut: () => unawaited(_signOut()),
                 onBack: _goHome,
+                onOpenNotifications: _openNotifications,
+                unreadNotifications: _notificationController.unreadCount,
               ),
             ],
           ),

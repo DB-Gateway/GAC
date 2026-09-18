@@ -33,7 +33,7 @@ class AuthUser {
         data['user_type'] is! String ||
         data['account_status'] is! String) {
       throw const UserManagementApiException(
-        'Laravel returned an invalid user response.',
+        'Server returned an invalid user response.',
         status: 0,
       );
     }
@@ -43,7 +43,7 @@ class AuthUser {
         accountStatus != 'active' &&
         accountStatus != 'rejected') {
       throw const UserManagementApiException(
-        'Laravel returned an invalid user response.',
+        'Server returned an invalid user response.',
         status: 0,
       );
     }
@@ -76,7 +76,7 @@ class PendingUser extends AuthUser {
     final data = _stringKeyedMap(value);
     if (data == null || data['created_at'] is! String) {
       throw const UserManagementApiException(
-        'Laravel returned an invalid pending-user response.',
+        'Server returned an invalid pending-user response.',
         status: 0,
       );
     }
@@ -113,7 +113,7 @@ Future<List<PendingUser>> getPendingUsers() async {
   final users = result['users'];
   if (users is! List) {
     throw const UserManagementApiException(
-      'Laravel returned an invalid pending-users response.',
+      'Server returned an invalid pending-users response.',
       status: 0,
     );
   }
@@ -162,7 +162,7 @@ Future<Map<String, dynamic>> _authenticatedRequest(
     response = await http.Response.fromStream(await request.send());
   } catch (_) {
     throw UserManagementApiException(
-      'Cannot reach Laravel at $apiUrl. Make sure the API server is running.',
+      'Cannot reach Server at $apiUrl. Make sure the API server is running.',
       status: 0,
     );
   }
@@ -192,7 +192,7 @@ Future<Map<String, dynamic>> _authenticatedRequest(
 
   if (data == null) {
     throw UserManagementApiException(
-      'Laravel returned an empty response.',
+      'Server returned an empty response.',
       status: response.statusCode,
     );
   }

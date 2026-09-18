@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Notifications\PicTaskCompleted;
 use Database\Seeders\ChecklistTemplateSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 class TaskCompletionNotificationTest extends TestCase
@@ -62,6 +63,92 @@ class TaskCompletionNotificationTest extends TestCase
         $this->assertDatabaseCount('notifications', 2);
     }
 
+    public function test_each_mobile_five_s_user_notifies_the_gm_and_same_branch_bom(): void
+    {
+        [, $gm, $bom, $otherBranchBom, $inactiveBom] = $this->users();
+        $this->travelTo('2026-08-29 18:30:00');
+
+        $checklists = [
+            [User::ROLE_5S_SALES, 'sales', 'sales', 'Sales'],
+            [User::ROLE_5S_SERVICE, 'service', 'service', 'Service'],
+            [User::ROLE_5S_UTILITIES, 'restroom', 'restroom', 'Utilities'],
+        ];
+
+        foreach ($checklists as $index => [$role, $slug, $area, $label]) {
+            $fiveSUser = User::factory()->create([
+                'name' => "{$label} 5S User",
+                'branch' => 'Pasong Tamo',
+                'user_type' => $role,
+                'account_status' => 'active',
+            ]);
+            $template = ChecklistTemplate::where('slug', $slug)->firstOrFail();
+
+            Sanctum::actingAs($fiveSUser);
+            $response = $this->postJson(
+                route('api.checklists.submit', $template),
+                $this->fiveSSubmissionPayload($template)
+            )
+                ->assertCreated()
+                ->assertJsonPath('submission.status', 'submitted');
+
+            foreach ([$gm, $bom] as $recipient) {
+                $notification = $recipient->notifications()
+                    ->get()
+                    ->first(fn ($record): bool => data_get($record->data, 'submission_id') === $response->json('submission.id'));
+
+                $this->assertNotNull($notification);
+
+                $this->assertSame('five_s_checklist_submitted', $notification->data['event']);
+                $this->assertSame("{$label} 5S checklist submitted", $notification->data['title']);
+                $this->assertSame($response->json('submission.id'), $notification->data['submission_id']);
+                $this->assertSame($fiveSUser->id, $notification->data['completed_by_user_id']);
+                $this->assertSame($role, $notification->data['completed_by_role']);
+                $this->assertSame('five_s', $notification->data['standards_type']);
+                $this->assertSame($area, $notification->data['five_s_area']);
+            }
+
+            $this->assertCount($index + 1, $gm->notifications()->get());
+            $this->assertCount($index + 1, $bom->notifications()->get());
+            $this->assertCount(0, $fiveSUser->notifications()->get());
+        }
+
+        $this->assertCount(0, $otherBranchBom->notifications()->get());
+        $this->assertCount(0, $inactiveBom->notifications()->get());
+        $this->assertDatabaseCount('notifications', 6);
+    }
+
+    public function test_viewing_a_five_s_notification_opens_the_matching_summary(): void
+    {
+        [, $gm] = $this->users();
+        $fiveSUser = User::factory()->create([
+            'name' => 'Service 5S User',
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_5S_SERVICE,
+            'account_status' => 'active',
+        ]);
+        $template = ChecklistTemplate::where('slug', 'service')->firstOrFail();
+
+        Sanctum::actingAs($fiveSUser);
+        $submissionResponse = $this->postJson(
+            route('api.checklists.submit', $template),
+            $this->fiveSSubmissionPayload($template)
+        )->assertCreated();
+
+        $notification = $gm->notifications()->sole();
+
+        $this->actingAs($gm)
+            ->get(route('notifications.view-task', $notification->id))
+            ->assertRedirect(route('dashboard', [
+                'tab' => 'overview',
+                'form' => 'five_s',
+                'five_s_area' => 'service',
+                'branch' => 'Pasong Tamo',
+                'user_id' => $fiveSUser->id,
+                'user_type' => User::ROLE_5S_SERVICE,
+                'submission_id' => $submissionResponse->json('submission.id'),
+            ]));
+    }
+
     public function test_view_status_is_isolated_to_the_specific_gm_or_bom_recipient(): void
     {
         [$pic, $gm, $bom] = $this->users();
@@ -82,6 +169,12 @@ class TaskCompletionNotificationTest extends TestCase
 
         $this->assertNotNull($gmNotification->fresh()->read_at);
         $this->assertNull($bomNotification->fresh()->read_at);
+
+        $this->getJson(route('notifications.status'))
+            ->assertOk()
+            ->assertJsonPath('current_count', 0)
+            ->assertJsonPath('history_count', 1)
+            ->assertJsonPath('history_html', fn (string $html): bool => str_contains($html, $gmNotification->id));
 
         $this->actingAs($bom)
             ->patchJson(route('notifications.mark-viewed', $gmNotification->id))
@@ -110,7 +203,7 @@ class TaskCompletionNotificationTest extends TestCase
             ->assertSee('id="notificationsBadge"', false)
             ->assertSee('PIC task completed')
             ->assertSee('View Task')
-            ->assertSee('Not viewed');
+            ->assertSee('New');
 
         $this->actingAs($gm)
             ->patchJson(route('notifications.mark-all-viewed'))
@@ -121,8 +214,10 @@ class TaskCompletionNotificationTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertViewHas('unreadTaskNotificationCount', 0)
+            ->assertViewHas('taskNotifications', fn ($notifications): bool => $notifications->isEmpty())
+            ->assertViewHas('taskNotificationHistory', fn ($notifications): bool => $notifications->count() === 1)
             ->assertDontSee('id="notificationsBadge"', false)
-            ->assertSee('Viewed');
+            ->assertSee('Seen');
 
         $this->assertNull($bom->notifications()->sole()->read_at);
 
@@ -132,6 +227,47 @@ class TaskCompletionNotificationTest extends TestCase
             ->assertViewHas('canReceiveTaskNotifications', false)
             ->assertViewHas('taskNotifications', fn ($notifications): bool => $notifications->isEmpty())
             ->assertDontSee('PIC task completions');
+    }
+
+    public function test_notification_status_endpoint_returns_the_live_unread_count_and_current_feed(): void
+    {
+        [$pic, $gm] = $this->users();
+        $template = ChecklistTemplate::where('slug', 'sales')->firstOrFail();
+
+        $this->actingAs($pic)
+            ->postJson(route('checklists.submit', $template), $this->submissionPayload($template))
+            ->assertCreated();
+
+        $notification = $gm->notifications()->sole();
+
+        $statusResponse = $this->actingAs($gm)
+            ->getJson(route('notifications.status'))
+            ->assertOk()
+            ->assertJsonPath('unread_count', 1)
+            ->assertJsonPath('current_count', 1)
+            ->assertJsonPath('html', fn (string $html): bool => str_contains($html, (string) $notification->id)
+                && str_contains($html, 'PIC task completed')
+                && str_contains($html, 'New'));
+
+        $this->assertStringContainsString('no-store', (string) $statusResponse->headers->get('Cache-Control'));
+
+        $this->actingAs($gm)
+            ->patchJson(route('notifications.mark-all-viewed'))
+            ->assertOk();
+
+        $this->actingAs($gm)
+            ->getJson(route('notifications.status'))
+            ->assertOk()
+            ->assertJsonPath('unread_count', 0)
+            ->assertJsonPath('current_count', 0)
+            ->assertJsonPath('html', fn (string $html): bool => ! str_contains($html, $notification->id))
+            ->assertJsonPath('history_count', 1)
+            ->assertJsonPath('history_html', fn (string $html): bool => str_contains($html, $notification->id)
+                && str_contains($html, 'Seen notification'));
+
+        $this->actingAs($pic)
+            ->getJson(route('notifications.status'))
+            ->assertForbidden();
     }
 
     public function test_manager_checklist_editor_tabs_show_notification_badge_and_modal(): void
@@ -152,7 +288,7 @@ class TaskCompletionNotificationTest extends TestCase
                 ->assertSee('id="notificationsBadge"', false)
                 ->assertSee('id="notificationsModal"', false)
                 ->assertSee('PIC task completed')
-                ->assertSee('Not viewed');
+                ->assertSee('New');
         }
 
         $this->actingAs($gm)
@@ -163,7 +299,99 @@ class TaskCompletionNotificationTest extends TestCase
         $this->actingAs($gm)
             ->get(route('checklists.index', ['checklist' => 'sales']))
             ->assertOk()
-            ->assertSee('Viewed');
+            ->assertSee('Seen');
+    }
+
+    public function test_view_task_moves_the_notification_from_current_to_master_detail_history(): void
+    {
+        [$pic, $gm, $bom] = $this->users();
+        $template = ChecklistTemplate::where('slug', 'sales')->firstOrFail();
+
+        $this->actingAs($pic)
+            ->postJson(route('checklists.submit', $template), $this->submissionPayload($template))
+            ->assertCreated();
+
+        $gmNotification = $gm->notifications()->sole();
+
+        $this->actingAs($gm)
+            ->get(route('notifications.view-task', $gmNotification->id))
+            ->assertRedirect();
+
+        $archivedNotification = $gmNotification->fresh();
+        $this->assertNotNull($archivedNotification->read_at);
+        $this->assertNotNull(data_get($archivedNotification->data, 'archived_at'));
+        $this->assertNull(data_get($bom->notifications()->sole()->data, 'archived_at'));
+
+        $this->actingAs($gm)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertViewHas('taskNotifications', fn ($notifications): bool => $notifications->isEmpty())
+            ->assertViewHas('taskNotificationHistory', fn ($notifications): bool => $notifications->count() === 1)
+            ->assertViewHas('unreadTaskNotificationCount', 0)
+            ->assertSee('No notifications currently')
+            ->assertSee('notificationHistoryTab', false)
+            ->assertSee('notification-history-layout', false)
+            ->assertSee('notification-history-list', false)
+            ->assertSee('notification-history-details', false)
+            ->assertSee('Open Task Again');
+
+        $this->actingAs($gm)
+            ->get(route('checklists.index', ['checklist' => 'sales']))
+            ->assertOk()
+            ->assertSee('No notifications currently')
+            ->assertSee('notification-history-layout', false)
+            ->assertSee('Open Task Again');
+    }
+
+    public function test_only_visible_notification_ids_are_marked_seen_and_moved_to_history(): void
+    {
+        [$pic, $gm, $bom] = $this->users();
+        $template = ChecklistTemplate::where('slug', 'sales')->firstOrFail();
+        $payload = $this->submissionPayload($template);
+        $this->actingAs($pic)->postJson(route('checklists.submit', $template), $payload)->assertCreated();
+        $payload['date'] = '2026-08-28';
+        $this->postJson(route('checklists.submit', $template), $payload)->assertCreated();
+
+        $notifications = $bom->notifications()->get();
+        $seen = $notifications->first();
+        $unseen = $notifications->last();
+        $otherRecipient = $gm->notifications()->first();
+
+        $this->actingAs($bom)->patchJson(route('notifications.mark-all-viewed'), [
+            'ids' => [$seen->id, $otherRecipient->id],
+        ])->assertOk()->assertJsonPath('marked_count', 1)->assertJsonPath('ids', [$seen->id]);
+
+        $seenAt = $seen->fresh()->read_at->toISOString();
+        $this->assertNull($unseen->fresh()->read_at);
+        $this->assertNull($otherRecipient->fresh()->read_at);
+        $this->getJson(route('notifications.status'))->assertOk()
+            ->assertJsonPath('current_count', 1)
+            ->assertJsonPath('unread_count', 1)
+            ->assertJsonPath('history_count', 1)
+            ->assertJsonPath('html', fn (string $html): bool => str_contains($html, $unseen->id) && ! str_contains($html, $seen->id))
+            ->assertJsonPath('history_html', fn (string $html): bool => str_contains($html, $seen->id) && ! str_contains($html, $unseen->id));
+
+        $this->travel(1)->minutes();
+        $this->patchJson(route('notifications.mark-all-viewed'), ['ids' => [$seen->id]])
+            ->assertOk()->assertJsonPath('marked_count', 0);
+        $this->patchJson(route('notifications.mark-all-viewed'), ['ids' => []])
+            ->assertOk()->assertJsonPath('marked_count', 0);
+        $this->assertSame($seenAt, $seen->fresh()->read_at->toISOString());
+        $this->assertNull($unseen->fresh()->read_at);
+    }
+
+    public function test_previously_seen_notifications_are_in_history_without_a_view_task_click(): void
+    {
+        [$pic, $gm] = $this->users();
+        $template = ChecklistTemplate::where('slug', 'sales')->firstOrFail();
+        $this->actingAs($pic)->postJson(route('checklists.submit', $template), $this->submissionPayload($template))->assertCreated();
+        $notification = $gm->notifications()->sole();
+        $notification->markAsRead();
+        $this->assertNull(data_get($notification->fresh()->data, 'archived_at'));
+
+        $this->actingAs($gm)->get(route('dashboard'))->assertOk()
+            ->assertViewHas('taskNotifications', fn ($notifications): bool => $notifications->isEmpty())
+            ->assertViewHas('taskNotificationHistory', fn ($notifications): bool => $notifications->modelKeys() === [$notification->id]);
     }
 
     /**
@@ -215,6 +443,32 @@ class TaskCompletionNotificationTest extends TestCase
                 ->map(fn (ChecklistItem $item): array => [
                     'item_id' => $item->id,
                     'status' => 'yes',
+                ])
+                ->all(),
+        ];
+    }
+
+    /**
+     * @return array{date: string, responses: array<int, array<string, mixed>>}
+     */
+    private function fiveSSubmissionPayload(ChecklistTemplate $template): array
+    {
+        $timeSlots = collect($template->settings['time_slots'] ?? [])
+            ->pluck('key')
+            ->mapWithKeys(fn (string $slot): array => [$slot => 'good'])
+            ->all();
+
+        return [
+            'date' => '2026-08-29',
+            'responses' => $template->items()
+                ->orderBy('id')
+                ->get()
+                ->map(fn (ChecklistItem $item): array => [
+                    'item_id' => $item->id,
+                    'status' => 'yes',
+                    ...($timeSlots === [] ? [] : [
+                        'details' => ['slots' => $timeSlots],
+                    ]),
                 ])
                 ->all(),
         ];

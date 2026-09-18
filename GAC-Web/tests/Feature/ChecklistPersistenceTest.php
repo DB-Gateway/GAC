@@ -26,13 +26,13 @@ class ChecklistPersistenceTest extends TestCase
     public function test_workbook_and_dos_templates_are_seeded_into_normalized_tables(): void
     {
         $this->assertDatabaseCount('checklist_templates', 6);
-        $this->assertDatabaseCount('checklist_sections', 50);
-        $this->assertDatabaseCount('checklist_items', 257);
+        $this->assertDatabaseCount('checklist_sections', 51);
+        $this->assertDatabaseCount('checklist_items', 260);
 
         $this->assertSame(56, ChecklistTemplate::where('slug', 'gateway-5s')->firstOrFail()->items()->count());
         $this->assertSame(75, ChecklistTemplate::where('slug', 'dealer-operations-standards')->firstOrFail()->items()->count());
         $this->assertSame(22, ChecklistTemplate::where('slug', 'dealer-operations-standards-sales')->firstOrFail()->items()->count());
-        $this->assertSame(41, ChecklistTemplate::where('slug', 'sales')->firstOrFail()->items()->count());
+        $this->assertSame(44, ChecklistTemplate::where('slug', 'sales')->firstOrFail()->items()->count());
         $this->assertSame(33, ChecklistTemplate::where('slug', 'service')->firstOrFail()->items()->count());
         $this->assertSame(30, ChecklistTemplate::where('slug', 'restroom')->firstOrFail()->items()->count());
 

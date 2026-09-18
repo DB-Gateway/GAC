@@ -30,7 +30,8 @@ final List<ChecklistSection> dosDocumentationTemplate = [
         checker: 'CE SERVICE',
         bomTask: 'Check vehicle and customer details completeness',
         escalation: 'AS BRAND HEAD',
-        howToCheck: 'Verify customer full name and vehicle plate number are written.',
+        howToCheck:
+            'Verify customer full name and vehicle plate number are written.',
         response: 'YES',
       ),
       ChecklistItem(
@@ -54,7 +55,8 @@ final List<ChecklistSection> dosDocumentationTemplate = [
         checker: 'CE SERVICE',
         bomTask: 'Check safety inspection items completeness',
         escalation: 'AS BRAND HEAD',
-        howToCheck: 'Verify safety inspection checklist is filled out completely.',
+        howToCheck:
+            'Verify safety inspection checklist is filled out completely.',
         response: 'YES',
       ),
       ChecklistItem(
@@ -78,7 +80,8 @@ final List<ChecklistSection> dosDocumentationTemplate = [
         checker: 'CE SERVICE',
         bomTask: 'Check final walk-around checklist',
         escalation: 'AS BRAND HEAD',
-        howToCheck: 'Confirm final walk-around inspection section is completed.',
+        howToCheck:
+            'Confirm final walk-around inspection section is completed.',
         response: 'YES',
       ),
       ChecklistItem(
@@ -90,7 +93,8 @@ final List<ChecklistSection> dosDocumentationTemplate = [
         checker: 'CE SERVICE',
         bomTask: 'Check 10-point SA checklist',
         escalation: 'AS BRAND HEAD',
-        howToCheck: 'Verify all 10 points in the SA checklist are accomplished.',
+        howToCheck:
+            'Verify all 10 points in the SA checklist are accomplished.',
         response: 'YES',
       ),
       ChecklistItem(
@@ -156,7 +160,8 @@ final List<ChecklistSection> dosDocumentationTemplate = [
         checker: 'CE SERVICE',
         bomTask: 'Check RO header details completeness',
         escalation: 'AS BRAND HEAD',
-        howToCheck: 'Confirm customer name, contact, VIN, plate number, mileage on RO.',
+        howToCheck:
+            'Confirm customer name, contact, VIN, plate number, mileage on RO.',
         response: 'YES',
       ),
       ChecklistItem(
@@ -264,61 +269,82 @@ class CustomerAuditSample {
     'answers': answers,
   };
 
-  factory CustomerAuditSample.fromJson(Map<String, dynamic> json) =>
-      CustomerAuditSample(
-        customerIndex: json['customer_index'] as int? ?? 1,
-        roNumber: json['ro_number'] as String? ?? '',
-        mileage: json['mileage'] as String? ?? '',
-        answers: (json['answers'] as Map?)?.cast<String, String>() ?? {},
-      );
+  factory CustomerAuditSample.fromJson(Map<String, dynamic> json) {
+    final rawIndex = json['customer_index'];
+    final rawAnswers = json['answers'];
+    final answers = <String, String>{};
+    if (rawAnswers is Map) {
+      for (final entry in rawAnswers.entries) {
+        final key = entry.key;
+        final value = entry.value;
+        if (key is String && value != null) {
+          answers[key] = value.toString();
+        }
+      }
+    }
+
+    return CustomerAuditSample(
+      customerIndex: rawIndex is num
+          ? rawIndex.toInt()
+          : int.tryParse(rawIndex?.toString() ?? '') ?? 1,
+      roNumber: json['ro_number']?.toString() ?? '',
+      mileage: json['mileage']?.toString() ?? '',
+      // Server encodes an empty PHP associative array as [] rather than {}.
+      // Treat either empty shape as an empty answer map.
+      answers: answers,
+    );
+  }
 }
 
 ChecklistTemplateData buildDocumentationTemplateData() {
-  final sections = dosDocumentationTemplate.map((sec) {
-    return ChecklistSectionData(
-      id: 0,
-      key: sec.id,
-      title: sec.title,
-      sortOrder: 0,
-      metadata: const {'prerequisite_cascade': true},
-      items: sec.items.map((item) {
-        final itemNumber =
-            int.tryParse(item.id.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
-        return ChecklistItemData(
-          id: itemNumber,
-          key: item.id,
-          prompt: item.text,
-          sortOrder: itemNumber,
-          metadata: {
-            'number': itemNumber,
-            'level': item.level,
-            'category': item.level,
-            'coverage': item.coverage,
-            'subject': item.subject,
-            'checker': item.checker,
-            'pic': 'CE SERVICE',
-            'bom_task': item.bomTask,
-            'escalation': item.escalation,
-            'how_to_check': item.howToCheck,
-            'prerequisite_cascade': true,
-          },
+  final sections = dosDocumentationTemplate
+      .map((sec) {
+        return ChecklistSectionData(
+          id: 0,
+          key: sec.id,
+          title: sec.title,
+          sortOrder: 0,
+          metadata: const {'prerequisite_cascade': true},
+          items: sec.items
+              .map((item) {
+                final itemNumber =
+                    int.tryParse(item.id.replaceAll(RegExp(r'[^0-9]'), '')) ??
+                    0;
+                return ChecklistItemData(
+                  id: itemNumber,
+                  key: item.id,
+                  prompt: item.text,
+                  sortOrder: itemNumber,
+                  metadata: {
+                    'number': itemNumber,
+                    'level': item.level,
+                    'category': item.level,
+                    'coverage': item.coverage,
+                    'subject': item.subject,
+                    'checker': item.checker,
+                    'pic': 'CE SERVICE',
+                    'bom_task': item.bomTask,
+                    'escalation': item.escalation,
+                    'how_to_check': item.howToCheck,
+                    'prerequisite_cascade': true,
+                  },
+                );
+              })
+              .toList(growable: false),
         );
-      }).toList(growable: false),
-    );
-  }).toList(growable: false);
+      })
+      .toList(growable: false);
 
   return ChecklistTemplateData(
     id: 11,
     slug: 'dealer-operations-standards-documentation',
     name: 'Dealer Operations Standards - Documentation',
-    description:
-        'FY2025 Aftersales Standards Compliance Audit Documentation Sheet (17 Standards). Exclusively for CE Service users. Multi-customer audit where choosing No cascades prerequisite check items for that customer to No.',
+    description: 'FY2025 Aftersales Standards Compliance Audit Documentation Sheet (17 Standards). Exclusively for CE Service users. Multi-customer audit where every question is a prerequisite: choosing No on any question automatically cascades all check items for that customer to No.',
     version: 1,
     settings: const {
       'validation_mode': 'dos_documentation',
       'response_options': ['yes', 'no', 'na'],
-      'instructions':
-          'Audit service documents (Rationalized Checksheet, Repair Order, Service Invoice) across multiple customers. Note: Choosing "No" sets all prerequisite check items for that customer to No, exempting Type of Job (mileage).',
+      'instructions': 'Audit service documents (Rationalized Checksheet, Repair Order, Service Invoice) across multiple customers. Note: Every question is a prerequisite. Choosing "No" on any question automatically sets all 17 check items for that customer to No, exempting Type of Job (mileage) and R.O. number.',
       'prerequisite_cascade': true,
       'multi_customer': true,
       'default_customer_count': 3,

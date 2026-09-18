@@ -93,7 +93,7 @@ void main() {
     );
   });
 
-  test('surfaces Laravel password validation messages', () async {
+  test('surfaces Server password validation messages', () async {
     final service = ProfileApiService(
       apiUrl: 'https://gateway.test/api',
       client: MockClient(

@@ -21,8 +21,74 @@ class ChecklistTemplateSeeder extends Seeder
             $this->seedTemplate($this->dealerOperationsStandardsSales());
             $this->seedTemplate($this->sales());
             $this->seedTemplate($this->service());
+            $this->syncTemplate($this->sales());
+            $this->syncTemplate($this->service());
             $this->seedTemplate($this->restroom());
         });
+    }
+
+    public function syncTemplate(array $preset): ChecklistTemplate
+    {
+        $template = ChecklistTemplate::query()->firstOrCreate([
+            'slug' => $preset['slug'],
+        ], [
+            'name' => $preset['name'],
+            'description' => $preset['description'],
+            'version' => 1,
+            'settings' => $preset['settings'],
+            'is_active' => $preset['is_active'] ?? true,
+        ]);
+
+        $template->update([
+            'name' => $preset['name'],
+            'description' => $preset['description'],
+            'settings' => array_merge($template->settings ?? [], $preset['settings']),
+            'is_active' => $preset['is_active'] ?? true,
+        ]);
+
+        $activeSectionIds = [];
+        $activeItemIds = [];
+
+        foreach ($preset['sections'] as $sectionOrder => $sectionData) {
+            $section = ChecklistSection::query()->updateOrCreate([
+                'checklist_template_id' => $template->id,
+                'key' => $sectionData['key'],
+            ], [
+                'title' => $sectionData['title'],
+                'sort_order' => $sectionOrder,
+                'metadata' => $sectionData['metadata'] ?? null,
+                'is_active' => true,
+            ]);
+
+            $activeSectionIds[] = $section->id;
+
+            foreach ($sectionData['items'] as $itemOrder => $itemData) {
+                $item = ChecklistItem::query()->updateOrCreate([
+                    'checklist_template_id' => $template->id,
+                    'key' => $itemData['key'],
+                ], [
+                    'checklist_section_id' => $section->id,
+                    'prompt' => $itemData['prompt'],
+                    'sort_order' => $itemOrder,
+                    'metadata' => $itemData['metadata'] ?? null,
+                    'is_active' => true,
+                ]);
+
+                $activeItemIds[] = $item->id;
+            }
+        }
+
+        ChecklistItem::query()
+            ->where('checklist_template_id', $template->id)
+            ->whereNotIn('id', $activeItemIds)
+            ->delete();
+
+        ChecklistSection::query()
+            ->where('checklist_template_id', $template->id)
+            ->whereNotIn('id', $activeSectionIds)
+            ->delete();
+
+        return $template->fresh(['sections.items']);
     }
 
     private function seedTemplate(array $preset): void
@@ -85,7 +151,7 @@ class ChecklistTemplateSeeder extends Seeder
         ];
     }
 
-    private function sales(): array
+    public function sales(): array
     {
         $salesSections = [
             'parking-area',
@@ -104,33 +170,18 @@ class ChecklistTemplateSeeder extends Seeder
             'settings' => [
                 'validation_mode' => 'yes_no_na',
                 'response_options' => ['yes', 'no', 'na'],
-                'instructions' => 'Complete every Sales item before business hours. A remark is required for NO and N/A.',
+                'instructions' => "Pre-Business Hours Checklist Instructions:\nThe Sales Officer-in-Charge of the day (GRM) is required to complete this checklist before the start of business hours.\nThe Branch Operations Officer is responsible for overseeing the showroom and ensuring the checklist is accurately and regularly completed each day.",
                 'schedule' => ['start' => '08:00', 'end' => '08:30'],
-                'source' => 'Gateway 5S Checklist.xlsx / Sales sections',
+                'source' => 'Gateway 5S Checklist_2.xlsx / Sales',
+                'performed_by' => 'Sales Officer of the Day',
                 'workspace_order' => 20,
             ],
-            'sections' => $this->numberedSections($this->onlySections($salesSections)),
+            'sections' => $this->numberedSections($this->salesSectionDefinitions()),
         ];
     }
 
-    private function service(): array
+    public function service(): array
     {
-        $serviceSections = [
-            'parking-area',
-            'service-reception',
-            'service-working-bay',
-            'restrooms',
-            'customer-lounge',
-            'sales-executives-on-showroom-duty',
-        ];
-
-        $sections = $this->onlySections($serviceSections);
-        $counterPrompt = array_pop($sections[2][2]);
-        $sections[1][2][] = $counterPrompt;
-        $sections[5][0] = 'frontliners';
-        $sections[5][1] = 'Frontliners';
-        $sections[5][2] = array_slice($sections[5][2], 0, 2);
-
         return [
             'slug' => 'service',
             'name' => 'Service Checklist',
@@ -138,12 +189,136 @@ class ChecklistTemplateSeeder extends Seeder
             'settings' => [
                 'validation_mode' => 'yes_no_na',
                 'response_options' => ['yes', 'no', 'na'],
-                'instructions' => 'Complete every Service item before business hours. A remark is required for NO and N/A.',
+                'instructions' => "Pre-Business Hours Checklist Instructions:\nThe Service Officer-in-Charge of the day(CE & Workshop Sup/Leadman/Foreman) is required to complete this checklist before the start of business hours.\nThe Branch Operations Manager is responsible for overseeing the service facility and ensuring the checklist is accurately and regularly completed each day.",
                 'schedule' => ['start' => '08:00', 'end' => '08:30'],
-                'source' => 'Gateway 5S Checklist.xlsx / Service sections',
+                'source' => 'Gateway 5S Checklist_2.xlsx / Service',
+                'performed_by' => 'Service Officer of the Day',
                 'workspace_order' => 30,
             ],
-            'sections' => $this->numberedSections($sections),
+            'sections' => $this->numberedSections($this->serviceSectionDefinitions()),
+        ];
+    }
+
+    /**
+     * @return array<int, array{0: string, 1: string, 2: list<string>}>
+     */
+    public function salesSectionDefinitions(): array
+    {
+        return [
+            ['parking-area', 'Parking Area', [
+                'Is the parking area clearly visible and easy for customers to find parking, with well-defined parking lines and proper signage?',
+                'Is the parking area clean and free from dirt and Dirt? (well maintained)?',
+            ]],
+            ['showroom-sales-negotiation-area', 'Showroom / Sales Negotiation Area', [
+                'Is the area clean and well-organized, with no unnecessary items on the floor?',
+                'Are there no broken or damaged tiles?',
+                'Are all the lights in the showroom functioning properly',
+                'Are the sales materials (posters, banners, and illuminated signage) current, well-maintained, clean, and properly organized?',
+                'Are the windows clean, free from fingerprints, watermarks, tape, or any other marks?',
+                'Are the ceilings and walls free of dirt, damage and water leakage?',
+                'Are the sales negotiation tables and chairs clean and properly sanitized?',
+                'Is free Wi-Fi available and easily accessible to customers?',
+                'Is the ventilation and A/C system adequate and fully operational?',
+            ]],
+            ['sales-reception-area', 'Sales Reception Area', [
+                'Reception area is kept neat and tidy. Surrounding area are kept free of dirt and waste. No personal belongings shown.',
+                'The reception counter and chairs are clean and free from damage.',
+            ]],
+            ['test-drive-vehicle', 'Test Drive Vehicle', [
+                'Test drive vehicle are maintained clean.',
+                'Test drive vehicle are fully functional and complies with regular PMS.',
+                'Test drive vehicle are free from damage',
+            ]],
+            ['vehicles-display', 'Vehicles Display', [
+                'Is the car display area clean, free of dirt and waste, and properly sanitized?',
+                'Is at least one unit of each MG model displayed in the showroom, and does it include the latest model year with a mix of high-end variants?',
+                'Is there an information stand available near each display unit?',
+                'Are the displayed cars kept clean and free of protective coverings?',
+                'Are the engine compartments clean?',
+                'Are the display units unlocked?',
+                'Are genuine floor mats installed? And no paper mat is installed?',
+                'Is the battery charged, or is there a power supply from the floor, with all electric equipment functioning properly?',
+                'Are the vehicle interiors clean?',
+                'Is there enough space secured between the vehicles?',
+                'Are the test drive units available, organized, and properly sanitized?',
+            ]],
+            ['restrooms', 'Restrooms', [
+                'Are the necessary items (e.g., papers, soap, hand dryers) available?',
+                'Is the restroom free from dirt and waste, including the floor, walls, and tiles?',
+                'Are the sinks and faucets in proper working condition?',
+                'Are the toilet bowls and urinals in proper working condition?',
+                'Is the Female restroom clean and sanitized, with no water splashes around the sink or unnecessary items on the floor?',
+                'Is the Male restroom clean and sanitized, with no water splashes around the sink or unnecessary items on the floor?',
+                'Is the PWD restroom clean and sanitized, with no water splashes around the sink or unnecessary items on the floor?',
+                'Is the restroom checklist updated?',
+            ]],
+            ['customer-lounge', 'Customer Lounge', [
+                'Are there free snacks available? ( Biscuits, etc.)',
+                'Are there available free refreshments (Coffee and Water)?',
+                'Are the seats/sofas comfortable, undamaged, and properly sanitized?',
+                'Is the LED television in working condition and well-maintained?',
+                'Is the ventilation and A/C system adequate and fully operational?',
+                'Is  free Wi-Fi available and easily accessible to customers?',
+            ]],
+            ['sales-executives-on-showroom-duty', 'Sales Executives on Showroom Duty', [
+                'Are they wearing the prescribed uniform and ID badge?',
+                'Are they well-groomed and dressed in the proper uniform?',
+                'Do they have the Sales Kit, including the pricelist, business cards, and bank application form?',
+            ]],
+        ];
+    }
+
+    /**
+     * @return array<int, array{0: string, 1: string, 2: list<string>}>
+     */
+    public function serviceSectionDefinitions(): array
+    {
+        return [
+            ['parking-area', 'Parking Area', [
+                'Is the service parking area clearly visible and easy for customers to find parking, with well-defined parking lines and proper signage?',
+                'Is the parking area clean and free from dirt and Dirt? (well maintained)?',
+            ]],
+            ['service-reception', 'Service Reception', [
+                'Is the area clean and well-organized, with no unnecessary items on the floor?',
+                'Are there no broken or damaged tiles?',
+                'Are all the lights in the showroom functioning properly',
+                'Are the windows clean, free from fingerprints, watermarks, tape, or any other marks?',
+                'Are the ceilings and walls free of dirt, damage and water leakage?',
+                'Are the service reception tables and chairs clean and properly sanitized?',
+                'Is free Wi-Fi available and easily accessible to customers?',
+                'Is the ventilation and A/C system adequate and fully operational?',
+                'The reception counter and chairs are clean and free from damage.',
+            ]],
+            ['service-working-bay', 'Service Working Bay', [
+                'Is the working bay clean, free of dirt and waste, and properly sanitized?',
+                'Are all trolleys stored within the painted work bay when not in use, with no unnecessary items such as drinking bottles, shoes, etc., left behind?',
+                'Are there no used parts or empty plastic containers left in the work bay?',
+                'Are the lifters clean and returned to their normal (down) position when not in use and at the end of working hours?',
+                'Are the vehicle windows closed at all times, except when repairs are in progress?',
+                'Are the tools organized, complete, and placed in their proper locations?',
+            ]],
+            ['restrooms', 'Restrooms', [
+                'Are the necessary items (e.g., papers, soap, hand dryers) available?',
+                'Is the restroom free from dirt and waste, including the floor, walls, and tiles?',
+                'Are the sinks and faucets in proper working condition?',
+                'Are the toilet bowls and urinals in proper working condition?',
+                'Is the Female restroom clean and sanitized, with no water splashes around the sink or unnecessary items on the floor?',
+                'Is the Male restroom clean and sanitized, with no water splashes around the sink or unnecessary items on the floor?',
+                'Is the PWD restroom clean and sanitized, with no water splashes around the sink or unnecessary items on the floor?',
+                'Is the restroom checklist updated?',
+            ]],
+            ['customer-lounge', 'Customer Lounge', [
+                'Are there free snacks available? ( Biscuits, etc.)',
+                'Are there available free refreshments (Coffee and Water)?',
+                'Are the seats/sofas comfortable, undamaged, and properly sanitized?',
+                'Is the LED television in working condition and well-maintained?',
+                'Is the ventilation and A/C system adequate and fully operational?',
+                'Is  free Wi-Fi available and easily accessible to customers?',
+            ]],
+            ['frontliners', 'Frontliners', [
+                'Are they wearing the prescribed uniform and ID badge?',
+                'Are they well-groomed and dressed in the proper uniform?',
+            ]],
         ];
     }
 
@@ -521,7 +696,8 @@ class ChecklistTemplateSeeder extends Seeder
     private function normalizedChecker(string $checker): string
     {
         return match (strtoupper(trim($checker))) {
-            'WORSHOP SUP', 'WORKSHOP SUP' => 'WORKSHOP SUP',
+            'WS', 'WS SUP', 'WORKSHOP', 'WORSHOP SUP',
+            'WORKSHOP SUP', 'WORKSHOP SUPERVISOR' => 'WORKSHOP SUP',
             default => trim($checker),
         };
     }

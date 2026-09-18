@@ -61,8 +61,9 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         .toList(growable: false);
   }
 
-  int get _fiveSCount =>
-      _users.where((user) => user.role.startsWith('5S') || user.role == 'PIC').length;
+  int get _fiveSCount => _users
+      .where((user) => user.role.startsWith('5S') || user.role == 'PIC')
+      .length;
   int get _bomCount => _users.where((user) => user.role == 'BOM').length;
   int get _activeToday => _users
       .where(
@@ -393,7 +394,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 icon: Icons.send_outlined,
                 onPressed: () => _showAlert(
                   'Notification composer',
-                  'Select a user below and tap Notify, or connect this action to your Laravel notification endpoint.',
+                  'Select a user below and tap Notify, or connect this action to your Server notification endpoint.',
                 ),
               ),
             ],
@@ -544,7 +545,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 ),
                 onEdit: () => _showAlert(
                   'Edit account',
-                  'Connect this action to your Laravel user update endpoint.',
+                  'Connect this action to your Server user update endpoint.',
                 ),
               ),
               if (index != visibleUsers.length - 1) const SizedBox(height: 10),
@@ -629,7 +630,9 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 ),
                 _RoleOverviewRow(
                   label: 'General Manager',
-                  count: _users.where((u) => u.role == 'GM' || u.role == 'ADMIN').length,
+                  count: _users
+                      .where((u) => u.role == 'GM' || u.role == 'ADMIN')
+                      .length,
                   total: _users.length,
                 ),
               ],

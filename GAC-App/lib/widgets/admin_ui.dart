@@ -227,64 +227,64 @@ class AdminMetricCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 31),
-                  child: Text(
-                    label,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: GacColors.gray,
-                      fontSize: 9,
-                      height: 13 / 9,
-                      fontWeight: FontWeight.w700,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 31),
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: GacColors.gray,
+                        fontSize: 9,
+                        height: 13 / 9,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                width: 29,
-                height: 29,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: GacColors.iconTile,
-                  borderRadius: BorderRadius.circular(10),
+                const SizedBox(width: 8),
+                Container(
+                  width: 29,
+                  height: 29,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: GacColors.iconTile,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 16, color: GacColors.navy950),
                 ),
-                child: Icon(icon, size: 16, color: GacColors.navy950),
-              ),
-            ],
-          ),
-          const SizedBox(height: 7),
-          Text(
-            value,
-            style: const TextStyle(
-              color: GacColors.black,
-              fontSize: 26,
-              height: 31 / 26,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.6,
+              ],
             ),
-          ),
-          if (progress != null) ...[
             const SizedBox(height: 7),
-            AdminProgressBar(value: progress!),
-          ],
-          const SizedBox(height: 8),
-          Text(
-            detail,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: GacColors.gray,
-              fontSize: 8,
-              height: 1.5,
+            Text(
+              value,
+              style: const TextStyle(
+                color: GacColors.black,
+                fontSize: 26,
+                height: 31 / 26,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.6,
+              ),
             ),
-          ),
+            if (progress != null) ...[
+              const SizedBox(height: 7),
+              AdminProgressBar(value: progress!),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              detail,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: GacColors.gray,
+                fontSize: 8,
+                height: 1.5,
+              ),
+            ),
           ],
         ),
       ),

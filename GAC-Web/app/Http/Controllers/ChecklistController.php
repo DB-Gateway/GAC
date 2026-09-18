@@ -9,6 +9,10 @@ use App\Models\ChecklistSubmission;
 use App\Models\ChecklistTemplate;
 use App\Models\Report;
 use App\Models\User;
+use App\Notifications\ChecklistDraftReminder;
+use App\Notifications\FindingFollowUpRequested;
+use App\Notifications\PicTaskCompleted;
+use App\Services\AftersalesSubformDocService;
 use App\Services\TaskCompletionNotifier;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
@@ -69,6 +73,20 @@ class ChecklistController extends Controller
             'stylesheet' => 'css/5S-des.css', 'body_class' => 'gateway-page-5s gateway-page-restroom',
             'variant' => 'restroom', 'icon' => 'fa-restroom',
         ],
+        'dealer-operations-standards-subform' => [
+            'label' => 'DOS Subform', 'title' => 'Dealer Operations Standards - Subform',
+            'subtitle' => 'Facilities, Reception, Lounge, and MQS sub-requirements (39 standards)',
+            'eyebrow' => 'Gateway dealer operations subform audit',
+            'stylesheet' => 'css/DOS-des.css', 'body_class' => 'gateway-page-dos',
+            'variant' => 'dos', 'icon' => 'fa-layer-group',
+        ],
+        'dealer-operations-standards-documentation' => [
+            'label' => 'DOS Documentation', 'title' => 'Dealer Operations Standards - Documentation',
+            'subtitle' => 'Repair order and service documentation audit (17 standards)',
+            'eyebrow' => 'Gateway dealer operations documentation audit',
+            'stylesheet' => 'css/DOS-des.css', 'body_class' => 'gateway-page-dos',
+            'variant' => 'dos', 'icon' => 'fa-file-lines',
+        ],
     ];
 
     public function index(Request $request): View
@@ -83,9 +101,11 @@ class ChecklistController extends Controller
 
         $selected = (string) $request->query('checklist', $availableWorkspace->keys()->first());
         $selected = match ($selected) {
-            'dealer-operations', 'dos' => 'dealer-operations-standards',
+            'dealer-operations', 'dos', 'dealer-operations-standards-aftersales', 'aftersales' => 'dealer-operations-standards',
             'gateway-5s', '5s' => 'sales',
             'utilities' => 'restroom',
+            'dos-subform', 'subform' => 'dealer-operations-standards-subform',
+            'dos-documentation', 'documentation' => 'dealer-operations-standards-documentation',
             default => $selected,
         };
 
@@ -126,6 +146,16 @@ class ChecklistController extends Controller
     public function restroom(Request $request): RedirectResponse
     {
         return redirect()->route('checklists.index', $this->legacyRedirectParameters($request, 'restroom'));
+    }
+
+    public function subform(Request $request): RedirectResponse
+    {
+        return redirect()->route('checklists.index', $this->legacyRedirectParameters($request, 'dealer-operations-standards-subform'));
+    }
+
+    public function documentation(Request $request): RedirectResponse
+    {
+        return redirect()->route('checklists.index', $this->legacyRedirectParameters($request, 'dealer-operations-standards-documentation'));
     }
 
     public function load(Request $request, ChecklistTemplate $template): JsonResponse
@@ -187,12 +217,34 @@ class ChecklistController extends Controller
                 ->first();
 
             if (! $submission) {
-                $created = true;
-                $submission = new ChecklistSubmission;
-                $submission->checklist_template_id = $template->id;
-                $submission->status = 'draft';
-                $submission->scope_key = $scopeKey;
-                $submission->audit_date = $data['date'];
+                $isHourly = ($template->settings['validation_mode'] ?? null) === 'time_slots'
+                    || in_array($template->slug, ['restroom', 'utilities'], true);
+                $isDocumentation = ($template->settings['validation_mode'] ?? null) === 'dos_documentation'
+                    || in_array($template->slug, ['dealer-operations-standards-documentation', 'dos-documentation', 'documentation'], true);
+
+                if ($isHourly || $isDocumentation) {
+                    $existing = ChecklistSubmission::query()
+                        ->where('checklist_template_id', $template->id)
+                        ->whereDate('audit_date', $data['date'])
+                        ->where('scope_key', $scopeKey)
+                        ->where('user_id', $request->user()?->id)
+                        ->lockForUpdate()
+                        ->latest('id')
+                        ->first();
+
+                    if ($existing) {
+                        $submission = $existing;
+                    }
+                }
+
+                if (! $submission) {
+                    $created = true;
+                    $submission = new ChecklistSubmission;
+                    $submission->checklist_template_id = $template->id;
+                    $submission->status = 'draft';
+                    $submission->scope_key = $scopeKey;
+                    $submission->audit_date = $data['date'];
+                }
             }
 
             $submission->fill([
@@ -223,13 +275,55 @@ class ChecklistController extends Controller
                 'scores' => $this->calculateScores($template, $responses),
             ]);
 
+            // A merged draft can become empty when the mobile user undoes
+            // the last saved answer. Check all rows, including other categories.
+            if ($submission->status === 'draft'
+                && ! $responses->contains(fn (ChecklistResponse $response): bool => $this->responseHasDraftContent($response))) {
+                $submission->responses()->delete();
+                $submission->delete();
+                $submission->status = 'not_started';
+                $submission->context = null;
+                $submission->scores = $this->calculateScores($template, collect());
+                $submission->setRelation('responses', collect());
+
+                return $submission;
+            }
+
             return $submission->fresh('responses');
         });
 
         return response()->json([
-            'message' => 'Checklist draft saved.',
+            'message' => $submission->exists ? 'Checklist draft saved.' : 'Checklist reset.',
             'submission' => $this->submissionResource($submission, $template),
-        ], $created ? 201 : 200);
+        ], $created && $submission->exists ? 201 : 200);
+    }
+
+    private function responseHasDraftContent(ChecklistResponse $response): bool
+    {
+        $hasValue = static fn ($value): bool => is_string($value)
+            && trim($value) !== '' && Str::lower(trim($value)) !== 'unanswered';
+        if ($hasValue($response->status)) {
+            return true;
+        }
+        foreach (['remark', 'finding', 'action_plan', 'commitment_date', 'escalation_target', 'attachment_path'] as $field) {
+            if (filled($response->{$field})) {
+                return true;
+            }
+        }
+        $details = $response->details ?? [];
+        foreach (['slots', 'subform_answers', 'submitted_slots'] as $field) {
+            if (collect($details[$field] ?? [])->contains($hasValue)) {
+                return true;
+            }
+        }
+        if ($hasValue($details['eligibility'] ?? null)) {
+            return true;
+        }
+
+        return collect($details['customers'] ?? [])->contains(fn ($customer): bool =>
+            filled(data_get($customer, 'ro_number'))
+            || filled(data_get($customer, 'mileage'))
+            || collect(data_get($customer, 'answers', []))->contains($hasValue));
     }
 
     public function submit(
@@ -296,12 +390,21 @@ class ChecklistController extends Controller
                     return [$existing, $report, true];
                 }
 
-                $submission = new ChecklistSubmission([
-                    'checklist_template_id' => $lockedTemplate->id,
-                    'status' => 'draft',
-                    'scope_key' => $scopeKey,
-                    'audit_date' => $data['date'],
-                ]);
+                $isHourly = ($lockedTemplate->settings['validation_mode'] ?? null) === 'time_slots'
+                    || in_array($lockedTemplate->slug, ['restroom', 'utilities'], true);
+                $isDocumentation = ($lockedTemplate->settings['validation_mode'] ?? null) === 'dos_documentation'
+                    || in_array($lockedTemplate->slug, ['dealer-operations-standards-documentation', 'dos-documentation', 'documentation'], true);
+
+                if ($existing && ($isHourly || $isDocumentation)) {
+                    $submission = $existing;
+                } else {
+                    $submission = new ChecklistSubmission([
+                        'checklist_template_id' => $lockedTemplate->id,
+                        'status' => 'draft',
+                        'scope_key' => $scopeKey,
+                        'audit_date' => $data['date'],
+                    ]);
+                }
             }
 
             $submission->fill([
@@ -314,7 +417,11 @@ class ChecklistController extends Controller
             $submission->save();
 
             $responses = $this->syncResponses($submission, $lockedTemplate, $data['responses']);
-            $this->validateCompleteSubmission($lockedTemplate, $responses, $submission);
+            $clientTime = $request->header('X-Client-Time')
+                ?? data_get($data, 'client_time')
+                ?? data_get($data, 'context.client_time')
+                ?? data_get($data, 'responses.0.details.client_time');
+            $this->validateCompleteSubmission($lockedTemplate, $responses, $submission, $clientTime);
             $scores = $this->calculateScores($lockedTemplate, $responses);
 
             $submission->update([
@@ -329,28 +436,32 @@ class ChecklistController extends Controller
             $submission->load('responses');
 
             $snapshot = $this->submissionResource($submission, $lockedTemplate);
-            $report = Report::create([
-                'checklist_submission_id' => $submission->id,
-                'checklist_template_id' => $lockedTemplate->id,
-                'generated_by_user_id' => $request->user()?->id,
-                'type' => 'checklist_submission',
-                'title' => Str::limit(implode(' - ', array_filter([
-                    $lockedTemplate->name,
-                    $branch,
-                    $data['date'],
-                ])), 255, ''),
-                'status' => 'ready',
-                'filters' => [
-                    'template' => $lockedTemplate->slug,
-                    'branch' => $branch,
-                    'date' => $data['date'],
+            $report = Report::updateOrCreate(
+                [
+                    'checklist_submission_id' => $submission->id,
+                    'type' => 'checklist_submission',
                 ],
-                'data_snapshot' => [
-                    'template' => $submission->template_snapshot,
-                    'submission' => $snapshot,
-                ],
-                'generated_at' => now(),
-            ]);
+                [
+                    'checklist_template_id' => $lockedTemplate->id,
+                    'generated_by_user_id' => $request->user()?->id,
+                    'title' => Str::limit(implode(' - ', array_filter([
+                        $lockedTemplate->name,
+                        $branch,
+                        $data['date'],
+                    ])), 255, ''),
+                    'status' => 'ready',
+                    'filters' => [
+                        'template' => $lockedTemplate->slug,
+                        'branch' => $branch,
+                        'date' => $data['date'],
+                    ],
+                    'data_snapshot' => [
+                        'template' => $submission->template_snapshot,
+                        'submission' => $snapshot,
+                    ],
+                    'generated_at' => now(),
+                ]
+            );
 
             if ($submitter !== null) {
                 $taskCompletionNotifier->send($submission, $submitter);
@@ -449,6 +560,8 @@ class ChecklistController extends Controller
             'date' => ['nullable', 'string'],
             'branch' => ['nullable', 'string', 'max:255'],
             'scope' => ['nullable', 'string', Rule::in(['all', 'current', 'template_all'])],
+            'target' => ['nullable', 'string', Rule::in(['all', 'drafts', 'submitted', 'notifications', 'subforms', 'documentation', 'subform_doc'])],
+            'include_notifications' => ['nullable', 'boolean'],
         ])->validate();
 
         $templateInput = trim((string) ($validated['template'] ?? 'all'));
@@ -461,7 +574,9 @@ class ChecklistController extends Controller
             $matched = ChecklistTemplate::where('slug', $templateInput)->first();
             if (! $matched) {
                 $alias = match ($templateInput) {
-                    'dealer-operations', 'dos' => 'dealer-operations-standards',
+                    'dealer-operations', 'dos', 'dealer-operations-standards-aftersales', 'aftersales' => 'dealer-operations-standards',
+                    'subform', 'dos-subform', 'aftersales-subform', 'subforms' => 'dealer-operations-standards-subform',
+                    'documentation', 'doc', 'dos-documentation', 'dos-doc', 'aftersales-documentation' => 'dealer-operations-standards-documentation',
                     '5s' => 'sales',
                     'utilities' => 'restroom',
                     default => $templateInput,
@@ -475,7 +590,15 @@ class ChecklistController extends Controller
                 ], 404);
             }
 
-            $targetTemplates = collect([$matched]);
+            if ($matched->slug === 'dealer-operations-standards') {
+                $targetTemplates = ChecklistTemplate::whereIn('slug', [
+                    'dealer-operations-standards',
+                    'dealer-operations-standards-subform',
+                    'dealer-operations-standards-documentation',
+                ])->get();
+            } else {
+                $targetTemplates = collect([$matched]);
+            }
         } else {
             $targetTemplates = ChecklistTemplate::all();
         }
@@ -483,14 +606,58 @@ class ChecklistController extends Controller
         $date = trim((string) ($validated['date'] ?? ''));
         $branch = trim((string) ($validated['branch'] ?? ''));
         $scope = trim((string) ($validated['scope'] ?? 'all'));
+        $target = trim((string) ($validated['target'] ?? 'all'));
+        if (! in_array($target, ['all', 'drafts', 'submitted', 'notifications', 'subforms', 'documentation', 'subform_doc'], true)) {
+            $target = 'all';
+        }
+        $includeNotifications = $request->has('include_notifications')
+            ? $request->boolean('include_notifications')
+            : true;
 
         $templateIds = $targetTemplates->pluck('id')->all();
 
-        $stats = DB::transaction(function () use ($templateIds, $templateInput, $date, $branch, $scope): array {
+        $stats = DB::transaction(function () use ($templateIds, $targetTemplates, $templateInput, $date, $branch, $scope, $target, $includeNotifications): array {
             $submissionQuery = ChecklistSubmission::query();
 
-            if ($templateInput !== 'all') {
-                $submissionQuery->whereIn('checklist_template_id', $templateIds);
+            if ($target === 'subforms') {
+                $subformTemplate = ChecklistTemplate::where('slug', 'dealer-operations-standards-subform')->first();
+                $subformTemplateId = $subformTemplate?->id;
+
+                if ($subformTemplateId) {
+                    $submissionQuery->where('checklist_template_id', $subformTemplateId);
+                } else {
+                    $submissionQuery->whereRaw('0 = 1');
+                }
+            } elseif ($target === 'documentation') {
+                $docTemplate = ChecklistTemplate::where('slug', 'dealer-operations-standards-documentation')->first();
+                $docTemplateId = $docTemplate?->id;
+
+                if ($docTemplateId) {
+                    $submissionQuery->where('checklist_template_id', $docTemplateId);
+                } else {
+                    $submissionQuery->whereRaw('0 = 1');
+                }
+            } elseif ($target === 'subform_doc') {
+                $sdTemplates = ChecklistTemplate::whereIn('slug', [
+                    'dealer-operations-standards-subform',
+                    'dealer-operations-standards-documentation',
+                ])->pluck('id')->all();
+
+                if (! empty($sdTemplates)) {
+                    $submissionQuery->whereIn('checklist_template_id', $sdTemplates);
+                } else {
+                    $submissionQuery->whereRaw('0 = 1');
+                }
+            } else {
+                if ($templateInput !== 'all') {
+                    $submissionQuery->whereIn('checklist_template_id', $templateIds);
+                }
+
+                if ($target === 'drafts') {
+                    $submissionQuery->where('status', 'draft');
+                } elseif ($target === 'submitted') {
+                    $submissionQuery->where('status', 'submitted');
+                }
             }
 
             if ($scope === 'current') {
@@ -498,7 +665,11 @@ class ChecklistController extends Controller
                     $submissionQuery->whereDate('audit_date', $date);
                 }
                 if ($branch !== '' && $branch !== 'all') {
-                    $submissionQuery->where('branch', $branch);
+                    $scopeKey = hash('sha256', Str::lower($branch));
+                    $submissionQuery->where(function ($q) use ($branch, $scopeKey) {
+                        $q->where('branch', $branch)
+                            ->orWhere('scope_key', $scopeKey);
+                    });
                 }
             } elseif ($date !== '' && $date !== 'all') {
                 $submissionQuery->whereDate('audit_date', $date);
@@ -507,22 +678,94 @@ class ChecklistController extends Controller
             $submissions = $submissionQuery->lockForUpdate()->get();
             $submissionIds = $submissions->pluck('id')->all();
 
+            $deletedDraftsCount = $target === 'notifications'
+                ? 0
+                : $submissions->where('status', 'draft')->count();
+            $deletedSubmittedCount = $target === 'notifications'
+                ? 0
+                : $submissions->where('status', 'submitted')->count();
             $deletedResponsesCount = 0;
-            $deletedSubmissionsCount = count($submissionIds);
+            $deletedSubmissionsCount = 0;
             $deletedReportsCount = 0;
+            $deletedNotificationsCount = 0;
+            $clearedSubformsCount = 0;
+            $clearedDocsCount = 0;
 
-            if ($deletedSubmissionsCount > 0) {
-                $deletedResponsesCount = ChecklistResponse::query()
-                    ->whereIn('checklist_submission_id', $submissionIds)
-                    ->delete();
+            if (count($submissionIds) > 0) {
+                if ($deletedDraftsCount > 0) {
+                    try {
+                        DB::table('notifications')
+                            ->where('type', ChecklistDraftReminder::class)
+                            ->whereIn('data->submission_id', $submissionIds)
+                            ->delete();
+                    } catch (\Throwable) {
+                        // Safe fallback if notifications table does not support json path query or isn't present
+                    }
+                }
 
-                $deletedReportsCount = Report::query()
-                    ->whereIn('checklist_submission_id', $submissionIds)
-                    ->delete();
+                if ($target !== 'notifications') {
+                    $deletedResponsesCount = ChecklistResponse::query()
+                        ->whereIn('checklist_submission_id', $submissionIds)
+                        ->delete();
 
-                ChecklistSubmission::query()
-                    ->whereIn('id', $submissionIds)
-                    ->delete();
+                    $deletedReportsCount = Report::query()
+                        ->whereIn('checklist_submission_id', $submissionIds)
+                        ->delete();
+
+                    $deletedSubmissionsCount = ChecklistSubmission::query()
+                        ->whereIn('id', $submissionIds)
+                        ->delete();
+                }
+            }
+
+            // Clear embedded subforms from DOS when targeting subforms, subform_doc, or subform template
+            if (in_array($target, ['subforms', 'subform_doc'], true) || $templateInput === 'dealer-operations-standards-subform') {
+                $clearedSubformsCount = $this->clearEmbeddedDosSubforms($branch, $date, $scope);
+            }
+
+            // Clear embedded documentation from DOS when targeting documentation, subform_doc, or documentation template
+            if (in_array($target, ['documentation', 'subform_doc'], true) || $templateInput === 'dealer-operations-standards-documentation') {
+                $clearedDocsCount = $this->clearEmbeddedDosDocumentation($branch, $date, $scope);
+            }
+
+            if ($includeNotifications || $target === 'notifications') {
+                $notificationTypes = match ($target) {
+                    'drafts' => [ChecklistDraftReminder::class],
+                    'submitted' => [PicTaskCompleted::class, FindingFollowUpRequested::class],
+                    default => [
+                        PicTaskCompleted::class,
+                        FindingFollowUpRequested::class,
+                        ChecklistDraftReminder::class,
+                    ],
+                };
+
+                try {
+                    $allIdVariants = array_values(array_unique([
+                        ...$submissionIds,
+                        ...array_map('strval', $submissionIds),
+                        ...array_map('intval', $submissionIds),
+                    ]));
+
+                    $targetSlugs = $targetTemplates->pluck('slug')->filter()->all();
+                    $notifQuery = DB::table('notifications')->whereIn('type', $notificationTypes);
+
+                    if ($templateInput === 'all' && $scope === 'all') {
+                        $deletedNotificationsCount = $notifQuery->delete();
+                    } elseif (! empty($allIdVariants)) {
+                        $notifQuery->where(function ($q) use ($allIdVariants, $targetSlugs, $scope) {
+                            $q->whereIn('data->submission_id', $allIdVariants);
+                            if ($scope !== 'current' && ! empty($targetSlugs)) {
+                                $q->orWhereIn('data->template_slug', $targetSlugs);
+                            }
+                        });
+                        $deletedNotificationsCount = $notifQuery->delete();
+                    } elseif ($scope !== 'current' && ! empty($targetSlugs)) {
+                        $notifQuery->whereIn('data->template_slug', $targetSlugs);
+                        $deletedNotificationsCount = $notifQuery->delete();
+                    }
+                } catch (\Throwable) {
+                    // Safe fallback if notifications table does not support json queries
+                }
             }
 
             $templatesCount = ChecklistTemplate::query()->count();
@@ -531,8 +774,13 @@ class ChecklistController extends Controller
 
             return [
                 'deleted_submissions' => $deletedSubmissionsCount,
+                'deleted_drafts' => $deletedDraftsCount,
+                'deleted_submitted' => $deletedSubmittedCount,
                 'deleted_responses' => $deletedResponsesCount,
                 'deleted_reports' => $deletedReportsCount,
+                'deleted_notifications' => $deletedNotificationsCount,
+                'cleared_embedded_subforms' => $clearedSubformsCount,
+                'cleared_embedded_documentation' => $clearedDocsCount,
                 'templates_preserved' => true,
                 'preserved_counts' => [
                     'templates' => $templatesCount,
@@ -542,15 +790,138 @@ class ChecklistController extends Controller
             ];
         });
 
-        $templateLabel = $templateInput === 'all'
-            ? 'All checklists'
-            : ($targetTemplates->first()?->name ?? $templateInput);
+        $templateLabel = match (true) {
+            $target === 'subforms' => 'Aftersales Subforms',
+            $target === 'documentation' => 'Aftersales Documentation',
+            $target === 'subform_doc' => 'Aftersales Subforms & Documentation',
+            $templateInput === 'all' => 'All checklists',
+            default => ($targetTemplates->first()?->name ?? $templateInput),
+        };
+
+        $typeLabel = match ($target) {
+            'drafts' => 'drafts',
+            'submitted' => 'submitted answers',
+            'subforms' => 'subform submissions',
+            'documentation' => 'documentation submissions',
+            'subform_doc' => 'subform & documentation submissions',
+            'notifications' => 'notification history',
+            default => 'answers and notification history',
+        };
 
         return response()->json([
-            'message' => "Checklist answers for {$templateLabel} have been successfully reset. Master templates, sections, and items were safely preserved.",
+            'message' => "Checklist {$typeLabel} for {$templateLabel} have been successfully reset. Master templates, sections, and items were safely preserved.",
             'template' => $templateInput,
+            'target' => $target,
             'stats' => $stats,
         ]);
+    }
+
+    private function clearEmbeddedDosSubforms(?string $branch, ?string $date, string $scope): int
+    {
+        $dosTemplate = ChecklistTemplate::where('slug', 'dealer-operations-standards')->first();
+        if (! $dosTemplate) {
+            return 0;
+        }
+
+        $dosQuery = ChecklistSubmission::query()->where('checklist_template_id', $dosTemplate->id);
+        if ($scope === 'current') {
+            if ($date !== '' && $date !== null && $date !== 'all') {
+                $dosQuery->whereDate('audit_date', $date);
+            }
+            if ($branch !== '' && $branch !== null && $branch !== 'all') {
+                $scopeKey = hash('sha256', Str::lower($branch));
+                $dosQuery->where(function ($q) use ($branch, $scopeKey) {
+                    $q->where('branch', $branch)
+                        ->orWhere('scope_key', $scopeKey);
+                });
+            }
+        } elseif ($date !== '' && $date !== null && $date !== 'all') {
+            $dosQuery->whereDate('audit_date', $date);
+        }
+
+        $dosSubmissions = $dosQuery->with(['responses.item'])->get();
+        $cleared = 0;
+
+        foreach ($dosSubmissions as $submission) {
+            foreach ($submission->responses as $response) {
+                $details = (array) ($response->details ?? []);
+                $hasSubAnswers = array_key_exists('subform_answers', $details);
+                $hasEligibility = array_key_exists('eligibility', $details);
+                $itemNum = (string) ($response->item?->metadata['number'] ?? $response->item?->code ?? '');
+                $isSubItem = in_array($itemNum, ['23', '27', '53', '54', '55'], true)
+                    || in_array((string) $response->item_key, ['dos-as-23', 'dos-as-27', 'dos-as-53', 'dos-as-54', 'dos-as-55'], true);
+
+                if ($hasSubAnswers || $hasEligibility || $isSubItem) {
+                    unset($details['subform_answers'], $details['eligibility']);
+                    $response->details = $details;
+                    if ($isSubItem) {
+                        $response->status = null;
+                    }
+                    $response->save();
+                    $cleared++;
+                }
+            }
+        }
+
+        return $cleared;
+    }
+
+    private function clearEmbeddedDosDocumentation(?string $branch, ?string $date, string $scope): int
+    {
+        $dosTemplate = ChecklistTemplate::where('slug', 'dealer-operations-standards')->first();
+        if (! $dosTemplate) {
+            return 0;
+        }
+
+        $dosQuery = ChecklistSubmission::query()->where('checklist_template_id', $dosTemplate->id);
+        if ($scope === 'current') {
+            if ($date !== '' && $date !== null && $date !== 'all') {
+                $dosQuery->whereDate('audit_date', $date);
+            }
+            if ($branch !== '' && $branch !== null && $branch !== 'all') {
+                $scopeKey = hash('sha256', Str::lower($branch));
+                $dosQuery->where(function ($q) use ($branch, $scopeKey) {
+                    $q->where('branch', $branch)
+                        ->orWhere('scope_key', $scopeKey);
+                });
+            }
+        } elseif ($date !== '' && $date !== null && $date !== 'all') {
+            $dosQuery->whereDate('audit_date', $date);
+        }
+
+        $dosSubmissions = $dosQuery->with(['responses.item'])->get();
+        $cleared = 0;
+
+        foreach ($dosSubmissions as $submission) {
+            $context = (array) ($submission->context ?? []);
+            if (! empty($context['documentation_samples'])) {
+                unset($context['documentation_samples']);
+                $submission->context = $context;
+                $submission->save();
+            }
+
+            foreach ($submission->responses as $response) {
+                $details = (array) ($response->details ?? []);
+                $hasDocSamples = array_key_exists('documentation_samples', $details);
+                $hasDocAnswers = array_key_exists('documentation_answers', $details);
+                $itemNum = (string) ($response->item?->metadata['number'] ?? $response->item?->code ?? '');
+                $isDocItem = $itemNum === '61'
+                    || in_array((string) $response->item_key, ['dos-as-61', 'doc-61'], true)
+                    || str_contains((string) $response->item_key, '61');
+
+                if ($hasDocSamples || $hasDocAnswers || $isDocItem) {
+                    unset($details['documentation_samples'], $details['documentation_answers']);
+                    $response->details = $details;
+                    if ($isDocItem) {
+                        $response->status = null;
+                    }
+                    $response->save();
+                    $cleared++;
+                }
+            }
+        }
+
+        return $cleared;
     }
 
     public function uploadAttachment(Request $request, ChecklistTemplate $template): JsonResponse
@@ -580,29 +951,45 @@ class ChecklistController extends Controller
     public function updateTemplate(Request $request, ChecklistTemplate $template): JsonResponse
     {
         $this->ensureCanManageTemplates($request);
-        $input = $this->normalizeTemplateInput($request->all());
+        $this->loadTemplate($template);
+        $editorOptions = $this->templateEditorOptions($template);
+        $input = $this->normalizeTemplateInput($request->all(), $template, $editorOptions);
 
         $validator = Validator::make($input, [
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'description' => ['sometimes', 'nullable', 'string'],
             'settings' => ['sometimes', 'nullable', 'array'],
+            'settings.instructions' => ['sometimes', 'nullable', 'string'],
+            'settings.short_name' => ['sometimes', 'nullable', 'string', 'max:255'],
             'sections' => ['required', 'array', 'min:1'],
+            'sections.*.id' => ['nullable', 'integer', Rule::exists('checklist_sections', 'id')->where('checklist_template_id', $template->id)],
             'sections.*.key' => ['required', 'string', 'max:100', 'distinct'],
             'sections.*.title' => ['required', 'string', 'max:255'],
             'sections.*.metadata' => ['nullable', 'array'],
             'sections.*.items' => ['required', 'array'],
+            'sections.*.items.*.id' => ['nullable', 'integer', Rule::exists('checklist_items', 'id')->where('checklist_template_id', $template->id)],
             'sections.*.items.*.key' => ['required', 'string', 'max:100', 'distinct'],
             'sections.*.items.*.prompt' => ['required', 'string'],
             'sections.*.items.*.metadata' => ['nullable', 'array'],
+            'sections.*.items.*.metadata.responsible_role' => ['required', 'string', Rule::in(array_column($editorOptions['responsible_roles'], 'value'))],
+            'sections.*.items.*.metadata.level' => [$editorOptions['level_required'] ? 'required' : 'nullable', 'string', Rule::in(array_column($editorOptions['levels'], 'value'))],
+            'sections.*.items.*.metadata.how_to_check' => ['sometimes', 'nullable', 'string'],
         ]);
 
-        $validator->after(function ($validator) use ($input): void {
+        $validator->after(function ($validator) use ($input, $template): void {
             $sectionKeys = [];
             $itemKeys = [];
+            $existingSections = $template->sections->keyBy('id');
+            $existingItems = $template->sections->flatMap->items->keyBy('id');
 
-            foreach ($input['sections'] ?? [] as $sectionIndex => $section) {
+            foreach (is_array($input['sections'] ?? null) ? $input['sections'] : [] as $sectionIndex => $section) {
                 if (! is_array($section)) {
                     continue;
+                }
+
+                $existingSection = $existingSections->get($section['id'] ?? null);
+                if ($existingSection && $existingSection->key !== ($section['key'] ?? null)) {
+                    $validator->errors()->add("sections.$sectionIndex.key", 'An existing section key cannot be changed.');
                 }
 
                 $sectionKey = Str::lower(trim((string) ($section['key'] ?? '')));
@@ -616,9 +1003,14 @@ class ChecklistController extends Controller
                     $sectionKeys[$sectionKey] = true;
                 }
 
-                foreach ($section['items'] ?? [] as $itemIndex => $item) {
+                foreach (is_array($section['items'] ?? null) ? $section['items'] : [] as $itemIndex => $item) {
                     if (! is_array($item)) {
                         continue;
+                    }
+
+                    $existingItem = $existingItems->get($item['id'] ?? null);
+                    if ($existingItem && $existingItem->key !== ($item['key'] ?? null)) {
+                        $validator->errors()->add("sections.$sectionIndex.items.$itemIndex.key", 'An existing question key cannot be changed.');
                     }
 
                     $itemKey = Str::lower(trim((string) ($item['key'] ?? '')));
@@ -636,7 +1028,10 @@ class ChecklistController extends Controller
             }
         });
 
-        $data = $validator->validate();
+        $validator->validate();
+        // These JSON bags also contain checklist-specific fields (checker,
+        // scoring, time slots, etc.) without individual validation rules.
+        $data = Arr::only($input, ['name', 'description', 'settings', 'sections']);
 
         $template = DB::transaction(function () use ($template, $data): ChecklistTemplate {
             $template = ChecklistTemplate::query()->lockForUpdate()->findOrFail($template->id);
@@ -646,8 +1041,9 @@ class ChecklistController extends Controller
 
             $keptSectionIds = [];
             $keptItemIds = [];
+            $questionNumber = 0;
 
-            foreach ($data['sections'] as $sectionOrder => $sectionData) {
+            foreach (array_values($data['sections']) as $sectionOrder => $sectionData) {
                 $section = ChecklistSection::query()->updateOrCreate([
                     'checklist_template_id' => $template->id,
                     'key' => $sectionData['key'],
@@ -659,7 +1055,13 @@ class ChecklistController extends Controller
                 ]);
                 $keptSectionIds[] = $section->id;
 
-                foreach ($sectionData['items'] as $itemOrder => $itemData) {
+                foreach (array_values($sectionData['items']) as $itemOrder => $itemData) {
+                    $questionNumber++;
+                    $metadata = $itemData['metadata'] ?? [];
+                    unset($metadata['deleted']);
+                    $metadata['number'] = $questionNumber;
+                    $metadata['code'] = (string) $questionNumber;
+                    $isActive = array_key_exists('is_active', $itemData) ? (bool) $itemData['is_active'] : true;
                     $item = ChecklistItem::query()->updateOrCreate([
                         'checklist_template_id' => $template->id,
                         'key' => $itemData['key'],
@@ -667,14 +1069,21 @@ class ChecklistController extends Controller
                         'checklist_section_id' => $section->id,
                         'prompt' => trim($itemData['prompt']),
                         'sort_order' => $itemOrder,
-                        'metadata' => $itemData['metadata'] ?? null,
-                        'is_active' => true,
+                        'metadata' => $metadata,
+                        'is_active' => $isActive,
                     ]);
                     $keptItemIds[] = $item->id;
                 }
             }
 
-            $template->items()->whereNotIn('id', $keptItemIds)->update(['is_active' => false]);
+            $template->items()->whereNotIn('id', $keptItemIds)->each(function (ChecklistItem $item): void {
+                $metadata = $item->metadata ?? [];
+                $metadata['deleted'] = true;
+                $item->update([
+                    'is_active' => false,
+                    'metadata' => $metadata,
+                ]);
+            });
             $template->sections()->whereNotIn('id', $keptSectionIds)->update(['is_active' => false]);
 
             return $this->loadTemplate($template->fresh());
@@ -684,6 +1093,173 @@ class ChecklistController extends Controller
             'message' => 'Checklist template updated.',
             'template' => $this->templateResource($template),
         ]);
+    }
+
+    public function toggleItem(Request $request, ChecklistTemplate $template): JsonResponse
+    {
+        $this->ensureCanManageTemplates($request);
+
+        $validated = $request->validate([
+            'key' => ['required', 'string'],
+            'is_active' => ['required', 'boolean'],
+            'slot' => ['nullable', 'string'],
+        ]);
+
+        $item = $template->items()
+            ->where('key', $validated['key'])
+            ->firstOrFail();
+
+        $metadata = $item->metadata ?? [];
+        unset($metadata['deleted']);
+
+        $slot = $validated['slot'] ?? null;
+        if ($slot !== null && $slot !== '') {
+            $allSlots = $this->timeSlotKeys($template);
+            $activeSlots = $metadata['active_slots'] ?? $allSlots;
+            if (! is_array($activeSlots)) {
+                $activeSlots = $allSlots;
+            }
+
+            if ($validated['is_active']) {
+                if (! in_array($slot, $activeSlots, true)) {
+                    $activeSlots[] = $slot;
+                }
+            } else {
+                $activeSlots = array_values(array_filter($activeSlots, fn ($s) => $s !== $slot));
+            }
+
+            $metadata['active_slots'] = array_values($activeSlots);
+            $itemActive = count($activeSlots) > 0;
+
+            $item->update([
+                'is_active' => $itemActive,
+                'metadata' => $metadata,
+            ]);
+
+            return response()->json([
+                'message' => $validated['is_active']
+                    ? "Question enabled for {$slot}."
+                    : "Question turned off for {$slot}.",
+                'item' => [
+                    'id' => $item->id,
+                    'key' => $item->key,
+                    'is_active' => (bool) $item->is_active,
+                    'active_slots' => $metadata['active_slots'],
+                ],
+            ]);
+        }
+
+        $item->update([
+            'is_active' => $validated['is_active'],
+            'metadata' => $metadata,
+        ]);
+
+        return response()->json([
+            'message' => $validated['is_active']
+                ? 'Question is now included in the checklist.'
+                : 'Question has been excluded from the checklist.',
+            'item' => [
+                'id' => $item->id,
+                'key' => $item->key,
+                'is_active' => (bool) $item->is_active,
+                'active_slots' => $metadata['active_slots'] ?? null,
+            ],
+        ]);
+    }
+
+    public function storeTemplate(Request $request): JsonResponse
+    {
+        $this->ensureCanManageTemplates($request);
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'slug' => ['required', 'string', 'max:100', 'unique:checklist_templates,slug'],
+            'description' => ['nullable', 'string'],
+            'variant' => ['nullable', 'string', Rule::in(['dos', 'standard', 'restroom'])],
+            'clone_from_slug' => ['nullable', 'string', Rule::exists('checklist_templates', 'slug')],
+            'instructions' => ['nullable', 'string'],
+        ]);
+
+        $baseTemplate = ! empty($validated['clone_from_slug'])
+            ? ChecklistTemplate::where('slug', $validated['clone_from_slug'])->with(['sections.items'])->first()
+            : null;
+
+        $newTemplate = DB::transaction(function () use ($validated, $baseTemplate): ChecklistTemplate {
+            $settings = $baseTemplate ? ($baseTemplate->settings ?? []) : [];
+            if (! empty($validated['instructions'])) {
+                $settings['instructions'] = $validated['instructions'];
+            }
+            if ($validated['variant'] ?? null) {
+                $settings['validation_mode'] = match ($validated['variant']) {
+                    'dos' => 'dos',
+                    'restroom' => 'time_slots',
+                    default => 'standard',
+                };
+            }
+
+            $template = ChecklistTemplate::create([
+                'name' => trim($validated['name']),
+                'slug' => Str::slug($validated['slug']),
+                'description' => $validated['description'] ?? ($baseTemplate?->description ?? ''),
+                'version' => 1,
+                'is_active' => true,
+                'settings' => $settings,
+            ]);
+
+            if ($baseTemplate) {
+                foreach ($baseTemplate->sections as $sec) {
+                    $newSec = ChecklistSection::create([
+                        'checklist_template_id' => $template->id,
+                        'key' => Str::slug($sec->key . '-' . $template->id),
+                        'title' => $sec->title,
+                        'sort_order' => $sec->sort_order,
+                        'metadata' => $sec->metadata,
+                        'is_active' => true,
+                    ]);
+                    foreach ($sec->items as $item) {
+                        ChecklistItem::create([
+                            'checklist_template_id' => $template->id,
+                            'checklist_section_id' => $newSec->id,
+                            'key' => Str::slug($item->key . '-' . $template->id),
+                            'prompt' => $item->prompt,
+                            'sort_order' => $item->sort_order,
+                            'metadata' => $item->metadata,
+                            'is_active' => $item->is_active,
+                        ]);
+                    }
+                }
+            } else {
+                $defaultSec = ChecklistSection::create([
+                    'checklist_template_id' => $template->id,
+                    'key' => 'general-section',
+                    'title' => 'General Standards',
+                    'sort_order' => 0,
+                    'is_active' => true,
+                ]);
+                ChecklistItem::create([
+                    'checklist_template_id' => $template->id,
+                    'checklist_section_id' => $defaultSec->id,
+                    'key' => 'item-1',
+                    'prompt' => 'New checklist standard',
+                    'sort_order' => 0,
+                    'is_active' => true,
+                    'metadata' => [
+                        'code' => '1',
+                        'number' => 1,
+                        'responsible_role' => ($template->settings['validation_mode'] ?? '') === 'dos' ? 'ASM' : User::ROLE_PERSON_IN_CHARGE,
+                        'level' => 'Standard',
+                    ],
+                ]);
+            }
+
+            return $template;
+        });
+
+        return response()->json([
+            'message' => 'Checklist template created successfully.',
+            'template' => $this->templateResource($this->loadTemplate($newTemplate)),
+            'redirect_url' => route('checklists.index', ['checklist' => $newTemplate->slug]),
+        ], 201);
     }
 
     private function renderPage(Request $request, string $slug, string $view, array $viewData = []): View
@@ -728,13 +1304,61 @@ class ChecklistController extends Controller
             ->values()
             ->all();
 
+        $subformTemplate = ChecklistTemplate::query()
+            ->where('slug', 'dealer-operations-standards-subform')
+            ->where('is_active', true)
+            ->first();
+        $subformTemplateData = $subformTemplate ? $this->templateResource($this->loadTemplate($subformTemplate)) : null;
+
+        $documentationTemplate = ChecklistTemplate::query()
+            ->where('slug', 'dealer-operations-standards-documentation')
+            ->where('is_active', true)
+            ->first();
+        $documentationTemplateData = $documentationTemplate ? $this->templateResource($this->loadTemplate($documentationTemplate)) : null;
+
+        $checklistSummary = $this->buildChecklistSummary($template, $subformTemplate);
+        $userChecklistOverview = $checklistSummary;
+
+        $availableBaseTemplates = ChecklistTemplate::query()
+            ->where('is_active', true)
+            ->get(['id', 'slug', 'name', 'description'])
+            ->map(fn ($t) => [
+                'slug' => $t->slug,
+                'name' => $t->name,
+                'description' => $t->description,
+            ])
+            ->values()
+            ->all();
+
+        $subformDocData = in_array($slug, ['dealer-operations-standards', 'dealer-operations-standards-aftersales'], true)
+            ? app(AftersalesSubformDocService::class)->getSubformAndDocumentationResults(
+                $branch,
+                $date,
+                $submission?->id,
+                'user',
+                $request->user()?->id
+            )
+            : null;
+
         return view($view, [
             'template' => $templateData,
+            'subformTemplate' => $subformTemplateData,
+            'documentationTemplate' => $documentationTemplateData,
+            'subformDocData' => $subformDocData,
+            'userChecklistOverview' => $checklistSummary,
+            'checklistSummary' => $checklistSummary,
+            'availableBaseTemplates' => $availableBaseTemplates,
             'submission' => $submissionData,
             'branches' => $branches,
             'canManageTemplate' => $canManageTemplate,
             'checklistBootstrap' => [
                 'template' => $templateData,
+                'subform_template' => $subformTemplateData,
+                'documentation_template' => $documentationTemplateData,
+                'subform_doc_data' => $subformDocData,
+                'user_overview' => $checklistSummary,
+                'checklist_summary' => $checklistSummary,
+                'available_base_templates' => $availableBaseTemplates,
                 'submission' => $submissionData,
                 'date' => $date,
                 'branch' => $branch,
@@ -743,6 +1367,332 @@ class ChecklistController extends Controller
             ],
             ...$viewData,
         ]);
+    }
+
+    private function buildChecklistSummary(ChecklistTemplate $template, ?ChecklistTemplate $subformTemplate = null): array
+    {
+        $templates = ChecklistTemplate::query()
+            ->where('is_active', true)
+            ->with(['sections.items'])
+            ->get()
+            ->keyBy('slug');
+        $slug = $template->slug;
+        $itemsCount = $template->sections->flatMap->items->count();
+        $sectionsCount = $template->sections->count();
+
+        $dosAftersales = $templates->get('dealer-operations-standards');
+        $dosSubform = $subformTemplate ?? $templates->get('dealer-operations-standards-subform');
+        $dosDoc = $templates->get('dealer-operations-standards-documentation');
+        $restroom = $templates->get('restroom');
+        $sales5s = $templates->get('sales');
+        $service5s = $templates->get('service');
+        $dosSales = $templates->get('dealer-operations-standards-sales');
+        $isDosAftersales = in_array($slug, ['dealer-operations-standards', 'dealer-operations-standards-aftersales'], true);
+
+        $ceCore = $dosAftersales ? $dosAftersales->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['CE SERVICE', 'CE'], true))->count() : 9;
+        $ceSubform = 20; // 9 Service Reception + 11 Customer's Lounge
+        $ceDoc = $dosDoc ? $dosDoc->sections->flatMap->items->count() : 17;
+        $subformItems = $template->sections->flatMap->items->filter(function ($item) {
+            $meta = (array) ($item->metadata ?? []);
+            return ! empty($meta['has_subform'])
+                || in_array((string) ($item->code ?? ''), ['23', '27', '53', '54', '55'], true)
+                || ! empty($meta['subform_key']);
+        });
+        $hasSubform = $isDosAftersales || $subformItems->isNotEmpty() || $slug === 'dealer-operations-standards-subform';
+
+        $wsCore = $dosAftersales ? $dosAftersales->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['WORKSHOP SUP', 'WS SUP', 'WS', 'WORKSHOP SUPERVISOR'], true))->count() : 12;
+        $wsSubform = 16; // 12 Employee Facilities + 4 Mitsubishi Quick Service
+        $subformQuestionsCount = 0;
+        $subformBreakdown = [];
+        if ($hasSubform) {
+            if ($subformTemplate) {
+                $subformQuestionsCount = $subformTemplate->sections->flatMap->items->count();
+                foreach ($subformTemplate->sections as $sec) {
+                    $subformBreakdown[] = [
+                        'name' => $sec->title,
+                        'count' => $sec->items->count(),
+                    ];
+                }
+            } elseif ($isDosAftersales) {
+                $subformQuestionsCount = 39;
+                $subformBreakdown = [
+                    ['name' => 'Service Reception', 'count' => 9],
+                    ['name' => "Customer's Lounge", 'count' => 11],
+                    ['name' => 'Mitsubishi Quick Service', 'count' => 4],
+                    ['name' => 'Employee Facilities', 'count' => 12],
+                    ['name' => 'Meeting Room', 'count' => 3],
+                ];
+            } elseif ($slug === 'dealer-operations-standards-subform') {
+                $subformQuestionsCount = $itemsCount;
+                foreach ($template->sections as $sec) {
+                    $subformBreakdown[] = [
+                        'name' => $sec->title,
+                        'count' => $sec->items->count(),
+                    ];
+                }
+            }
+        }
+
+        $asmCore = $dosAftersales ? $dosAftersales->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['ASM', 'AFTERSALES MANAGER'], true))->count() : 50;
+        $asmSubform = 3; // 3 Meeting Room
+        $docQuestionsCount = 0;
+        if ($isDosAftersales) {
+            $docTemplate = ChecklistTemplate::query()
+                ->where('slug', 'dealer-operations-standards-documentation')
+                ->where('is_active', true)
+                ->first();
+            $docQuestionsCount = $docTemplate ? $docTemplate->sections->flatMap->items->count() : 17;
+        }
+
+        $partsCore = $dosAftersales ? $dosAftersales->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['PARTS', 'PARTS SUPERVISOR'], true))->count() : 3;
+        $jcCore = $dosAftersales ? $dosAftersales->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['JC', 'JOB CONTROLLER'], true))->count() : 1;
+        $aftersalesTotalCore = $dosAftersales ? $dosAftersales->sections->flatMap->items->count() : 75;
+        $subformTotal = $dosSubform ? $dosSubform->sections->flatMap->items->count() : 39;
+        $rolesSummary = [];
+        if ($isDosAftersales) {
+            $ceCore = $template->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['CE SERVICE', 'CE'], true))->count() ?: 9;
+            $wsCore = $template->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['WORKSHOP SUP', 'WS SUP', 'WS', 'WORKSHOP SUPERVISOR'], true))->count() ?: 12;
+            $asmCore = $template->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['ASM', 'AFTERSALES MANAGER'], true))->count() ?: 50;
+            $partsCore = $template->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['PARTS', 'PARTS SUPERVISOR'], true))->count() ?: 3;
+            $jcCore = $template->sections->flatMap->items->filter(fn ($i) => in_array(strtoupper(trim((string) ($i->metadata['checker'] ?? $i->metadata['responsible_role'] ?? ''))), ['JC', 'JOB CONTROLLER'], true))->count() ?: 1;
+
+            $rolesSummary = [
+                ['code' => 'CE SERVICE', 'label' => 'CE Service', 'core' => $ceCore, 'subform' => 20, 'doc' => 17, 'total' => $ceCore + 20 + 17, 'role_id' => 'ce_service'],
+                ['code' => 'WORKSHOP SUP', 'label' => 'Workshop Sup', 'core' => $wsCore, 'subform' => 16, 'doc' => 0, 'total' => $wsCore + 16, 'role_id' => 'workshop_sup'],
+                ['code' => 'ASM', 'label' => 'ASM', 'core' => $asmCore, 'subform' => 3, 'doc' => 0, 'total' => $asmCore + 3, 'role_id' => 'aftersales_mgr', 'oversees' => 131],
+                ['code' => 'PARTS', 'label' => 'Parts', 'core' => $partsCore, 'subform' => 0, 'doc' => 0, 'total' => $partsCore, 'role_id' => 'parts_sup'],
+                ['code' => 'JC', 'label' => 'Job Controller', 'core' => $jcCore, 'subform' => 0, 'doc' => 0, 'total' => $jcCore, 'role_id' => 'job_controller'],
+            ];
+        }
+
+        $users = [
+            [
+                'id' => 'ce_service',
+                'checker_code' => 'CE SERVICE',
+                'name' => 'Customer Experience Service',
+                'short_title' => 'CE Service',
+                'department' => 'DOS - Aftersales',
+                'icon' => 'fa-user-tie',
+                'color' => '#0ea5e9',
+                'core_count' => $ceCore,
+                'subform_count' => $ceSubform,
+                'doc_count' => $ceDoc,
+                'total_count' => $ceCore + $ceSubform + $ceDoc,
+                'has_subform' => true,
+                'has_documentation' => true,
+                'subform_details' => 'Reception (9) + Lounge (11)',
+                'doc_details' => 'Service Documents (17 across RO samples)',
+                'scope' => 'reception_lounge_doc',
+            ],
+            [
+                'id' => 'workshop_sup',
+                'checker_code' => 'WORKSHOP SUP',
+                'name' => 'Workshop Supervisor',
+                'short_title' => 'Workshop Sup',
+                'department' => 'DOS - Aftersales',
+                'icon' => 'fa-wrench',
+                'color' => '#8b5cf6',
+                'core_count' => $wsCore,
+                'subform_count' => $wsSubform,
+                'doc_count' => 0,
+                'total_count' => $wsCore + $wsSubform,
+                'has_subform' => true,
+                'has_documentation' => false,
+                'subform_details' => 'Facilities (12) + MQS (4)',
+                'doc_details' => null,
+                'scope' => 'workshop_facilities',
+            ],
+            [
+                'id' => 'aftersales_mgr',
+                'checker_code' => 'ASM',
+                'name' => 'Aftersales Manager',
+                'short_title' => 'Aftersales Mgr',
+                'department' => 'DOS - Aftersales',
+                'icon' => 'fa-user-shield',
+                'color' => '#e31c3d',
+                'core_count' => $asmCore,
+                'subform_count' => $asmSubform,
+                'doc_count' => 0,
+                'total_count' => $asmCore + $asmSubform,
+                'oversees_total' => $aftersalesTotalCore + $subformTotal + $ceDoc,
+                'has_subform' => true,
+                'has_documentation' => true,
+                'subform_details' => 'Meeting Room (3) & Oversees All Subforms (39)',
+                'doc_details' => 'Oversees Documentation Audit (17)',
+                'scope' => 'overall_management',
+            ],
+            [
+                'id' => 'parts_sup',
+                'checker_code' => 'PARTS SUPERVISOR',
+                'name' => 'Parts Supervisor',
+                'short_title' => 'Parts Sup',
+                'department' => 'DOS - Aftersales',
+                'icon' => 'fa-boxes-stacked',
+                'color' => '#f59e0b',
+                'core_count' => $partsCore,
+                'subform_count' => 0,
+                'doc_count' => 0,
+                'total_count' => $partsCore,
+                'has_subform' => false,
+                'has_documentation' => false,
+                'subform_details' => null,
+                'doc_details' => null,
+                'scope' => 'parts_inventory',
+            ],
+            [
+                'id' => 'job_controller',
+                'checker_code' => 'JC',
+                'name' => 'Job Controller',
+                'short_title' => 'Job Controller',
+                'department' => 'DOS - Aftersales',
+                'icon' => 'fa-clipboard-list',
+                'color' => '#10b981',
+                'core_count' => $jcCore,
+                'subform_count' => 0,
+                'doc_count' => 0,
+                'total_count' => $jcCore,
+                'has_subform' => false,
+                'has_documentation' => false,
+                'subform_details' => null,
+                'doc_details' => null,
+                'scope' => 'dispatch_control',
+            ],
+            [
+                'id' => 'utilities_user',
+                'checker_code' => '5S_UTILITIES',
+                'name' => '5S Utilities PIC',
+                'short_title' => '5S Utilities',
+                'department' => '5S Systems',
+                'icon' => 'fa-restroom',
+                'color' => '#059669',
+                'core_count' => $restroom ? $restroom->sections->flatMap->items->count() : 31,
+                'subform_count' => 0,
+                'doc_count' => 0,
+                'total_count' => $restroom ? $restroom->sections->flatMap->items->count() : 31,
+                'has_subform' => false,
+                'has_documentation' => false,
+                'subform_details' => null,
+                'doc_details' => null,
+                'scope' => 'restroom_hourly',
+                'note' => '10 hourly inspections daily',
+            ],
+            [
+                'id' => 'sales_5s_user',
+                'checker_code' => '5S_SALES',
+                'name' => '5S Sales PIC',
+                'short_title' => '5S Sales',
+                'department' => '5S Systems',
+                'icon' => 'fa-car-side',
+                'color' => '#2563eb',
+                'core_count' => $sales5s ? $sales5s->sections->flatMap->items->count() : 44,
+                'subform_count' => 0,
+                'doc_count' => 0,
+                'total_count' => $sales5s ? $sales5s->sections->flatMap->items->count() : 44,
+                'has_subform' => false,
+                'has_documentation' => false,
+                'subform_details' => null,
+                'doc_details' => null,
+                'scope' => 'showroom_readiness',
+            ],
+            [
+                'id' => 'service_5s_user',
+                'checker_code' => '5S_SERVICE',
+                'name' => '5S Service PIC',
+                'short_title' => '5S Service',
+                'department' => '5S Systems',
+                'icon' => 'fa-screwdriver-wrench',
+                'color' => '#7c3aed',
+                'core_count' => $service5s ? $service5s->sections->flatMap->items->count() : 33,
+                'subform_count' => 0,
+                'doc_count' => 0,
+                'total_count' => $service5s ? $service5s->sections->flatMap->items->count() : 33,
+                'has_subform' => false,
+                'has_documentation' => false,
+                'subform_details' => null,
+                'doc_details' => null,
+                'scope' => 'workshop_readiness',
+            ],
+            [
+                'id' => 'sales_manager',
+                'checker_code' => 'SALES MANAGER',
+                'name' => 'Sales Manager',
+                'short_title' => 'Sales Mgr',
+                'department' => 'DOS - Sales',
+                'icon' => 'fa-briefcase',
+                'color' => '#d97706',
+                'core_count' => $dosSales ? $dosSales->sections->flatMap->items->count() : 90,
+                'subform_count' => 0,
+                'doc_count' => 0,
+                'total_count' => $dosSales ? $dosSales->sections->flatMap->items->count() : 90,
+                'has_subform' => false,
+                'has_documentation' => false,
+                'subform_details' => null,
+                'doc_details' => null,
+                'scope' => 'sales_standards',
+            ],
+        ];
+        $assignedPic = '';
+        $frequency = 'Daily';
+        $title = $template->name;
+
+        if ($slug === 'sales') {
+            $title = '5S Sales Checklist';
+            $assignedPic = '5S Sales PIC';
+            $frequency = 'Daily Inspection';
+            $guide = "Daily showroom and sales floor inspection across {$sectionsCount} sections.";
+        } elseif ($slug === 'service') {
+            $title = '5S Service Checklist';
+            $assignedPic = '5S Service PIC';
+            $frequency = 'Daily Inspection';
+            $guide = "Daily service reception and workshop inspection across {$sectionsCount} sections.";
+        } elseif ($slug === 'restroom') {
+            $title = '5S Utilities - Restroom Checklist';
+            $assignedPic = '5S Utilities PIC';
+            $frequency = '10 Hourly Slots Daily (9:00 AM – 6:00 PM)';
+            $guide = "Daily restroom sanitation tracked hourly across 10 inspection slots.";
+        } elseif ($isDosAftersales) {
+            $assignedPic = 'Aftersales Team (ASM, CE Service, Workshop Sup, Parts, JC)';
+            $frequency = 'Monthly Compliance Audit';
+            $guide = "Monthly compliance audit covering 75 core items, 5 subforms, and 17 documentation checks.";
+        } elseif ($slug === 'dealer-operations-standards-sales') {
+            $assignedPic = 'Sales Manager / Dealer Principal';
+            $frequency = 'Monthly Compliance Audit';
+            $guide = "Monthly showroom and sales process compliance audit across {$sectionsCount} sections.";
+        } elseif ($slug === 'dealer-operations-standards-subform') {
+            $assignedPic = 'Aftersales Auditors';
+            $frequency = 'Monthly Compliance Audit';
+            $guide = "Specialized facility subforms covering {$itemsCount} standards across {$sectionsCount} areas.";
+        } elseif ($slug === 'dealer-operations-standards-documentation') {
+            $assignedPic = 'CE Service / Warranty & Accounts';
+            $frequency = 'Monthly Compliance Audit';
+            $guide = "Documentation audit covering Rationalized Checksheets, Repair Orders, and Invoices.";
+        } else {
+            $assignedPic = $template->category ?? 'Operational Staff';
+            $frequency = ucfirst((string) ($template->metadata['frequency'] ?? 'Periodic'));
+            $guide = "Operational checklist covering {$itemsCount} items across {$sectionsCount} sections.";
+        }
+
+        return [
+            'users' => $users,
+            'active_slug' => $template->slug,
+            'is_dos_aftersales' => $template->slug === 'dealer-operations-standards',
+            'subform_total_items' => $subformTotal,
+            'doc_total_items' => $ceDoc,
+            'slug' => $slug,
+            'title' => $title,
+            'items_count' => $itemsCount,
+            'sections_count' => $sectionsCount,
+            'has_subform' => $hasSubform,
+            'subform_count' => $subformQuestionsCount,
+            'subform_breakdown' => $subformBreakdown,
+            'has_documentation' => $docQuestionsCount > 0,
+            'doc_count' => $docQuestionsCount,
+            'total_audit_count' => $itemsCount + $subformQuestionsCount + $docQuestionsCount,
+            'assigned_pic' => $assignedPic,
+            'frequency' => $frequency,
+            'guide' => $guide,
+            'roles' => $rolesSummary,
+        ];
     }
 
     private function legacyRedirectParameters(Request $request, string $checklist): array
@@ -829,7 +1779,7 @@ class ChecklistController extends Controller
             'responses.*.attachment_path' => ['nullable', 'string', 'max:500'],
         ]);
 
-        $validator->after(function ($validator) use ($input, $template): void {
+        $validator->after(function ($validator) use ($input, $template, $request): void {
             foreach ($input['responses'] ?? [] as $index => $response) {
                 if (empty($response['item_id']) && blank($response['item_key'] ?? null)) {
                     $validator->errors()->add(
@@ -841,11 +1791,15 @@ class ChecklistController extends Controller
 
             if ($template && ($template->settings['validation_mode'] ?? null) === 'time_slots') {
                 $date = (string) ($input['date'] ?? '');
+                $clientTime = $request->header('X-Client-Time')
+                    ?? data_get($input, 'client_time')
+                    ?? data_get($input, 'context.client_time')
+                    ?? data_get($input, 'responses.0.details.client_time');
                 foreach ($input['responses'] ?? [] as $index => $response) {
                     $slots = $response['details']['slots'] ?? [];
                     if (is_array($slots)) {
                         foreach ($slots as $slotKey => $mark) {
-                            if ($mark !== null && $mark !== '' && $this->isSlotInFuture($date, (string) $slotKey)) {
+                            if ($mark !== null && $mark !== '' && $this->isSlotInFuture($date, (string) $slotKey, $clientTime)) {
                                 $validator->errors()->add(
                                     "responses.$index.details.slots.$slotKey",
                                     "Inspection for future time slot $slotKey cannot be recorded ahead of time."
@@ -860,9 +1814,30 @@ class ChecklistController extends Controller
         return $validator->validate();
     }
 
-    private function normalizeTemplateInput(array $input): array
+    private function normalizeTemplateInput(array $input, ChecklistTemplate $template, array $editorOptions): array
     {
-        foreach ($input['sections'] ?? [] as &$section) {
+        $settings = is_array($input['settings'] ?? null)
+            ? array_replace($template->settings ?? [], $input['settings'])
+            : ($template->settings ?? []);
+        foreach (['instructions', 'short_name'] as $field) {
+            if (array_key_exists($field, $input)) {
+                $settings[$field] = $input[$field];
+            }
+        }
+        // Preserve scoring, schedules and other settings when only instructions
+        // are edited or an older client omits the settings object.
+        if (! array_key_exists('settings', $input) || is_array($input['settings']) || $input['settings'] === null) {
+            $input['settings'] = $settings;
+        }
+
+        if (! is_array($input['sections'] ?? null)) {
+            return $input;
+        }
+
+        $existingSections = $template->sections->keyBy(fn (ChecklistSection $section): string => Str::lower($section->key));
+        $existingItems = $template->sections->flatMap->items->keyBy(fn (ChecklistItem $item): string => Str::lower($item->key));
+
+        foreach ($input['sections'] as &$section) {
             if (! is_array($section)) {
                 continue;
             }
@@ -870,9 +1845,19 @@ class ChecklistController extends Controller
             if (is_string($section['key'])) {
                 $section['key'] = Str::lower(trim($section['key']));
             }
-            $section['metadata'] ??= null;
+            $existingSection = is_string($section['key']) ? $existingSections->get($section['key']) : null;
+            if ($existingSection) {
+                $section['key'] = $existingSection->key;
+            }
+            if (! array_key_exists('metadata', $section) || is_array($section['metadata']) || $section['metadata'] === null) {
+                $section['metadata'] = array_replace($existingSection?->metadata ?? [], $section['metadata'] ?? []) ?: null;
+            }
 
-            foreach ($section['items'] ?? [] as &$item) {
+            if (! is_array($section['items'] ?? null)) {
+                continue;
+            }
+
+            foreach ($section['items'] as &$item) {
                 if (! is_array($item)) {
                     continue;
                 }
@@ -880,16 +1865,28 @@ class ChecklistController extends Controller
                 if (is_string($item['key'])) {
                     $item['key'] = Str::lower(trim($item['key']));
                 }
+                $existingItem = is_string($item['key']) ? $existingItems->get($item['key']) : null;
+                if ($existingItem) {
+                    $item['key'] = $existingItem->key;
+                }
                 $item['prompt'] ??= $item['text'] ?? $item['checkItem'] ?? null;
-                $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+                if (isset($item['metadata']) && ! is_array($item['metadata'])) {
+                    continue;
+                }
+                $submittedMetadata = $item['metadata'] ?? [];
+                $metadata = array_replace($existingItem?->metadata ?? [], $submittedMetadata);
                 foreach ([
                     'number',
+                    'code',
+                    'label',
+                    'description',
                     'level',
                     'category',
                     'coverage',
                     'subject',
                     'checker',
                     'pic',
+                    'responsible_role',
                     'bom_task',
                     'escalation',
                     'how_to_check',
@@ -899,7 +1896,43 @@ class ChecklistController extends Controller
                         $metadata[$field] = $item[$field];
                     }
                 }
-                $item['metadata'] = $metadata ?: null;
+                if ((array_key_exists('how_to_check', $item) || array_key_exists('how_to_check', $submittedMetadata))
+                    && array_key_exists('howToCheck', $metadata)) {
+                    $metadata['howToCheck'] = $metadata['how_to_check'];
+                }
+
+                $responsible = $metadata['responsible_role'] ?? $metadata['responsible'] ?? $metadata['pic'] ?? null;
+                // Explicit blanks are validated as errors; omitted legacy
+                // responsibility fields retain the old value or checklist default.
+                foreach (['responsible_role', 'responsible', 'pic'] as $field) {
+                    if (array_key_exists($field, $item)) {
+                        $responsible = $item[$field];
+                        break;
+                    }
+                    if (array_key_exists($field, $submittedMetadata)) {
+                        $responsible = $submittedMetadata[$field];
+                        break;
+                    }
+                }
+                $hasSubmittedResponsible = count(array_intersect(['responsible_role', 'responsible', 'pic'], array_keys($item))) > 0
+                    || count(array_intersect(['responsible_role', 'responsible', 'pic'], array_keys($submittedMetadata))) > 0;
+                if (! $hasSubmittedResponsible && blank($responsible)) {
+                    $responsible = $editorOptions['default_responsible_role'];
+                }
+                $metadata['responsible_role'] = $responsible;
+                $metadata['pic'] = $responsible;
+                if (array_key_exists('responsible', $metadata)) {
+                    $metadata['responsible'] = $responsible;
+                }
+
+                $hasSubmittedLevel = array_key_exists('level', $item) || array_key_exists('level', $submittedMetadata);
+                if (! $hasSubmittedLevel && blank($metadata['level'] ?? null) && $editorOptions['level_required']) {
+                    $metadata['level'] = $metadata['category'] ?? 'Standard';
+                }
+                if (array_key_exists('level', $metadata)) {
+                    $metadata['category'] = $metadata['level'];
+                }
+                $item['metadata'] = $metadata;
             }
             unset($item);
         }
@@ -1031,6 +2064,91 @@ class ChecklistController extends Controller
             : collect();
         $seen = [];
 
+        $isDocumentation = ($template->settings['validation_mode'] ?? null) === 'dos_documentation'
+            || in_array($template->slug, ['dealer-operations-standards-documentation', 'dos-documentation', 'documentation'], true);
+
+        if ($isDocumentation) {
+            $rawCustomers = null;
+            foreach ($payloads as $p) {
+                if (! empty($p['details']['customers']) && is_array($p['details']['customers'])) {
+                    $rawCustomers = $p['details']['customers'];
+                    break;
+                }
+            }
+
+            if ($rawCustomers !== null) {
+                $allItemKeys = $template->sections->flatMap->items->pluck('key')->all();
+                $normalizedCustomers = [];
+
+                foreach ($rawCustomers as $cust) {
+                    if (! is_array($cust)) {
+                        continue;
+                    }
+                    $answers = (array) ($cust['answers'] ?? []);
+                    $hasNo = false;
+                    foreach ($answers as $ans) {
+                        if (is_string($ans) && Str::lower(trim($ans)) === 'no') {
+                            $hasNo = true;
+                            break;
+                        }
+                    }
+
+                    if ($hasNo) {
+                        foreach ($allItemKeys as $k) {
+                            $answers[$k] = 'no';
+                        }
+                        foreach ($answers as $k => $v) {
+                            $answers[$k] = 'no';
+                        }
+                    }
+
+                    $cust['answers'] = $answers;
+                    $normalizedCustomers[] = $cust;
+                }
+
+                foreach ($payloads as &$payload) {
+                    $item = ! empty($payload['item_id'])
+                        ? $itemsById->get((int) $payload['item_id'])
+                        : $itemsByKey->get(Str::lower(trim((string) ($payload['item_key'] ?? ''))));
+                    $itemKey = $item?->key ?? (string) ($payload['item_key'] ?? '');
+
+                    $payload['details'] = is_array($payload['details'] ?? null) ? $payload['details'] : [];
+                    $payload['details']['customers'] = $normalizedCustomers;
+
+                    if ($itemKey !== '') {
+                        $statuses = [];
+                        foreach ($normalizedCustomers as $cust) {
+                            $ans = $cust['answers'][$itemKey] ?? null;
+                            if (is_string($ans) && trim($ans) !== '') {
+                                $statuses[] = Str::lower(trim($ans));
+                            }
+                        }
+
+                        if (in_array('no', $statuses, true)) {
+                            $payload['status'] = 'no';
+                        } elseif (count($statuses) === count($normalizedCustomers) && count($normalizedCustomers) > 0) {
+                            $payload['status'] = in_array('na', $statuses, true) ? 'na' : 'yes';
+                        }
+                    }
+                }
+                unset($payload);
+            } else {
+                $hasAnyNo = false;
+                foreach ($payloads as $p) {
+                    if (is_string($p['status'] ?? null) && Str::lower(trim($p['status'])) === 'no') {
+                        $hasAnyNo = true;
+                        break;
+                    }
+                }
+                if ($hasAnyNo) {
+                    foreach ($payloads as &$payload) {
+                        $payload['status'] = 'no';
+                    }
+                    unset($payload);
+                }
+            }
+        }
+
         foreach ($payloads as $index => $payload) {
             $item = ! empty($payload['item_id'])
                 ? $itemsById->get((int) $payload['item_id'])
@@ -1082,7 +2200,8 @@ class ChecklistController extends Controller
     private function validateCompleteSubmission(
         ChecklistTemplate $template,
         Collection $responses,
-        ?ChecklistSubmission $submission = null
+        ?ChecklistSubmission $submission = null,
+        ?string $clientTime = null
     ): void {
         $responses = $responses->keyBy('item_key');
         $errors = [];
@@ -1098,8 +2217,12 @@ class ChecklistController extends Controller
                 $slots = is_array($response?->details['slots'] ?? null)
                     ? $response->details['slots']
                     : [];
+                $activeSlots = $item->metadata['active_slots'] ?? null;
                 foreach ($this->timeSlotKeys($template) as $slot) {
-                    if ($this->isSlotInFuture($auditDateStr, $slot)) {
+                    if (is_array($activeSlots) && ! in_array($slot, $activeSlots, true)) {
+                        continue;
+                    }
+                    if ($this->isSlotInFuture($auditDateStr, $slot, $clientTime)) {
                         continue;
                     }
                     if (! array_key_exists($slot, $slots) || ! $this->isValidSlotMark($slots[$slot])) {
@@ -1141,16 +2264,44 @@ class ChecklistController extends Controller
         if ($mode === 'time_slots') {
             $good = 0;
             $bad = 0;
+            $totalActiveSlots = 0;
+            $slotKeys = $this->timeSlotKeys($template);
+            $completedSlotsCount = 0;
+
+            foreach ($slotKeys as $slot) {
+                $slotActiveItemsCount = 0;
+                $slotAnsweredItemsCount = 0;
+                foreach ($items as $item) {
+                    $slots = $responsesByKey->get($item->key)?->details['slots'] ?? [];
+                    $activeSlots = $item->metadata['active_slots'] ?? null;
+                    if (is_array($activeSlots) && ! in_array($slot, $activeSlots, true)) {
+                        continue;
+                    }
+                    $slotActiveItemsCount++;
+                    if (array_key_exists($slot, $slots) && $this->isValidSlotMark($slots[$slot])) {
+                        $slotAnsweredItemsCount++;
+                    }
+                }
+                if ($slotActiveItemsCount > 0 && $slotAnsweredItemsCount >= $slotActiveItemsCount) {
+                    $completedSlotsCount++;
+                }
+            }
+
             foreach ($items as $item) {
                 $slots = $responsesByKey->get($item->key)?->details['slots'] ?? [];
-                foreach ($this->timeSlotKeys($template) as $slot) {
+                $activeSlots = $item->metadata['active_slots'] ?? null;
+                foreach ($slotKeys as $slot) {
+                    if (is_array($activeSlots) && ! in_array($slot, $activeSlots, true)) {
+                        continue;
+                    }
+                    $totalActiveSlots++;
                     if (! array_key_exists($slot, $slots) || ! $this->isValidSlotMark($slots[$slot])) {
                         continue;
                     }
                     $this->isGoodSlotMark($slots[$slot]) ? $good++ : $bad++;
                 }
             }
-            $slotTotal = $items->count() * count($this->timeSlotKeys($template));
+            $slotTotal = $totalActiveSlots;
             $answered = $good + $bad;
 
             return [
@@ -1165,6 +2316,7 @@ class ChecklistController extends Controller
                 'items_answered' => $responsesByKey->count(),
                 'slot_total' => $slotTotal,
                 'slots_answered' => $answered,
+                'completed_slots' => $completedSlotsCount,
                 'good' => $good,
                 'bad' => $bad,
                 'completion_percentage' => $slotTotal ? round(($answered / $slotTotal) * 100, 2) : 0,
@@ -1238,6 +2390,52 @@ class ChecklistController extends Controller
         ];
     }
 
+    private function templateEditorOptions(ChecklistTemplate $template): array
+    {
+        $isDos = Str::startsWith((string) ($template->settings['validation_mode'] ?? ''), 'dos')
+            || Str::startsWith($template->slug, 'dealer-operations-standards');
+        $defaultRoles = match ($template->slug) {
+            'sales' => [User::ROLE_5S_SALES, User::ROLE_PERSON_IN_CHARGE],
+            'service' => [User::ROLE_5S_SERVICE, User::ROLE_PERSON_IN_CHARGE],
+            'restroom', 'utilities' => [User::ROLE_5S_UTILITIES, User::ROLE_PERSON_IN_CHARGE],
+            'gateway-5s' => [User::ROLE_5S_SALES, User::ROLE_5S_SERVICE, User::ROLE_PERSON_IN_CHARGE],
+            'dealer-operations-standards-sales' => ['GM', 'SALES MANAGER'],
+            default => $isDos ? ['GM', 'ASM', 'CE SERVICE', 'WORKSHOP SUP', 'JOB CONTROLLER', 'PARTS SUPERVISOR'] : [User::ROLE_PERSON_IN_CHARGE],
+        };
+        $metadata = $template->sections->flatMap->items->map(fn (ChecklistItem $item): array => $item->metadata ?? []);
+        $responsibleRoles = collect($defaultRoles)
+            ->merge($metadata->map(fn (array $item): mixed => $item['responsible_role'] ?? $item['responsible'] ?? $item['pic'] ?? $item['checker'] ?? null))
+            ->filter(fn ($role): bool => is_string($role) && trim($role) !== '')
+            ->unique()
+            ->map(fn (string $role): array => [
+                'value' => $role,
+                'label' => match (strtoupper(trim($role))) {
+                    'GM' => 'General Manager',
+                    'ASM', 'AFTERSALES MANAGER' => 'Aftersales Manager (ASM)',
+                    'CE SERVICE', 'CE' => 'Customer Experience Service (CE)',
+                    'WORKSHOP SUP', 'WS SUP', 'WS' => 'Workshop Supervisor (WS SUP)',
+                    'JOB CONTROLLER', 'JC' => 'Job Controller (JC)',
+                    'PARTS SUPERVISOR', 'PARTS' => 'Parts Supervisor',
+                    'SALES MANAGER', 'SM' => 'Sales Manager',
+                    default => User::roleLabelFor($role),
+                },
+            ])->values()->all();
+        $levels = collect($isDos ? ['Basic', 'Standard', 'Beyond'] : [])
+            ->merge($metadata->map(fn (array $item): mixed => $item['level'] ?? $item['category'] ?? null))
+            ->filter(fn ($level): bool => is_string($level) && trim($level) !== '')
+            ->unique()
+            ->map(fn (string $level): array => ['value' => $level, 'label' => $level])
+            ->values()->all();
+
+        return [
+            'responsible_roles' => $responsibleRoles,
+            'levels' => $levels,
+            'responsible_required' => true,
+            'level_required' => $isDos,
+            'default_responsible_role' => $defaultRoles[0],
+        ];
+    }
+
     private function templateResource(ChecklistTemplate $template): array
     {
         $settings = is_array($template->settings) ? $template->settings : [];
@@ -1256,6 +2454,7 @@ class ChecklistController extends Controller
             'short_name' => $settings['short_name'] ?? null,
             'instructions' => $settings['instructions'] ?? null,
             'time_slots' => $settings['time_slots'] ?? [],
+            'editor_options' => $this->templateEditorOptions($template),
             'sections' => $template->sections->map(fn (ChecklistSection $section) => [
                 'id' => $section->id,
                 'key' => $section->key,
@@ -1268,6 +2467,8 @@ class ChecklistController extends Controller
                     'prompt' => $item->prompt,
                     'sort_order' => $item->sort_order,
                     'metadata' => $item->metadata,
+                    'is_active' => (bool) $item->is_active,
+                    'active_slots' => $item->metadata['active_slots'] ?? null,
                 ])->values()->all(),
             ])->values()->all(),
         ];
@@ -1311,7 +2512,7 @@ class ChecklistController extends Controller
                 : null,
             'submitted_at' => $submission->submitted_at?->toISOString(),
             'updated_at' => $submission->updated_at?->toISOString(),
-            'responses' => $responses->mapWithKeys(fn (ChecklistResponse $response) => [
+            'responses' => (object) $responses->mapWithKeys(fn (ChecklistResponse $response) => [
                 $response->item_key => [
                     'id' => $response->id,
                     'item_id' => $response->checklist_item_id,
@@ -1339,12 +2540,16 @@ class ChecklistController extends Controller
         ChecklistTemplate $template,
         ?User $user = null
     ): ChecklistTemplate {
+        $isAdmin = $user?->hasAdministrativeAccess() === true
+            || $user?->roleCode() === User::ROLE_BRANCH_OPERATIONS_MANAGER;
+
         $template->load([
             'sections' => fn ($query) => $query
                 ->where('is_active', true)
                 ->orderBy('sort_order'),
             'sections.items' => fn ($query) => $query
-                ->where('is_active', true)
+                ->when($isAdmin, fn ($q) => $q->where(fn ($sub) => $sub->whereNull('metadata->deleted')->orWhere('metadata->deleted', false)))
+                ->when(! $isAdmin, fn ($q) => $q->where('is_active', true))
                 ->orderBy('sort_order'),
         ]);
 
@@ -1435,7 +2640,13 @@ class ChecklistController extends Controller
 
     private function hasAdministrativeAccess(Request $request): bool
     {
-        return $request->user()?->hasAdministrativeAccess() === true;
+        $user = $request->user();
+        if (! $user) {
+            return false;
+        }
+
+        return $user->hasAdministrativeAccess() === true
+            || $user->roleCode() === User::ROLE_BRANCH_OPERATIONS_MANAGER;
     }
 
     private function timeSlotKeys(ChecklistTemplate $template): array
@@ -1464,7 +2675,7 @@ class ChecklistController extends Controller
 
     private function isValidSlotMark(mixed $mark): bool
     {
-        return in_array(Str::lower(trim((string) $mark)), ['/', 'x', 'good', 'not_good'], true);
+        return in_array(Str::lower(trim((string) $mark)), ['/', 'x', 'good', 'not_good', 'na'], true);
     }
 
     private function isGoodSlotMark(mixed $mark): bool
@@ -1569,11 +2780,27 @@ class ChecklistController extends Controller
         return asset('storage/'.ltrim($path, '/'));
     }
 
-    private function isSlotInFuture(string $date, string $slotKey): bool
+    private function isSlotInFuture(string $date, string $slotKey, ?string $clientTime = null): bool
     {
         $timezone = env('GAC_REPORT_TIMEZONE', 'Asia/Manila');
         $now = now($timezone);
         $today = $now->format('Y-m-d');
+
+        if ($clientTime) {
+            try {
+                $clientDt = CarbonImmutable::parse($clientTime, $timezone);
+                if ($clientDt->format('Y-m-d') === $date) {
+                    $now = $clientDt;
+                    $today = $date;
+                } elseif ($clientDt->isSameDay($now) && $clientDt->greaterThan($now)) {
+                    $now = $clientDt;
+                    $today = $now->format('Y-m-d');
+                }
+            } catch (\Throwable) {
+                // Ignore parse errors
+            }
+        }
+
         if ($date < $today) {
             return false;
         }
@@ -1588,6 +2815,7 @@ class ChecklistController extends Controller
 
         $nowMinutes = ((int) $now->format('H')) * 60 + (int) $now->format('i');
 
+        // A time slot is in the future if its scheduled start time has not arrived yet.
         return $slotMinutes > $nowMinutes;
     }
 }

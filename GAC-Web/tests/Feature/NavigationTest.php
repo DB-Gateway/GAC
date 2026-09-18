@@ -65,7 +65,7 @@ class NavigationTest extends TestCase
             $this->actingAs($manager)
                 ->get(route('dashboard'))
                 ->assertOk()
-                ->assertSee('id="editorDropdown" open', false)
+                ->assertSee('id="editorDropdown">', false)
                 ->assertSee('id="editorMenu"', false)
                 ->assertSee('Editor')
                 ->assertSee('5S Checklist')
@@ -136,6 +136,56 @@ class NavigationTest extends TestCase
         $this->assertFalse($this->elementById($forbiddenView, 'reportsDropdown')->hasAttribute('open'));
         $forbiddenView->assertViewHas('activeTab', 'overview');
         $forbiddenView->assertViewMissing('userStats');
+    }
+
+    public function test_follow_up_navigation_is_role_aware_and_opens_its_own_workspace(): void
+    {
+        $this->seed(ChecklistTemplateSeeder::class);
+
+        foreach ([
+            ['role' => 'GM', 'card' => 'View Findings'],
+            ['role' => User::ROLE_BRANCH_OPERATIONS_MANAGER, 'card' => 'Escalation'],
+        ] as $case) {
+            $manager = User::factory()->create([
+                'user_type' => $case['role'],
+                'account_status' => 'active',
+                'branch' => 'Pasong Tamo',
+            ]);
+
+            $navigation = $this->actingAs($manager)->get(route('dashboard'))->assertOk();
+            $followUpLink = $this->xpath($navigation)
+                ->query('//*[@data-navigation-view="follow-up"]')
+                ?->item(0);
+
+            $this->assertInstanceOf(\DOMElement::class, $followUpLink);
+            $this->assertSame(route('dashboard', ['tab' => 'follow-up']), $followUpLink->getAttribute('href'));
+
+            $page = $this->get($followUpLink->getAttribute('href'))
+                ->assertOk()
+                ->assertViewHas('activeTab', 'follow-up')
+                ->assertViewHas('canAccessFollowUp', true)
+                ->assertSee('id="workspace-panel-follow-up"', false)
+                ->assertSee($case['card'])
+                ->assertSee('id="findingsRegisterCard"', false);
+
+            $activeLink = $this->xpath($page)
+                ->query('//*[@data-navigation-view="follow-up"]')
+                ?->item(0);
+            $this->assertInstanceOf(\DOMElement::class, $activeLink);
+            $this->assertSame('page', $activeLink->getAttribute('aria-current'));
+        }
+
+        $pic = User::factory()->create([
+            'user_type' => User::ROLE_PERSON_IN_CHARGE,
+            'account_status' => 'active',
+        ]);
+
+        $this->actingAs($pic)
+            ->get(route('dashboard', ['tab' => 'follow-up']))
+            ->assertOk()
+            ->assertViewHas('activeTab', 'overview')
+            ->assertDontSee('data-navigation-view="follow-up"', false)
+            ->assertDontSee('id="workspace-panel-follow-up"', false);
     }
 
     public function test_branch_manager_user_usages_only_include_their_assigned_branch(): void
@@ -245,7 +295,7 @@ class NavigationTest extends TestCase
             'account_status' => 'active',
         ]);
 
-        foreach (['overview', 'reports', 'users'] as $view) {
+        foreach (['overview', 'follow-up', 'reports', 'users'] as $view) {
             $response = $this->actingAs($generalManager)->get(route('dashboard', ['tab' => $view]));
 
             $response
@@ -294,6 +344,32 @@ class NavigationTest extends TestCase
             ->assertDontSee('Audit date range')
             ->assertDontSee('name="date_from"', false)
             ->assertDontSee('name="date_to"', false);
+    }
+
+    public function test_checklist_editor_and_override_dropdowns_are_open_when_viewing_their_options(): void
+    {
+        $this->seed(ChecklistTemplateSeeder::class);
+
+        $manager = User::factory()->create([
+            'user_type' => User::ROLE_ADMINISTRATOR,
+            'account_status' => 'active',
+            'branch' => 'Pasong Tamo',
+        ]);
+
+        $editorResponse = $this->actingAs($manager)->get(route('checklists.index', ['checklist' => 'sales']));
+        $editorResponse->assertOk()
+            ->assertSee('id="editorDropdown" open', false)
+            ->assertSee('id="overrideDropdown">', false);
+
+        $overrideResponse = $this->actingAs($manager)->get(route('dashboard', ['tab' => 'override', 'checklist' => 'sales']));
+        $overrideResponse->assertOk()
+            ->assertSee('id="overrideDropdown" open', false)
+            ->assertSee('id="editorDropdown">', false);
+
+        $dashboardResponse = $this->actingAs($manager)->get(route('dashboard'));
+        $dashboardResponse->assertOk()
+            ->assertSee('id="editorDropdown">', false)
+            ->assertSee('id="overrideDropdown">', false);
     }
 
     private function reportLink(TestResponse $response, string $view): \DOMElement

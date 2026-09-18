@@ -426,7 +426,7 @@
         "Subject":  "Carwash Control Board",
         "CheckItem":  "Is car wash control board available, properly filled out and based on the standard template?",
         "PersonAccountable":  "ASM",
-        "Checker":  "WORSHOP SUP",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Check casrwash control board if updated and correct\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check if uses standard template and if filled out based on the current status of the vehicle inside the car wash bay."
@@ -462,7 +462,7 @@
         "Subject":  "Repair",
         "CheckItem":  "Carryover units are properly monitored and managed (with monitoring) by Job Controller.",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Check job control WIP monitoring if updated and match the actual units in the workshop\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check if there is a carry over units monitoring being utilized to monitor all remaining vehicles inside the shop."
@@ -510,7 +510,7 @@
         "Subject":  "Vehicle Status Tag",
         "CheckItem":  "Does Leadman indicate or instruct target job completion time to the assigned technician?",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Check if technician visualization tag if updated by leadman and if the details on the Tag is correct vs the actual job.\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check if vehicle status tag has promised time of delivery and in the windshield and Technician Visualization Tag is available and updated on a real time basis."
@@ -534,7 +534,7 @@
         "Subject":  "Workshop Maintenance",
         "CheckItem":  "Workbays are marked with demarcation lines, and identified with numbers; Cleanliness inside the workshop area is maintained (no lingering oil and water spills, and scattered items)",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Visual check of cleanliness in the workshop.\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check as indicated."
@@ -546,7 +546,7 @@
         "Subject":  "Repair",
         "CheckItem":  "Service Vehicle:\nAll service vehicle has exterior covers installed (bumper and fender)",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Visual check\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check if vehicle being serviced has complete exterior protective covers."
@@ -558,7 +558,7 @@
         "Subject":  "Tools Storage Room",
         "CheckItem":  "\u003e Items are properly sorted and stored\n\u003e Cleanliness inside the tool room is maintained\n\u003e Special service tools are wall-mounted\n\u003e There is an updated borrower\u0027s logbook",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Visual check\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check as indicated."
@@ -570,7 +570,7 @@
         "Subject":  "Components Repair Room",
         "CheckItem":  "\u003e The components repair room is used for its intended purpose\n\u003e The required tools are present and properly managed\n\u003e Has adequate illumination and ventilation",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Visual check\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check as indicated."
@@ -582,7 +582,7 @@
         "Subject":  "Waste Oil Storage",
         "CheckItem":  "\u003e Storage area is enclosed  \n\u003e Drums are placed on top of elevated platforms  \n\u003e No oil spills on the floor and with regular schedule disposal pullout",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Visual check\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check as indicated."
@@ -606,7 +606,7 @@
         "Subject":  "Scrapped Parts Storage",
         "CheckItem":  "Placed at the back part of the service shop and properly maintained",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Visual check if scrapped parts is  properly stored in its designated area\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check as indicated."
@@ -618,7 +618,7 @@
         "Subject":  "Dismantled Parts Storage",
         "CheckItem":  "Must be in an enclosed area with enough racks and bins for proper sorting",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- Visual check if dismantled parts is  properly stored in its designated area\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check as indicated."
@@ -630,7 +630,7 @@
         "Subject":  "Mitsubishi Quick Service",
         "CheckItem":  "Compliance with Mitsubishi Quick Service standards (4 sub-requirements). All items must pass.",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "Check with ASM and see if the form was accomplished properly.\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "All check items in the subform must be \"YES\" to count this item compliant.\n\nSubform Verification Requirements:\n1. Dedicated MQS bay with complete MQS basic and advanced tools\n2. Proper execution of MQS sequence\n3. Check 1 sample of MQS vehicle if within prescribed time\n4. MQS technician must be provided with complete QS uniforms"
@@ -774,7 +774,7 @@
         "Subject":  "Removal of Protective Cover",
         "CheckItem":  "Does SA remove the Protective Cover Sheet in the presence of Customer before vehicle is delivered back to the Customer?",
         "PersonAccountable":  "ASM",
-        "Checker":  "WS",
+        "Checker":  "WORKSHOP SUP",
         "BOMTask":  "- check with security if covers are removed in the presence of customers.\nfollow up action plan and monitor compliance",
         "Escalation":  "GM",
         "HowToCheck":  "Check 2 vehicle handover process"
@@ -900,4 +900,3 @@
         "HowToCheck":  "Check minutes of the meeting (quality)"
     }
 ]
-

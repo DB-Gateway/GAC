@@ -275,6 +275,7 @@ void main() {
           DosChecklistService.aftersalesSlug,
           date: '2026-09-07',
           responses: responses,
+          context: const {'draft_position': {'item_key': 'dos-a1'}},
         );
         final submitted = await service.submit(
           DosChecklistService.aftersalesSlug,
@@ -293,6 +294,7 @@ void main() {
         expect(delegate.submitSlug, DosChecklistService.aftersalesSlug);
         expect(delegate.savedDate, '2026-09-07');
         expect(delegate.savedResponses, responses);
+        expect(delegate.draftContext, {'draft_position': {'item_key': 'dos-a1'}});
         expect(delegate.uploadSlug, DosChecklistService.aftersalesSlug);
         expect(delegate.uploadedBytes, [1, 2, 3]);
         expect(delegate.uploadedFilename, 'finding.jpg');
@@ -514,6 +516,7 @@ class _RecordingChecklistRepository implements ChecklistRepository {
   String? draftSlug;
   String? submitSlug;
   String? savedDate;
+  Map<String, dynamic>? draftContext;
   List<Map<String, dynamic>>? savedResponses;
   String? uploadSlug;
   List<int>? uploadedBytes;
@@ -547,8 +550,10 @@ class _RecordingChecklistRepository implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) async {
     draftSlug = slug;
+    draftContext = context;
     savedDate = date;
     savedResponses = responses;
     return _sharedSubmission;

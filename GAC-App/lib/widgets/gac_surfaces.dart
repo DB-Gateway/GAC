@@ -52,14 +52,20 @@ class _SurfaceDarkWavePainter extends CustomPainter {
     final path1 = Path()
       ..moveTo(0, size.height * 0.38)
       ..cubicTo(
-        size.width * 0.20, size.height * 0.30,
-        size.width * 0.45, size.height * 0.42,
-        size.width * 0.65, size.height * 0.36,
+        size.width * 0.20,
+        size.height * 0.30,
+        size.width * 0.45,
+        size.height * 0.42,
+        size.width * 0.65,
+        size.height * 0.36,
       )
       ..cubicTo(
-        size.width * 0.80, size.height * 0.32,
-        size.width * 0.95, size.height * 0.38,
-        size.width, size.height * 0.34,
+        size.width * 0.80,
+        size.height * 0.32,
+        size.width * 0.95,
+        size.height * 0.38,
+        size.width,
+        size.height * 0.34,
       )
       ..lineTo(size.width, size.height)
       ..lineTo(0, size.height)
@@ -73,14 +79,20 @@ class _SurfaceDarkWavePainter extends CustomPainter {
     final path2 = Path()
       ..moveTo(0, size.height * 0.52)
       ..cubicTo(
-        size.width * 0.25, size.height * 0.44,
-        size.width * 0.50, size.height * 0.56,
-        size.width * 0.70, size.height * 0.48,
+        size.width * 0.25,
+        size.height * 0.44,
+        size.width * 0.50,
+        size.height * 0.56,
+        size.width * 0.70,
+        size.height * 0.48,
       )
       ..cubicTo(
-        size.width * 0.85, size.height * 0.43,
-        size.width * 0.95, size.height * 0.50,
-        size.width, size.height * 0.46,
+        size.width * 0.85,
+        size.height * 0.43,
+        size.width * 0.95,
+        size.height * 0.50,
+        size.width,
+        size.height * 0.46,
       )
       ..lineTo(size.width, size.height)
       ..lineTo(0, size.height)
@@ -94,14 +106,20 @@ class _SurfaceDarkWavePainter extends CustomPainter {
     final path3 = Path()
       ..moveTo(0, size.height * 0.64)
       ..cubicTo(
-        size.width * 0.30, size.height * 0.57,
-        size.width * 0.55, size.height * 0.66,
-        size.width * 0.75, size.height * 0.60,
+        size.width * 0.30,
+        size.height * 0.57,
+        size.width * 0.55,
+        size.height * 0.66,
+        size.width * 0.75,
+        size.height * 0.60,
       )
       ..cubicTo(
-        size.width * 0.90, size.height * 0.56,
-        size.width * 0.97, size.height * 0.62,
-        size.width, size.height * 0.58,
+        size.width * 0.90,
+        size.height * 0.56,
+        size.width * 0.97,
+        size.height * 0.62,
+        size.width,
+        size.height * 0.58,
       )
       ..lineTo(size.width, size.height)
       ..lineTo(0, size.height)

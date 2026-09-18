@@ -180,8 +180,7 @@ class SecurityService {
         return const BiometricAuthResult(
           success: false,
           status: BiometricAuthStatus.notEnrolled,
-          message:
-              'No fingerprint enrolled. Please set up a fingerprint in Android Settings first.',
+          message: 'No fingerprint enrolled. Please set up a fingerprint in Android Settings first.',
         );
       }
 
@@ -191,10 +190,7 @@ class SecurityService {
             biometricOnly: true,
             persistAcrossBackgrounding: true,
           )
-          .timeout(
-            const Duration(seconds: 25),
-            onTimeout: () => false,
-          );
+          .timeout(const Duration(seconds: 25), onTimeout: () => false);
 
       if (authenticated) {
         return const BiometricAuthResult(
@@ -216,15 +212,13 @@ class SecurityService {
           return const BiometricAuthResult(
             success: false,
             status: BiometricAuthStatus.notEnrolled,
-            message:
-                'No fingerprint enrolled. Please set up a fingerprint in Android Settings first.',
+            message: 'No fingerprint enrolled. Please set up a fingerprint in Android Settings first.',
           );
         case LocalAuthExceptionCode.noCredentialsSet:
           return const BiometricAuthResult(
             success: false,
             status: BiometricAuthStatus.passcodeNotSet,
-            message:
-                'No device screen lock set. Please configure a PIN or password in Android Settings first.',
+            message: 'No device screen lock set. Please configure a PIN or password in Android Settings first.',
           );
         case LocalAuthExceptionCode.noBiometricHardware:
           return const BiometricAuthResult(
@@ -253,20 +247,20 @@ class SecurityService {
           );
       }
     } on PlatformException catch (e) {
-      debugPrint('Biometric authentication PlatformException: ${e.code} - ${e.message}');
+      debugPrint(
+        'Biometric authentication PlatformException: ${e.code} - ${e.message}',
+      );
       if (e.code == 'NotEnrolled') {
         return const BiometricAuthResult(
           success: false,
           status: BiometricAuthStatus.notEnrolled,
-          message:
-              'No fingerprint enrolled. Please set up a fingerprint in Android Settings first.',
+          message: 'No fingerprint enrolled. Please set up a fingerprint in Android Settings first.',
         );
       } else if (e.code == 'PasscodeNotSet') {
         return const BiometricAuthResult(
           success: false,
           status: BiometricAuthStatus.passcodeNotSet,
-          message:
-              'No device screen lock set. Please configure a PIN or password in Android Settings first.',
+          message: 'No device screen lock set. Please configure a PIN or password in Android Settings first.',
         );
       } else if (e.code == 'LockedOut' || e.code == 'PermanentlyLockedOut') {
         return const BiometricAuthResult(

@@ -14,6 +14,9 @@ import 'models/authenticated_user.dart';
 import 'services/local_notification_service.dart';
 import 'services/security_service.dart';
 import 'services/session_service.dart';
+import 'services/background_notification_service.dart';
+import 'services/checklist_service.dart';
+import 'services/utilities_missed_checklist_service.dart';
 import 'theme/gac_theme.dart';
 import 'widgets/pin_dialogs.dart';
 
@@ -26,7 +29,7 @@ const String _rememberMeKey = gacRememberMeKey;
 
 const String _userHomeRoute = '/(user)/home';
 
-/// Returns the authenticated shell assigned to a Laravel user type.
+/// Returns the authenticated shell assigned to a Server user type.
 ///
 /// Kept public so role routing can be covered independently of the login UI.
 String destinationForUserType(String userType) {
@@ -91,11 +94,12 @@ String destinationForUserType(String userType) {
   throw _UnsupportedUserTypeError('Unsupported user type: $userType');
 }
 
-Future<_LoginApiResponse> _loginWithLaravel(
+Future<_LoginApiResponse> _loginWithServer(
   String email,
   String password,
 ) async {
   final apiUrl = gacApiUrl.replaceFirst(RegExp(r'/$'), '');
+  final deviceId = await notificationDeviceId();
   late final http.Response response;
 
   try {
@@ -108,11 +112,12 @@ Future<_LoginApiResponse> _loginWithLaravel(
       body: jsonEncode({
         'email': email.trim().toLowerCase(),
         'password': password,
+        'notification_device_id': deviceId,
       }),
     );
   } catch (_) {
     throw _ApiRequestError(
-      'Cannot connect to Laravel at $apiUrl. Make sure the API server is running.',
+      'Cannot connect to the server at $apiUrl. Make sure the API server is running.',
     );
   }
 
@@ -142,10 +147,14 @@ Future<_LoginApiResponse> _loginWithLaravel(
   final token = data?['token'];
   final user = _AuthUser.fromJson(data?['user']);
   if (token is! String || user == null) {
-    throw const _ApiRequestError('Laravel returned an invalid login response.');
+    throw const _ApiRequestError('Server returned an invalid login response.');
   }
 
-  return _LoginApiResponse(token: token, user: user);
+  return _LoginApiResponse(
+    token: token,
+    user: user,
+    notificationToken: data?['notification_token'] as String?,
+  );
 }
 
 String _messageForError(Object error) {
@@ -205,7 +214,7 @@ class GatewayLoginScreen extends StatefulWidget {
   /// Whether the user was redirected to the login screen after inactivity timeout.
   final bool fromTimeout;
 
-  /// Overrides the built-in Laravel request when supplied.
+  /// Overrides the built-in Server request when supplied.
   final FutureOr<void> Function(LoginCredentials credentials)? onLogin;
 
   /// Overrides the placeholder forgot-password alert when supplied.
@@ -835,7 +844,7 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
         await loginOverride(credentials);
         SessionManager.instance.startTracking(isRemembered: _rememberMe);
       } else {
-        final result = await _loginWithLaravel(
+        final result = await _loginWithServer(
           credentials.login,
           credentials.password,
         );
@@ -853,13 +862,30 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
         // Persist full role details and sync role-based notification schedule immediately
         try {
           final authUser = AuthenticatedUser.fromJson(result.user.raw);
-          await LocalNotificationService.instance.recordPreviousUser(authUser);
+          await LocalNotificationService.instance.recordPreviousUser(
+            authUser,
+            token: result.token,
+            rememberMe: _rememberMe,
+            notificationToken: result.notificationToken,
+            replaceNotificationAccount: true,
+          );
         } catch (_) {
           await LocalNotificationService.instance.recordPreviousRole(
             userType: result.user.userType,
           );
         }
         await LocalNotificationService.instance.syncForPreviousUser();
+        await startBackgroundNotificationPolling();
+
+        final authUser = AuthenticatedUser.fromJson(result.user.raw);
+        if (authUser.is5sUtilities || authUser.isUtilities) {
+          unawaited(
+            UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+              repository: ChecklistApiService(),
+              user: authUser,
+            ).catchError((_) => null),
+          );
+        }
 
         final userEmail =
             (result.user.raw['email'] as String?)?.trim() ??
@@ -883,21 +909,45 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
 
         // Start session tracking: non-remembered users will timeout after inactivity
         SessionManager.instance.startTracking(isRemembered: _rememberMe);
+        LocalNotificationService.instance
+            .stopTimedOutManagerNotificationPolling();
 
         final pendingPayload = await LocalNotificationService.instance
             .consumePendingPayload();
         String targetDestination = destination;
         Object? targetArguments;
-        if (pendingPayload != null && destination == _userHomeRoute) {
-          targetDestination = '/(user)/checklists';
+        if (pendingPayload != null &&
+            (destination == _userHomeRoute ||
+                (destination == _dosDashboardRoute &&
+                    (pendingPayload.event == 'dos_month_end_due' ||
+                        pendingPayload.targetsDosChecklist)))) {
+          targetDestination = destination == _dosDashboardRoute
+              ? '/(dos)/audit'
+              : '/(user)/checklists';
           targetArguments = {
             'template_slug': pendingPayload.templateSlug,
             'slot_key': pendingPayload.slotKey,
             'audit_date': pendingPayload.auditDate,
+            'submission_id': pendingPayload.submissionId,
+            'item_key': pendingPayload.itemKey,
+            'customer_index': pendingPayload.customerIndex,
           };
         }
 
         if (!mounted) return;
+        if (result.user.raw['must_change_password'] == true) {
+          await _openDestination(
+            '/force-password-change',
+            arguments: {
+              'currentPassword': credentials.password,
+              'destination': targetDestination,
+              'destinationArguments': targetArguments,
+              'rememberMe': _rememberMe,
+            },
+          );
+          return;
+        }
+
         await _openDestination(targetDestination, arguments: targetArguments);
       }
     } on _ApiRequestError catch (error) {
@@ -997,19 +1047,49 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
           }
 
           SessionManager.instance.startTracking(isRemembered: true);
+          final authUser = AuthenticatedUser.fromJson(user.raw);
+          if (authUser.is5sUtilities || authUser.isUtilities) {
+            unawaited(
+              UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+                repository: ChecklistApiService(),
+                user: authUser,
+              ).catchError((_) => null),
+            );
+          }
           final destination = destinationForUserType(user.userType);
           final pendingPayload = await LocalNotificationService.instance
               .consumePendingPayload();
           String targetDestination = destination;
           Object? targetArguments;
-          if (pendingPayload != null && destination == _userHomeRoute) {
-            targetDestination = '/(user)/checklists';
+          if (pendingPayload != null &&
+              (destination == _userHomeRoute ||
+                  (destination == _dosDashboardRoute &&
+                      (pendingPayload.event == 'dos_month_end_due' ||
+                          pendingPayload.targetsDosChecklist)))) {
+            targetDestination = destination == _dosDashboardRoute
+                ? '/(dos)/audit'
+                : '/(user)/checklists';
             targetArguments = {
               'template_slug': pendingPayload.templateSlug,
               'slot_key': pendingPayload.slotKey,
               'audit_date': pendingPayload.auditDate,
+              'submission_id': pendingPayload.submissionId,
+              'item_key': pendingPayload.itemKey,
+              'customer_index': pendingPayload.customerIndex,
             };
           }
+          if (user.raw['must_change_password'] == true) {
+            await _openDestination(
+              '/force-password-change',
+              arguments: {
+                'destination': targetDestination,
+                'destinationArguments': targetArguments,
+                'rememberMe': true,
+              },
+            );
+            return;
+          }
+
           await _openDestination(targetDestination, arguments: targetArguments);
         }
       }
@@ -1076,19 +1156,50 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
   Future<void> _proceedFromQuickUnlock() async {
     final user = _quickUnlockUser;
     if (user == null || !mounted) return;
+    LocalNotificationService.instance.stopTimedOutManagerNotificationPolling();
+    final authUser = AuthenticatedUser.fromJson(user.raw);
+    if (authUser.is5sUtilities || authUser.isUtilities) {
+      unawaited(
+        UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+          repository: ChecklistApiService(),
+          user: authUser,
+        ).catchError((_) => null),
+      );
+    }
     final destination = destinationForUserType(user.userType);
     final pendingPayload = await LocalNotificationService.instance
         .consumePendingPayload();
     String targetDestination = destination;
     Object? targetArguments;
-    if (pendingPayload != null && destination == _userHomeRoute) {
-      targetDestination = '/(user)/checklists';
+    if (pendingPayload != null &&
+        (destination == _userHomeRoute ||
+            (destination == _dosDashboardRoute &&
+                (pendingPayload.event == 'dos_month_end_due' ||
+                    pendingPayload.targetsDosChecklist)))) {
+      targetDestination = destination == _dosDashboardRoute
+          ? '/(dos)/audit'
+          : '/(user)/checklists';
       targetArguments = {
         'template_slug': pendingPayload.templateSlug,
         'slot_key': pendingPayload.slotKey,
         'audit_date': pendingPayload.auditDate,
+        'submission_id': pendingPayload.submissionId,
+        'item_key': pendingPayload.itemKey,
+        'customer_index': pendingPayload.customerIndex,
       };
     }
+    if (user.raw['must_change_password'] == true) {
+      await _openDestination(
+        '/force-password-change',
+        arguments: {
+          'destination': targetDestination,
+          'destinationArguments': targetArguments,
+          'rememberMe': true,
+        },
+      );
+      return;
+    }
+
     await _openDestination(targetDestination, arguments: targetArguments);
   }
 
@@ -1179,7 +1290,12 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
 class _LoginApiResponse {
   final String token;
   final _AuthUser user;
-  const _LoginApiResponse({required this.token, required this.user});
+  final String? notificationToken;
+  const _LoginApiResponse({
+    required this.token,
+    required this.user,
+    this.notificationToken,
+  });
 }
 
 class _LoginEntrance extends StatelessWidget {

@@ -95,10 +95,7 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: GacColors.black,
-        ),
+        SnackBar(content: Text(message), backgroundColor: GacColors.black),
       );
   }
 
@@ -206,7 +203,8 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                       ),
                     ),
                   ),
-                ] else if (_controller.error != null && notifications.isEmpty) ...[
+                ] else if (_controller.error != null &&
+                    notifications.isEmpty) ...[
                   AdminSurfaceCard(
                     padding: const EdgeInsets.all(20),
                     child: Column(
@@ -262,7 +260,11 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
                     ),
                   ),
                 ] else ...[
-                  for (var index = 0; index < notifications.length; index++) ...[
+                  for (
+                    var index = 0;
+                    index < notifications.length;
+                    index++
+                  ) ...[
                     _AlertCard(
                       notification: notifications[index],
                       unread: notifications[index].unread,
@@ -456,7 +458,7 @@ String _formatTimestamp(DateTime? timestamp) {
     'Sep',
     'Oct',
     'Nov',
-    'Dec'
+    'Dec',
   ];
   return '${months[timestamp.month - 1]} ${timestamp.day}, ${timestamp.year}';
 }

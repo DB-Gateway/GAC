@@ -266,36 +266,36 @@ class _AdminBottomNavigationBar extends StatelessWidget {
             shadowOffset: const Offset(0, -8),
             child: Row(
               children: [
-              Expanded(
-                child: _AdminNavigationItem(
-                  label: 'Dashboard',
-                  accessibilityLabel: 'Administrator dashboard',
-                  selected: destination == AdminDestination.dashboard,
-                  icon: Icons.grid_view_outlined,
-                  selectedIcon: Icons.grid_view_rounded,
-                  onTap: () => onSelected(AdminDestination.dashboard),
+                Expanded(
+                  child: _AdminNavigationItem(
+                    label: 'Dashboard',
+                    accessibilityLabel: 'Administrator dashboard',
+                    selected: destination == AdminDestination.dashboard,
+                    icon: Icons.grid_view_outlined,
+                    selectedIcon: Icons.grid_view_rounded,
+                    onTap: () => onSelected(AdminDestination.dashboard),
+                  ),
                 ),
-              ),
-              Expanded(
-                child: _AdminNavigationItem(
-                  label: 'DOS & 5S',
-                  accessibilityLabel: 'DOS and 5S checklist workspace',
-                  selected: checklistSelected,
-                  icon: Icons.assignment_outlined,
-                  selectedIcon: Icons.assignment_rounded,
-                  onTap: () => onSelected(AdminDestination.dos),
+                Expanded(
+                  child: _AdminNavigationItem(
+                    label: 'DOS & 5S',
+                    accessibilityLabel: 'DOS and 5S checklist workspace',
+                    selected: checklistSelected,
+                    icon: Icons.assignment_outlined,
+                    selectedIcon: Icons.assignment_rounded,
+                    onTap: () => onSelected(AdminDestination.dos),
+                  ),
                 ),
-              ),
-              Expanded(
-                child: _AdminNavigationItem(
-                  label: 'Reports & Users',
-                  accessibilityLabel: 'Reports and user management',
-                  selected: reportsSelected,
-                  icon: Icons.bar_chart_outlined,
-                  selectedIcon: Icons.bar_chart_rounded,
-                  onTap: () => onSelected(AdminDestination.reports),
+                Expanded(
+                  child: _AdminNavigationItem(
+                    label: 'Reports & Users',
+                    accessibilityLabel: 'Reports and user management',
+                    selected: reportsSelected,
+                    icon: Icons.bar_chart_outlined,
+                    selectedIcon: Icons.bar_chart_rounded,
+                    onTap: () => onSelected(AdminDestination.reports),
+                  ),
                 ),
-              ),
               ],
             ),
           ),

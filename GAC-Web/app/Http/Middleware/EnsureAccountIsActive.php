@@ -15,6 +15,11 @@ class EnsureAccountIsActive
      */
     public function handle(Request $request, Closure $next): Response|RedirectResponse
     {
+        // Always allow logout so the session is torn down cleanly (avoids 419 CSRF mismatch).
+        if ($request->routeIs('logout')) {
+            return $next($request);
+        }
+
         if ($request->user() !== null && $request->user()->account_status !== 'active') {
             Auth::guard('web')->logout();
 

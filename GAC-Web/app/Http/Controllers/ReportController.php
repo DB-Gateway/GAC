@@ -7,6 +7,8 @@ use App\Models\ChecklistSubmission;
 use App\Models\ChecklistTemplate;
 use App\Models\Report;
 use App\Models\User;
+use App\Notifications\FindingFollowUpRequested;
+use App\Notifications\FindingEscalated;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
@@ -15,6 +17,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -67,6 +70,9 @@ class ReportController extends Controller
             'recencyOptions' => self::RECENCY_OPTIONS,
             'escalationOptions' => ChecklistResponse::escalationTargetOptions(),
             'canOverrideAny' => $request->user()?->canOverrideChecklistResponses() ?? false,
+            'canViewFindings' => $request->user()?->roleCode() === User::ROLE_ADMINISTRATOR,
+            'canManageEscalations' => $request->user()?->roleCode() === User::ROLE_BRANCH_OPERATIONS_MANAGER,
+            'followUpResponseId' => (int) $request->query('follow_up_response_id', 0),
             'reportTimezone' => $this->reportTimezone(),
         ]);
     }
@@ -452,15 +458,15 @@ class ReportController extends Controller
     }
 
     /**
-     * Assign one or more NO findings to escalation recipients without changing
-     * the original checklist result. Every change is recorded in reports.
+     * Let a BOM update the escalation recipient, Action Plan, and planned
+     * commitment date for one or more NO findings without changing the result.
      */
     public function updateEscalations(Request $request): JsonResponse
     {
         $user = $request->user();
-        if (! $user || ! $user->canOverrideChecklistResponses()) {
+        if (! $user || $user->roleCode() !== User::ROLE_BRANCH_OPERATIONS_MANAGER) {
             return response()->json([
-                'message' => 'Only Branch Operations Managers (BOM) and General Managers (GM) may assign finding escalations.',
+                'message' => 'Only Branch Operations Managers (BOM) may update finding escalation details.',
             ], 403);
         }
 
@@ -470,9 +476,11 @@ class ReportController extends Controller
                     return $update;
                 }
 
-                $update['escalation_target'] = ChecklistResponse::normalizeEscalationTarget(
-                    $update['escalation_target'] ?? null
-                );
+                if (array_key_exists('escalation_target', $update)) {
+                    $update['escalation_target'] = ChecklistResponse::normalizeEscalationTarget(
+                        $update['escalation_target']
+                    );
+                }
 
                 return $update;
             })
@@ -484,10 +492,13 @@ class ReportController extends Controller
             'responses' => ['required', 'array', 'min:1', 'max:200'],
             'responses.*.id' => ['required', 'integer', 'distinct:strict', 'exists:checklist_responses,id'],
             'responses.*.escalation_target' => ['nullable', 'string', Rule::in($allowedEscalations)],
+            'responses.*.action_plan' => ['nullable', 'string', 'max:10000'],
+            'responses.*.commitment_date' => ['nullable', 'date_format:Y-m-d'],
         ]);
 
         $updates = collect($validated['responses'])->keyBy(fn (array $update): int => (int) $update['id']);
-        $transactionResult = DB::transaction(function () use ($updates, $user): Collection|JsonResponse {
+        $reportTimezone = $this->reportTimezone();
+        $transactionResult = DB::transaction(function () use ($updates, $user, $reportTimezone): Collection|JsonResponse {
             $responses = ChecklistResponse::query()
                 ->with('submission.template')
                 ->whereIn('id', $updates->keys())
@@ -500,13 +511,13 @@ class ReportController extends Controller
 
                 if (! $response || ! $user->canOverrideChecklistResponse($response)) {
                     return response()->json([
-                        'message' => 'You are not authorized to escalate one or more selected findings.',
+                        'message' => 'You are not authorized to update one or more selected findings.',
                     ], 403);
                 }
 
                 if ($this->normalizedStatus($response->status) !== 'no') {
                     return response()->json([
-                        'message' => 'Only responses currently marked NO can be escalated.',
+                        'message' => 'Only responses currently marked NO can be updated here.',
                         'errors' => [
                             'responses' => ['Remove compliant or N/A responses and try again.'],
                         ],
@@ -518,32 +529,72 @@ class ReportController extends Controller
                 $target = $update['escalation_target'] ?? null;
                 $templateOptions = ChecklistResponse::escalationTargetOptionsFor($templateSlug);
 
-                if ($target !== null && ! array_key_exists($target, $templateOptions)) {
+                if (array_key_exists('escalation_target', $update)
+                    && $target !== null
+                    && ! array_key_exists($target, $templateOptions)) {
                     return response()->json([
                         'message' => 'The selected escalation recipient is not available for this checklist.',
                         'errors' => [
-                            'responses' => ['Choose a recipient from the applicable Sales or Aftersales workbook list.'],
+                            'responses' => ['Choose a recipient from the applicable checklist recipient list.'],
                         ],
+                    ], 422);
+                }
+
+                $effectiveTarget = array_key_exists('escalation_target', $update)
+                    ? $update['escalation_target'] : $response->escalation_target;
+                $effectiveAction = array_key_exists('action_plan', $update)
+                    ? $update['action_plan'] : $response->action_plan;
+                $effectiveDate = array_key_exists('commitment_date', $update)
+                    ? $update['commitment_date'] : $response->commitment_date;
+                if (blank($effectiveTarget) || blank($effectiveAction) || blank($effectiveDate)) {
+                    return response()->json([
+                        'message' => 'Escalate To, Action Plan, and Commitment Date are required.',
+                        'errors' => ['responses' => ['Complete all escalation fields before saving.']],
                     ], 422);
                 }
             }
 
-            return $updates->map(function (array $update, int|string $responseId) use ($responses, $user): ?array {
+            return $updates->map(function (array $update, int|string $responseId) use ($responses, $user, $reportTimezone): ?array {
                 /** @var ChecklistResponse $response */
                 $response = $responses->get((int) $responseId);
                 $submission = $response->submission;
-                $target = ChecklistResponse::normalizeEscalationTarget($update['escalation_target'] ?? null);
+                $details = is_array($response->details) ? $response->details : [];
                 $previousTarget = ChecklistResponse::normalizeEscalationTarget(
                     $response->escalation_target
-                        ?? data_get($response->details, 'escalation_target')
-                        ?? data_get($response->details, 'escalation')
+                        ?? data_get($details, 'escalation_target')
+                        ?? data_get($details, 'escalation')
                 );
+                $target = array_key_exists('escalation_target', $update)
+                    ? ChecklistResponse::normalizeEscalationTarget($update['escalation_target'])
+                    : $previousTarget;
+                $previousActionPlan = $this->trimmedOrNull(
+                    $response->action_plan
+                        ?? data_get($details, 'action_plan')
+                        ?? data_get($details, 'action')
+                );
+                $actionPlan = array_key_exists('action_plan', $update)
+                    ? $this->trimmedOrNull($update['action_plan'])
+                    : $previousActionPlan;
+                $previousCommitmentDate = $response->commitment_date
+                    ?->copy()
+                    ->timezone($reportTimezone)
+                    ->format('Y-m-d');
+                $commitmentDateInput = array_key_exists('commitment_date', $update)
+                    ? $this->trimmedOrNull($update['commitment_date'])
+                    : $previousCommitmentDate;
+                $commitmentDateChanged = $previousCommitmentDate !== $commitmentDateInput;
+                $commitmentDate = ! $commitmentDateChanged
+                    ? $response->commitment_date
+                    : ($commitmentDateInput === null
+                        ? null
+                        : CarbonImmutable::createFromFormat('!Y-m-d', $commitmentDateInput, $reportTimezone));
 
-                if ($previousTarget === $target) {
+                if ($previousTarget === $target
+                    && $previousActionPlan === $actionPlan
+                    && $previousCommitmentDate === $commitmentDateInput) {
                     return null;
                 }
 
-                $details = is_array($response->details) ? $response->details : [];
                 if ($target) {
                     $details['escalation_target'] = $target;
                     $details['escalation'] = $target;
@@ -551,18 +602,48 @@ class ReportController extends Controller
                     unset($details['escalation_target'], $details['escalation']);
                 }
 
-                $details['escalation_assignment'] = [
-                    'assigned_by_id' => $user->getKey(),
-                    'assigned_by_name' => $user->name,
-                    'assigned_by_role' => $user->roleLabel(),
-                    'assigned_at' => now()->toIso8601String(),
-                    'previous_target' => $previousTarget,
-                    'new_target' => $target,
+                if ($actionPlan) {
+                    $details['action_plan'] = $actionPlan;
+                } else {
+                    unset($details['action_plan'], $details['action']);
+                }
+
+                if ($previousTarget !== $target) {
+                    $details['escalation_assignment'] = [
+                        'assigned_by_id' => $user->getKey(),
+                        'assigned_by_name' => $user->name,
+                        'assigned_by_role' => $user->roleLabel(),
+                        'assigned_at' => now()->toIso8601String(),
+                        'previous_target' => $previousTarget,
+                        'new_target' => $target,
+                    ];
+                }
+
+                $details['bom_follow_up'] = [
+                    'updated_by_id' => $user->getKey(),
+                    'updated_by_name' => $user->name,
+                    'updated_by_role' => $user->roleLabel(),
+                    'updated_at' => now()->toIso8601String(),
+                    'previous_escalation_target' => $previousTarget,
+                    'escalation_target' => $target,
+                    'previous_action_plan' => $previousActionPlan,
+                    'action_plan' => $actionPlan,
+                    'previous_commitment_date' => $previousCommitmentDate,
+                    'commitment_date' => $commitmentDateInput,
                 ];
 
                 $response->escalation_target = $target;
+                $response->action_plan = $actionPlan;
+                $response->commitment_date = $commitmentDate;
                 $response->details = $details;
                 $response->save();
+
+                $owner = $submission?->user;
+                if ($owner && $owner->account_status === 'active'
+                    && mb_strtolower(trim((string) $owner->branch)) === mb_strtolower(trim((string) $submission->branch))
+                    && $owner->canAccessChecklist((string) (data_get($submission->template_snapshot, 'slug') ?: $submission->template?->slug))) {
+                    $owner->notify(new FindingEscalated($response, $user));
+                }
 
                 Report::query()->create([
                     'checklist_submission_id' => $submission?->getKey(),
@@ -570,7 +651,7 @@ class ReportController extends Controller
                     'generated_by_user_id' => $user->getKey(),
                     'type' => 'checklist_response_escalation',
                     'title' => Str::limit(
-                        "Checklist escalation updated by {$user->name} ({$user->roleLabel()})",
+                        "Checklist finding follow-up updated by {$user->name} ({$user->roleLabel()})",
                         255,
                         ''
                     ),
@@ -581,6 +662,10 @@ class ReportController extends Controller
                         'item_key' => $response->item_key,
                         'previous_escalation_target' => $previousTarget,
                         'escalation_target' => $target,
+                        'previous_action_plan' => $previousActionPlan,
+                        'action_plan' => $actionPlan,
+                        'previous_commitment_date' => $previousCommitmentDate,
+                        'commitment_date' => $commitmentDateInput,
                         'branch' => $submission?->branch,
                         'audit_date' => $submission?->audit_date?->format('Y-m-d'),
                     ],
@@ -591,6 +676,11 @@ class ReportController extends Controller
                     'id' => $response->getKey(),
                     'escalation_target' => $target,
                     'escalation_target_label' => $response->escalationTargetLabel(),
+                    'action_plan' => $response->action_plan,
+                    'commitment_date' => $response->commitment_date
+                        ?->copy()
+                        ->timezone($reportTimezone)
+                        ->format('Y-m-d'),
                 ];
             })->filter()->values();
         });
@@ -605,12 +695,109 @@ class ReportController extends Controller
             'status' => 'success',
             'success' => true,
             'message' => trans_choice(
-                ':count finding escalation was saved.|:count finding escalations were saved.',
+                ':count finding update was saved.|:count finding updates were saved.',
                 $saved->count(),
                 ['count' => $saved->count()]
             ),
             'updated_count' => $saved->count(),
             'responses' => $saved,
+        ]);
+    }
+
+    /**
+     * Notify the active BOM account(s) assigned to the finding's branch.
+     */
+    public function requestFindingFollowUp(Request $request, ChecklistResponse $response): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || $user->roleCode() !== User::ROLE_ADMINISTRATOR) {
+            return response()->json([
+                'message' => 'Only the General Manager may request a BOM finding follow-up.',
+            ], 403);
+        }
+
+        $response->loadMissing(['submission.template', 'submission.submittedBy', 'submission.user', 'item']);
+        $submission = $response->submission;
+
+        if (! $submission) {
+            return response()->json(['message' => 'Submission not found for this response.'], 404);
+        }
+
+        if ($this->normalizedStatus($response->status) !== 'no') {
+            return response()->json([
+                'message' => 'Follow-up can only be requested for a finding currently marked NO.',
+            ], 422);
+        }
+
+        $branch = mb_strtolower(trim((string) $submission->branch));
+        if ($branch === '') {
+            return response()->json([
+                'message' => 'This finding has no branch, so a BOM recipient cannot be determined.',
+            ], 422);
+        }
+
+        $recipients = User::query()
+            ->where('account_status', 'active')
+            ->whereRaw('LOWER(TRIM(branch)) = ?', [$branch])
+            ->get()
+            ->filter(fn (User $candidate): bool => $candidate->roleCode() === User::ROLE_BRANCH_OPERATIONS_MANAGER)
+            ->values();
+
+        if ($recipients->isEmpty()) {
+            return response()->json([
+                'message' => 'No active BOM user is assigned to this finding\'s branch.',
+            ], 422);
+        }
+
+        $pendingRecipients = $recipients
+            ->reject(function (User $recipient) use ($response): bool {
+                return $recipient->notifications()
+                    ->where('type', FindingFollowUpRequested::class)
+                    ->latest()
+                    ->limit(100)
+                    ->get()
+                    ->contains(fn ($notification): bool => (int) data_get($notification->data, 'response_id') === (int) $response->getKey()
+                        && ! filled(data_get($notification->data, 'archived_at')));
+            })
+            ->values();
+
+        if ($pendingRecipients->isNotEmpty()) {
+            Notification::send($pendingRecipients, new FindingFollowUpRequested($response, $user));
+
+            Report::query()->create([
+                'checklist_submission_id' => $submission->getKey(),
+                'checklist_template_id' => $submission->checklist_template_id,
+                'generated_by_user_id' => $user->getKey(),
+                'type' => 'finding_follow_up_request',
+                'title' => Str::limit("BOM follow-up requested by {$user->name}", 255, ''),
+                'status' => 'completed',
+                'data_snapshot' => [
+                    'submission_id' => $submission->getKey(),
+                    'response_id' => $response->getKey(),
+                    'item_key' => $response->item_key,
+                    'branch' => $submission->branch,
+                    'notified_user_ids' => $pendingRecipients->modelKeys(),
+                ],
+                'generated_at' => now(),
+            ]);
+        }
+
+        $alreadyPendingCount = $recipients->count() - $pendingRecipients->count();
+        $message = $pendingRecipients->isEmpty()
+            ? 'A follow-up notification is already pending for the BOM user.'
+            : trans_choice(
+                'Follow-up sent to :count BOM user.|Follow-up sent to :count BOM users.',
+                $pendingRecipients->count(),
+                ['count' => $pendingRecipients->count()]
+            );
+
+        return response()->json([
+            'status' => 'success',
+            'success' => true,
+            'message' => $message,
+            'notified_count' => $pendingRecipients->count(),
+            'already_pending_count' => $alreadyPendingCount,
+            'response_id' => $response->getKey(),
         ]);
     }
 
@@ -944,16 +1131,25 @@ class ReportController extends Controller
     private function findingRow(ChecklistSubmission $submission, mixed $response, string $status, ?string $slot = null, ?User $viewer = null): array
     {
         $itemSnapshot = is_array($response->item_snapshot) ? $response->item_snapshot : [];
-        $area = data_get($itemSnapshot, 'section.title')
+        $snapshotMetadata = data_get($itemSnapshot, 'metadata');
+        $metadata = is_array($snapshotMetadata)
+            ? $snapshotMetadata
+            : (is_array($response->item?->metadata) ? $response->item->metadata : []);
+        $area = trim((string) (
+            data_get($metadata, 'coverage')
+            ?? data_get($itemSnapshot, 'section.title')
             ?? data_get($itemSnapshot, 'section_title')
             ?? data_get($itemSnapshot, 'area')
             ?? $response->item?->section?->title
-            ?? 'General';
-        $item = data_get($itemSnapshot, 'prompt')
+            ?? 'General'
+        ));
+        $item = trim((string) (
+            data_get($itemSnapshot, 'prompt')
             ?? data_get($itemSnapshot, 'text')
             ?? data_get($itemSnapshot, 'label')
             ?? $response->item?->prompt
-            ?? $response->item_key;
+            ?? $response->item_key
+        ));
         $fallback = $status === 'x'
             ? 'Condition marked X'.($slot ? ' at '.$slot : '').'.'
             : ($status === 'na' ? 'Item marked not applicable.' : 'Item marked non-compliant.');
@@ -1042,6 +1238,13 @@ class ReportController extends Controller
             'status' => $status,
             'result' => $status === 'x' ? 'X' : ($status === 'na' ? 'N/A' : ($isOverridden ? 'OVERRIDDEN ('.strtoupper($response->status).')' : 'NO')),
             'slot' => $slot,
+            'question_number' => data_get($metadata, 'number'),
+            'category' => trim((string) (data_get($metadata, 'level') ?? data_get($metadata, 'category'))),
+            'subject' => trim((string) data_get($metadata, 'subject')),
+            'person_accountable' => trim((string) (data_get($metadata, 'person_accountable') ?? data_get($metadata, 'pic'))),
+            'checker_role' => trim((string) data_get($metadata, 'checker')),
+            'bom_task' => trim((string) data_get($metadata, 'bom_task')),
+            'recommended_escalation' => trim((string) data_get($metadata, 'escalation')),
             'detail' => $findingText,
             'action_plan' => $actionPlan,
             'escalation_target' => $escalationTargetNormalized ?? $escalationTarget,
@@ -1049,6 +1252,7 @@ class ReportController extends Controller
             'commitment_date' => $commitmentDate?->format('Y-m-d\TH:i:s'),
             'commitment_date_formatted' => $commitmentDateFormatted,
             'commitment_date_local' => $commitmentDate ? $commitmentDate->copy()->timezone($reportTimezone)->format('Y-m-d\TH:i') : null,
+            'commitment_date_input' => $commitmentDate ? $commitmentDate->copy()->timezone($reportTimezone)->format('Y-m-d') : null,
             'is_overdue' => $isOverdue,
             'due_status' => $dueStatus,
             'attachment_url' => $this->attachmentUrl($response->attachment_path),

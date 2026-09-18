@@ -226,6 +226,8 @@ class _DosDashboardScreenState extends State<DosDashboardScreen> {
               slug: slug,
               repository: _repository,
               user: widget.user,
+              onOpenNotifications: widget.onOpenNotifications,
+              unreadNotifications: widget.unreadNotifications,
               auditDate:
                   '${_selectedDate.year.toString().padLeft(4, '0')}-'
                   '${_selectedDate.month.toString().padLeft(2, '0')}-'

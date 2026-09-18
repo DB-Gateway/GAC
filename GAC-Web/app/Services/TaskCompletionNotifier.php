@@ -41,7 +41,7 @@ class TaskCompletionNotifier
 
     private function picRecipients(ChecklistSubmission $submission, User $completedBy)
     {
-        $branch = mb_strtolower(trim((string) $submission->branch));
+        $branch = mb_strtolower(trim((string) ($submission->branch ?: $completedBy->branch)));
 
         return User::query()
             ->where('account_status', 'active')
@@ -76,7 +76,7 @@ class TaskCompletionNotifier
     private function dosRecipients(ChecklistSubmission $submission, User $completedBy)
     {
         $submission->loadMissing('responses');
-        $branch = mb_strtolower(trim((string) $submission->branch));
+        $branch = mb_strtolower(trim((string) ($submission->branch ?: $completedBy->branch)));
         $targets = $submission->responses
             ->filter(fn ($response): bool => in_array($response->status, ['no', 'na'], true))
             ->map(fn ($response): ?string => $this->responseEscalationTarget($response))

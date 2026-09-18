@@ -1,0 +1,25 @@
+.browser-push-prompt[hidden], .browser-push-settings [hidden] { display: none !important; }
+.browser-push-prompt {
+    position: fixed; right: 24px; bottom: 24px; z-index: 1200;
+    display: flex; gap: 14px; width: min(420px, calc(100vw - 32px));
+    padding: 22px; border: 1px solid #e6e8ed; border-radius: 18px;
+    background: #fff; color: #182230; box-shadow: 0 12px 48px #18223026;
+    font-family: Inter, sans-serif; font-size: 14px;
+}
+.browser-push-icon { display: grid; place-items: center; flex: 0 0 42px; height: 42px; border-radius: 12px; color: #b91c1c; background: #fef2f2; }
+.browser-push-copy { min-width: 0; }
+.browser-push-copy strong { font-size: 15px; }
+.browser-push-copy p { color: #596579; line-height: 1.55; margin: 6px 0 12px; }
+.browser-push-copy .browser-push-feedback:empty { display: none; }
+.browser-push-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.browser-push-actions button, .browser-push-settings button {
+    border: 1px solid #dce1e8; border-radius: 8px; padding: 9px 12px;
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; background: #fff; color: #344054;
+}
+.browser-push-actions .browser-push-enable, .browser-push-settings [data-push-enable] { color: #fff; background: #b91c1c; border-color: #b91c1c; }
+.browser-push-actions button:focus-visible, .browser-push-settings button:focus-visible { outline: 3px solid #f5b7b7; outline-offset: 3px; }
+.browser-push-actions button:disabled, .browser-push-settings button:disabled { opacity: .6; cursor: wait; }
+.browser-push-settings { padding: 14px 16px; border: 1px solid #e6e8ed; border-radius: 12px; margin-bottom: 16px; background: #f8fafc; }
+.browser-push-settings strong { display: block; font-size: 13px; color: #182230; }
+.browser-push-settings p { color: #596579; font-size: 12px; line-height: 1.5; margin: 5px 0 10px; }
+@media (max-width: 540px) { .browser-push-prompt { right: 16px; bottom: 16px; padding: 18px; } }

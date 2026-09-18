@@ -4,11 +4,56 @@ namespace App\Services;
 
 use App\Models\ChecklistSubmission;
 use App\Models\User;
+use App\Notifications\FindingFollowUpRequested;
+use App\Notifications\EscalationFollowUpSubmitted;
 use App\Notifications\PicTaskCompleted;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 class NotificationService
 {
+    public function getTaskNotificationData(?User $user): array
+    {
+        $canReceive = $user?->receivesTaskCompletionNotifications() === true;
+        $query = $canReceive ? $user->notifications()->whereIn('type', [
+            PicTaskCompleted::class,
+            FindingFollowUpRequested::class,
+            EscalationFollowUpSubmitted::class,
+        ]) : null;
+
+        // Previously seen notifications also belong in History, even when
+        // they predate automatic archiving or were read through the mobile app.
+        $current = $query ? (clone $query)->whereNull('read_at')->whereNull('data->archived_at') : null;
+
+        return [
+            'taskNotifications' => $current ? (clone $current)->latest()->limit(30)->get() : collect(),
+            'taskNotificationHistory' => $query ? (clone $query)
+                ->where(fn (Builder $query) => $query->whereNotNull('read_at')->orWhereNotNull('data->archived_at'))
+                ->orderByDesc('read_at')->orderByDesc('updated_at')->limit(50)->get() : collect(),
+            'unreadTaskNotificationCount' => $current ? $current->count() : 0,
+            'canReceiveTaskNotifications' => $canReceive,
+        ];
+    }
+
+    public function getPendingDraftAlert(?User $user): ?array
+    {
+        if (! $user?->receivesTaskCompletionNotifications()) {
+            return null;
+        }
+        $count = app(DraftFollowUpService::class)->pendingDrafts($user)->count();
+        if ($count === 0) {
+            return null;
+        }
+
+        return [
+            'type' => 'warning',
+            'icon' => 'fa-clock',
+            'title' => 'Saved audits awaiting submission',
+            'message' => trans_choice(':count checklist draft is unfinished.|:count checklist drafts are unfinished.', $count, ['count' => $count]),
+            'action' => ['target' => 'draftReminderModal', 'label' => 'Review drafts and notify users'],
+        ];
+    }
+
     /**
      * @return array{
      *     taskNotifications: Collection,
@@ -22,27 +67,7 @@ class NotificationService
      */
     public function getNotificationData(?User $user): array
     {
-        $canReceiveTaskNotifications = $user?->receivesTaskCompletionNotifications() === true;
-
-        $taskNotificationFeed = $canReceiveTaskNotifications && $user !== null
-            ? $user->notifications()
-                ->where('type', PicTaskCompleted::class)
-                ->latest()
-                ->limit(100)
-                ->get()
-            : collect();
-
-        $taskNotifications = $taskNotificationFeed
-            ->reject(fn ($notification): bool => filled(data_get($notification->data, 'archived_at')))
-            ->take(30)
-            ->values();
-        $taskNotificationHistory = $taskNotificationFeed
-            ->filter(fn ($notification): bool => filled(data_get($notification->data, 'archived_at')))
-            ->take(50)
-            ->values();
-        $unreadTaskNotificationCount = $taskNotifications
-            ->filter(fn ($notification): bool => $notification->read_at === null)
-            ->count();
+        $taskData = $this->getTaskNotificationData($user);
 
         $monthStart = now()->startOfMonth();
         $monthEnd = now()->endOfMonth();
@@ -62,7 +87,10 @@ class NotificationService
 
         $systemAlerts = collect();
 
-        if ($draftsCount > 0) {
+        $draftAlert = $this->getPendingDraftAlert($user);
+        if ($draftAlert) {
+            $systemAlerts->push($draftAlert);
+        } elseif (! $user?->receivesTaskCompletionNotifications() && $draftsCount > 0) {
             $systemAlerts->push([
                 'type' => 'warning',
                 'icon' => 'fa-clock',
@@ -89,12 +117,9 @@ class NotificationService
         }
 
         return [
-            'taskNotifications' => $taskNotifications,
-            'taskNotificationHistory' => $taskNotificationHistory,
-            'unreadTaskNotificationCount' => $unreadTaskNotificationCount,
-            'canReceiveTaskNotifications' => $canReceiveTaskNotifications,
+            ...$taskData,
             'notifications' => $systemAlerts,
-            'notificationBadgeCount' => $unreadTaskNotificationCount,
+            'notificationBadgeCount' => $taskData['unreadTaskNotificationCount'],
             'calendar' => ['label' => now()->format('F Y')],
         ];
     }

@@ -38,14 +38,14 @@ CREATE TABLE `cache` (
 --
 
 INSERT INTO `cache` (`key`, `value`, `expiration`) VALUES
-('laravel-cache-5c785c036466adea360111aa28563bfd556b5fba', 'i:2;', 1788595772),
-('laravel-cache-5c785c036466adea360111aa28563bfd556b5fba:timer', 'i:1788595772;', 1788595772),
-('laravel-cache-6cb5bb9b67d5af5e7f80c02dc185aac943ccb0d3', 'i:1;', 1788830230),
-('laravel-cache-6cb5bb9b67d5af5e7f80c02dc185aac943ccb0d3:timer', 'i:1788830230;', 1788830230),
-('laravel-cache-itmanager@gateway.com|127.0.0.1', 'i:1;', 1787962204),
-('laravel-cache-itmanager@gateway.com|127.0.0.1:timer', 'i:1787962204;', 1787962204),
-('laravel-cache-mindanao.technician@gateway.com|127.0.0.1', 'i:1;', 1787962206),
-('laravel-cache-mindanao.technician@gateway.com|127.0.0.1:timer', 'i:1787962206;', 1787962206);
+('Server-cache-5c785c036466adea360111aa28563bfd556b5fba', 'i:2;', 1788595772),
+('Server-cache-5c785c036466adea360111aa28563bfd556b5fba:timer', 'i:1788595772;', 1788595772),
+('Server-cache-6cb5bb9b67d5af5e7f80c02dc185aac943ccb0d3', 'i:1;', 1788830230),
+('Server-cache-6cb5bb9b67d5af5e7f80c02dc185aac943ccb0d3:timer', 'i:1788830230;', 1788830230),
+('Server-cache-itmanager@gateway.com|127.0.0.1', 'i:1;', 1787962204),
+('Server-cache-itmanager@gateway.com|127.0.0.1:timer', 'i:1787962204;', 1787962204),
+('Server-cache-mindanao.technician@gateway.com|127.0.0.1', 'i:1;', 1787962206),
+('Server-cache-mindanao.technician@gateway.com|127.0.0.1:timer', 'i:1787962206;', 1787962206);
 
 -- --------------------------------------------------------
 
@@ -804,7 +804,6 @@ INSERT INTO `personal_access_tokens` (`id`, `tokenable_type`, `tokenable_id`, `n
 (98, 'App\\Models\\User', 107, 'gateway-expo-app', 'f94ec6f719718f6e7b67f807161ef447614a762bcebe9faaf3a0a09998fe8321', '[\"*\"]', '2026-09-05 00:56:32', NULL, '2026-09-05 00:55:56', '2026-09-05 00:56:32'),
 (99, 'App\\Models\\User', 107, 'gateway-expo-app', '08de187ee72fdfd3a70e8c7c9dce2da7aaf5daf69463fec6391714348313cdb9', '[\"*\"]', '2026-09-05 00:58:48', NULL, '2026-09-05 00:58:45', '2026-09-05 00:58:48'),
 (100, 'App\\Models\\User', 108, 'gateway-expo-app', '0b429d45e2182e2e05d4c389e9bee87abb05639c5dd1b2ded31151f1f0b8e49f', '[\"*\"]', '2026-09-05 00:59:28', NULL, '2026-09-05 00:59:25', '2026-09-05 00:59:28'),
-(101, 'App\\Models\\User', 113, 'gateway-expo-app', '9f1b7c31b4e5c7a2f936fd567c9f98f827a9793ad3f19dca4cc7e7f03c686ca7', '[\"*\"]', '2026-09-05 01:00:05', NULL, '2026-09-05 01:00:02', '2026-09-05 01:00:05'),
 (102, 'App\\Models\\User', 107, 'gateway-expo-app', '73f2a1a006c9ba899c05b466b79a85a04998c8bdbe3dd30c059e16f0cea08d67', '[\"*\"]', '2026-09-06 16:21:33', NULL, '2026-09-06 16:20:54', '2026-09-06 16:21:33'),
 (104, 'App\\Models\\User', 107, 'gateway-expo-app', '48e6d42bd340e50b824fadc39b2a18c9a49b1f9c17e5497756bd4cb045730dd0', '[\"*\"]', '2026-09-06 16:35:54', NULL, '2026-09-06 16:35:51', '2026-09-06 16:35:54'),
 (106, 'App\\Models\\User', 107, 'gateway-expo-app', 'ebce57ce13a9aab5472db14a69b7711bbe19eca8a4454b27e0c735a5d2f8c67a', '[\"*\"]', '2026-09-06 16:39:24', NULL, '2026-09-06 16:39:22', '2026-09-06 16:39:24'),
@@ -911,7 +910,6 @@ INSERT INTO `users` (`id`, `name`, `email`, `branch`, `user_type`, `pic_assignme
 (110, 'David Cruz (Job Controller)', 'jc@gateway.com', 'SUZUKI PASONG TAMO', 'JOB CONTROLLER', NULL, 'active', '2026-09-05 01:43:56', NULL, '$2y$10$24HFdoMQkcr1WdIyiF0LZucDl3jlYgEPh/.HISQN5p208WG7D8qcq', NULL, '2026-09-05 01:43:56', '2026-09-05 01:43:56'),
 (111, 'Peter Reyes (Parts Supervisor)', 'parts@gateway.com', 'SUZUKI PASONG TAMO', 'PARTS SUPERVISOR', NULL, 'active', '2026-09-05 01:43:56', NULL, '$2y$10$24HFdoMQkcr1WdIyiF0LZucDl3jlYgEPh/.HISQN5p208WG7D8qcq', NULL, '2026-09-05 01:43:56', '2026-09-05 01:43:56'),
 (112, 'William Bautista (Workshop Supervisor)', 'ws.sup@gateway.com', 'SUZUKI PASONG TAMO', 'WORKSHOP SUP', NULL, 'active', '2026-09-05 01:43:56', NULL, '$2y$10$24HFdoMQkcr1WdIyiF0LZucDl3jlYgEPh/.HISQN5p208WG7D8qcq', NULL, '2026-09-05 01:43:56', '2026-09-05 01:43:56'),
-(113, 'Walter Ramos (Workshop)', 'ws@gateway.com', 'SUZUKI PASONG TAMO', 'WORKSHOP', NULL, 'active', '2026-09-05 01:43:56', NULL, '$2y$10$24HFdoMQkcr1WdIyiF0LZucDl3jlYgEPh/.HISQN5p208WG7D8qcq', NULL, '2026-09-05 01:43:56', '2026-09-05 01:43:56'),
 (114, 'Roberto Garcia (Branch Operations Manager)', 'bom@gateway.com', 'SUZUKI PASONG TAMO', 'BOM', NULL, 'active', '2026-09-05 01:43:56', NULL, '$2y$12$ntW5yyZmjCepLfG5jkwXnuLuMUHyYnSsLbis/iSD6LXrQFyeroqv2', NULL, '2026-09-05 01:43:56', '2026-09-07 16:08:58'),
 (116, '5S Utilities', 'utilities@gateway.com', 'SUZUKI PASONG TAMO', '5S_UTILITIES', NULL, 'active', '2026-09-06 22:57:35', NULL, '$2y$12$wOfk7VtJLa7G8w6KjRq4qemM8fmObh3yoM2b2hzhkIdWyS2usjgRO', NULL, '2026-09-06 22:57:35', '2026-09-06 22:57:35'),
 (117, '5S Service', 'service@gateway.com', 'SUZUKI PASONG TAMO', '5S_SERVICE', NULL, 'active', '2026-09-06 22:57:35', NULL, '$2y$12$WyCpeHxFgv4mVJKL5ChSj.kDFq43cuvQEN3aHrYM.Ekt6L28CSKQm', NULL, '2026-09-06 22:57:35', '2026-09-06 22:57:35'),

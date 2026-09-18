@@ -3,7 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Notifications\EscalationFollowUpSubmitted;
+use App\Notifications\FindingFollowUpRequested;
 use App\Notifications\PicTaskCompleted;
+use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -11,6 +14,30 @@ use Illuminate\Notifications\DatabaseNotification;
 
 class TaskNotificationController extends Controller
 {
+    private const TASK_NOTIFICATION_TYPES = [
+        PicTaskCompleted::class,
+        FindingFollowUpRequested::class,
+        EscalationFollowUpSubmitted::class,
+    ];
+
+    public function status(Request $request, NotificationService $notificationService): JsonResponse
+    {
+        $user = $this->recipient($request);
+        $data = $notificationService->getTaskNotificationData($user);
+
+        return response()->json([
+            'current_count' => $data['taskNotifications']->count(),
+            'unread_count' => $data['unreadTaskNotificationCount'],
+            'history_count' => $data['taskNotificationHistory']->count(),
+            'html' => view('partials.task-notifications-list', [
+                'activeTaskNotifications' => $data['taskNotifications'],
+            ])->render(),
+            'history_html' => view('partials.task-notification-history', [
+                'historicalTaskNotifications' => $data['taskNotificationHistory'],
+            ])->render(),
+        ])->header('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
+
     public function viewTask(Request $request, string $notification): RedirectResponse
     {
         $record = $this->taskNotification($request, $notification);
@@ -28,19 +55,53 @@ class TaskNotificationController extends Controller
 
         $templateSlug = trim((string) data_get($data, 'template_slug'));
         $standardsType = data_get($data, 'standards_type');
+        $fiveSArea = data_get($data, 'five_s_area');
 
-        if (! in_array($standardsType, ['sales', 'aftersales'], true)) {
+        if (! in_array($standardsType, ['sales', 'aftersales', 'five_s'], true)) {
             $standardsType = match ($templateSlug) {
                 'dealer-operations-standards-sales' => 'sales',
                 'dealer-operations-standards' => 'aftersales',
+                'sales', 'service', 'restroom', 'utilities' => 'five_s',
                 default => null,
             };
+        }
+
+        if ($standardsType === 'five_s' && ! in_array($fiveSArea, ['sales', 'service', 'restroom'], true)) {
+            $fiveSArea = match ($templateSlug) {
+                'sales' => 'sales',
+                'service' => 'service',
+                'restroom', 'utilities' => 'restroom',
+                default => null,
+            };
+        }
+
+        $event = data_get($data, 'event');
+        if (in_array($event, ['finding_follow_up_requested', 'escalation_follow_up_submitted'], true)) {
+            $auditDate = trim((string) data_get($data, 'audit_date'));
+            $auditMonth = preg_match('/^\d{4}-\d{2}/', $auditDate) === 1
+                ? substr($auditDate, 0, 7)
+                : null;
+
+            return redirect()->route('dashboard', $this->filledParameters([
+                'tab' => 'follow-up',
+                'form' => $standardsType,
+                'score_view' => 'user',
+                'branch' => data_get($data, 'branch'),
+                'template' => $templateSlug,
+                'month' => $auditMonth,
+                'user_id' => data_get($data, 'auditor_user_id') ?: data_get($data, 'completed_by_user_id'),
+                'user_type' => data_get($data, 'auditor_role') ?: data_get($data, 'completed_by_role'),
+                'submission_id' => data_get($data, 'submission_id'),
+                'follow_up_response_id' => data_get($data, 'response_id'),
+                'follow_up_event' => $event,
+            ]));
         }
 
         if ($standardsType !== null) {
             return redirect()->route('dashboard', $this->filledParameters([
                 'tab' => 'overview',
                 'form' => $standardsType,
+                'five_s_area' => $standardsType === 'five_s' ? $fiveSArea : null,
                 'branch' => data_get($data, 'branch'),
                 'user_id' => data_get($data, 'completed_by_user_id'),
                 'user_type' => data_get($data, 'completed_by_role'),
@@ -79,14 +140,19 @@ class TaskNotificationController extends Controller
     public function markAllViewed(Request $request): JsonResponse
     {
         $user = $this->recipient($request);
+        $validated = $request->validate([
+            'ids' => ['sometimes', 'array', 'max:30'],
+            'ids.*' => ['required', 'uuid', 'distinct'],
+        ]);
         $records = $user->unreadNotifications()
-            ->where('type', PicTaskCompleted::class)
+            ->whereIn('type', self::TASK_NOTIFICATION_TYPES)
+            ->when(array_key_exists('ids', $validated), fn ($query) => $query->whereKey($validated['ids']))
             ->get();
         $viewedAt = now();
 
         if ($records->isNotEmpty()) {
             $user->unreadNotifications()
-                ->where('type', PicTaskCompleted::class)
+                ->whereIn('type', self::TASK_NOTIFICATION_TYPES)
                 ->whereKey($records->modelKeys())
                 ->update(['read_at' => $viewedAt]);
         }
@@ -119,7 +185,7 @@ class TaskNotificationController extends Controller
         /** @var DatabaseNotification $record */
         $record = $user->notifications()
             ->whereKey($notification)
-            ->where('type', PicTaskCompleted::class)
+            ->whereIn('type', self::TASK_NOTIFICATION_TYPES)
             ->firstOrFail();
 
         return $record;

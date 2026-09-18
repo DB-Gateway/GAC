@@ -69,6 +69,33 @@ class ChecklistCatalogItem {
     );
   }
 
+  ChecklistCatalogItem copyWith({
+    int? id,
+    String? slug,
+    String? name,
+    String? description,
+    int? version,
+    Map<String, dynamic>? settings,
+    int? sectionCount,
+    int? itemCount,
+    int? workUnitCount,
+    ChecklistSubmissionData? submission,
+    bool clearSubmission = false,
+  }) {
+    return ChecklistCatalogItem(
+      id: id ?? this.id,
+      slug: slug ?? this.slug,
+      name: name ?? this.name,
+      description: description ?? this.description,
+      version: version ?? this.version,
+      settings: settings ?? this.settings,
+      sectionCount: sectionCount ?? this.sectionCount,
+      itemCount: itemCount ?? this.itemCount,
+      workUnitCount: workUnitCount ?? this.workUnitCount,
+      submission: clearSubmission ? null : (submission ?? this.submission),
+    );
+  }
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'slug': slug,
@@ -121,7 +148,7 @@ class ChecklistTemplateData {
     final sections = data['sections'];
     if (sections is! List) {
       throw const FormatException(
-        'Laravel returned invalid template sections.',
+        'Server returned invalid template sections.',
       );
     }
     return ChecklistTemplateData(
@@ -159,7 +186,7 @@ class ChecklistSectionData {
     final data = checklistJsonMap(value, label: 'section');
     final items = data['items'];
     if (items is! List) {
-      throw const FormatException('Laravel returned invalid checklist items.');
+      throw const FormatException('Server returned invalid checklist items.');
     }
     return ChecklistSectionData(
       id: checklistJsonInt(data['id'], label: 'section.id'),
@@ -183,6 +210,8 @@ class ChecklistItemData {
     required this.sortOrder,
     required this.metadata,
     this.description,
+    this.isActive = true,
+    this.activeSlots,
   });
 
   final int id;
@@ -191,6 +220,8 @@ class ChecklistItemData {
   final int sortOrder;
   final Map<String, dynamic> metadata;
   final String? description;
+  final bool isActive;
+  final List<String>? activeSlots;
 
   String? get subject => checklistJsonNullableString(metadata['subject']);
   String? get level =>
@@ -209,14 +240,53 @@ class ChecklistItemData {
       checklistJsonNullableString(metadata['howToCheck']);
   String? get displayNumber => metadata['number']?.toString();
 
+  bool isSlotActive(String slotKey) {
+    if (!isActive) return false;
+    if (activeSlots != null) {
+      return activeSlots!.contains(slotKey);
+    }
+    final metaSlots = metadata['active_slots'];
+    if (metaSlots is List) {
+      return metaSlots.map((e) => e.toString().trim()).contains(slotKey);
+    }
+    return true;
+  }
+
   factory ChecklistItemData.fromJson(Object? value) {
     final data = checklistJsonMap(value, label: 'item');
+    final metadata = Map<String, dynamic>.from(
+      checklistJsonOptionalMap(data['metadata']),
+    );
+    if (data['how_to_check'] != null && !metadata.containsKey('how_to_check')) {
+      metadata['how_to_check'] = data['how_to_check'];
+    }
+    if (data['howToCheck'] != null && !metadata.containsKey('howToCheck')) {
+      metadata['howToCheck'] = data['howToCheck'];
+    }
+
+    final rawIsActive = data['is_active'] ?? metadata['is_active'];
+    final isActive = rawIsActive is bool
+        ? rawIsActive
+        : rawIsActive == null
+            ? true
+            : (rawIsActive.toString() == '1' ||
+                rawIsActive.toString().toLowerCase() == 'true');
+
+    final rawActiveSlots = data['active_slots'] ?? metadata['active_slots'];
+    List<String>? activeSlots;
+    if (rawActiveSlots is List) {
+      activeSlots = rawActiveSlots
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+    }
+
     return ChecklistItemData(
       id: checklistJsonInt(data['id'], label: 'item.id'),
       key: checklistJsonString(data['key'], label: 'item.key'),
       prompt: checklistJsonString(data['prompt'], label: 'item.prompt'),
       sortOrder: checklistJsonInt(data['sort_order'], label: 'item.sort_order'),
-      metadata: checklistJsonOptionalMap(data['metadata']),
+      metadata: metadata,
       description:
           checklistJsonNullableString(data['description']) ??
           (data['metadata'] is Map
@@ -224,6 +294,8 @@ class ChecklistItemData {
                   (data['metadata'] as Map)['description'],
                 )
               : null),
+      isActive: isActive,
+      activeSlots: activeSlots,
     );
   }
 }
@@ -272,7 +344,10 @@ class ChecklistSubmissionData {
   final DateTime? submittedAt;
   final int? issueCount;
 
-  bool get isSubmitted => status.toLowerCase() == 'submitted';
+  bool get isSubmitted {
+    final s = status.trim().toLowerCase();
+    return s == 'submitted' || s == 'completed';
+  }
 
   int get effectiveAnsweredItems {
     if (answeredItems != null && answeredItems! > 0) {
@@ -408,7 +483,7 @@ class ChecklistLoadResult {
 
 Map<String, dynamic> checklistJsonMap(Object? value, {required String label}) {
   if (value is! Map) {
-    throw FormatException('Laravel returned invalid $label data.');
+    throw FormatException('Server returned invalid $label data.');
   }
   return {
     for (final entry in value.entries)
@@ -423,7 +498,7 @@ Map<String, dynamic> checklistJsonOptionalMap(Object? value) {
 
 String checklistJsonString(Object? value, {required String label}) {
   if (value is String) return value;
-  throw FormatException('Laravel returned an invalid $label value.');
+  throw FormatException('Server returned an invalid $label value.');
 }
 
 String? checklistJsonNullableString(Object? value) {
@@ -433,7 +508,7 @@ String? checklistJsonNullableString(Object? value) {
 int checklistJsonInt(Object? value, {required String label}) {
   final result = checklistJsonNullableInt(value);
   if (result != null) return result;
-  throw FormatException('Laravel returned an invalid $label value.');
+  throw FormatException('Server returned an invalid $label value.');
 }
 
 int? checklistJsonNullableInt(Object? value) {

@@ -90,12 +90,14 @@ class DosChecklistService implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) async {
     final scope = _authorizeSlug(slug);
     final submission = await _delegate.saveDraft(
       slug,
       date: date,
       responses: responses,
+      context: context,
     );
     return _normalizeSubmission(submission, scope.itemCountFor(slug))!;
   }

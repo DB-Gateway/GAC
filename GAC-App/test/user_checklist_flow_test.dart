@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gac_flutter/models/authenticated_user.dart';
 import 'package:gac_flutter/models/checklist_models.dart';
 import 'package:gac_flutter/screens/user_checklist_detail_screen.dart';
 import 'package:gac_flutter/screens/user_checklists_screen.dart';
@@ -9,7 +10,27 @@ import 'package:gac_flutter/theme/gac_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('PIC catalog renders Laravel templates and opens section page', (
+  testWidgets('hourly attention link keeps the affected question and expired slot visible', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+      theme: GacTheme.light,
+      home: UserChecklistDetailScreen(
+        slug: 'utilities', repository: _FakeChecklistRepository(),
+        auditDate: '2026-09-08', initialSlotKey: '13:00',
+        initialItemKey: 'sink-clean',
+        nowProvider: () => DateTime(2026, 9, 8, 16, 15),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('QUESTION 2 / 2'), findsOneWidget);
+    expect(find.text('TIME WINDOW CLOSED FOR 1:00 PM'), findsOneWidget);
+    expect(find.text('SELECT CONDITION FOR 4:00 PM:'), findsNothing);
+  });
+
+  testWidgets('PIC catalog renders Server templates and opens section page', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -41,7 +62,7 @@ void main() {
     expect(find.text('SECTION 1 OF 1  ·  VERSION 4'), findsOneWidget);
   });
 
-  testWidgets('a PIC answer is sent to the Laravel draft endpoint', (
+  testWidgets('a PIC answer is auto-saved to Server when leaving', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -61,14 +82,19 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('YES'));
-    await tester.tap(find.text('SAVE DRAFT'));
+    expect(find.text('SAVE DRAFT'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('checklist-header-submit-button')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Back to checklists'));
     await tester.pumpAndSettle();
 
     expect(repository.savedSlug, 'sales');
     expect(repository.savedResponses, hasLength(1));
     expect(repository.savedResponses.single['item_key'], 'item-1');
     expect(repository.savedResponses.single['status'], 'yes');
-    expect(find.text('Draft saved to Laravel.'), findsOneWidget);
+    expect(repository.savedContext?['draft_position'], {'item_key': 'item-1'});
   });
 
   testWidgets('notification deep link opens its assigned checklist', (
@@ -122,18 +148,18 @@ void main() {
       // Verify question-by-question view elements
       expect(find.text('QUESTION 1 / 2'), findsOneWidget);
       expect(find.text('Are mirrors clean and spotless?'), findsOneWidget);
-      expect(find.text('GOOD'), findsOneWidget);
-      expect(find.text('NOT GOOD'), findsOneWidget);
+      expect(find.text('YES'), findsOneWidget);
+      expect(find.text('NO'), findsOneWidget);
 
       // Select 8:00 AM slot
       await tester.tap(find.text('8:00 AM'));
       await tester.pumpAndSettle();
 
       // Tap NOT GOOD to reveal remarks and photo attachment
-      await tester.tap(find.text('NOT GOOD'));
+      await tester.tap(find.text('NO'));
       await tester.pumpAndSettle();
 
-      expect(find.text('MARKED NOT GOOD'), findsOneWidget);
+      expect(find.text('MARKED NO'), findsOneWidget);
       expect(find.text('REMARKS & DEFECT DETAILS'), findsOneWidget);
       expect(find.text('ATTACH PHOTO (OPTIONAL)'), findsOneWidget);
 
@@ -144,22 +170,23 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Save draft
-      await tester.tap(find.text('SAVE DRAFT'));
+      // Complete this hourly inspection. Intermediate hours are persisted by
+      // the draft endpoint so the next scheduled hour remains available.
+      await tester.tap(find.widgetWithText(FilledButton, 'NEXT'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('YES'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SUBMIT'));
       await tester.pumpAndSettle();
 
-      expect(repository.savedSlug, 'utilities');
-      expect(repository.savedResponses, hasLength(1));
-      expect(repository.savedResponses.first['item_key'], 'mirror-clean');
-      expect(
-        repository.savedResponses.first['remark'],
-        'Mirror glass has water spots',
+      expect(repository.submittedSlug, 'utilities');
+      expect(repository.submittedResponses, hasLength(2));
+      final mirrorResponse = repository.submittedResponses.firstWhere(
+        (response) => response['item_key'] == 'mirror-clean',
       );
-      expect(
-        repository.savedResponses.first['details']['slots']['08:00'],
-        'not_good',
-      );
-      expect(find.text('Draft saved to Laravel.'), findsOneWidget);
+      expect(mirrorResponse['remark'], 'Mirror glass has water spots');
+      expect(mirrorResponse['details']['slots']['08:00'], 'not_good');
+      expect(find.text('HOUR COMPLETE'), findsOneWidget);
     },
   );
 
@@ -193,7 +220,7 @@ void main() {
       expect(nextButton.onPressed, isNull);
 
       // Tap GOOD: NEXT button becomes enabled
-      await tester.tap(find.text('GOOD'));
+      await tester.tap(find.text('YES'));
       await tester.pumpAndSettle();
 
       nextButton = tester.widget<FilledButton>(nextButtonFinder);
@@ -266,7 +293,7 @@ void main() {
       await tester.tap(find.text('8:00 AM'));
       await tester.pumpAndSettle();
 
-      expect(find.text('MARKED NOT GOOD'), findsOneWidget);
+      expect(find.text('MARKED NO'), findsOneWidget);
       expect(find.text('Cracked glass on left side'), findsOneWidget);
       expect(find.text('Photo attached'), findsOneWidget);
     },
@@ -306,8 +333,8 @@ void main() {
     expect(find.text('TIME WINDOW CLOSED FOR 8:00 AM'), findsOneWidget);
     expect(find.text('INSPECTION FOR 8:00 AM IS LOCKED'), findsOneWidget);
 
-    // Tapping GOOD cannot change an expired hour.
-    await tester.tap(find.text('GOOD'));
+    // Tapping YES cannot change an expired hour.
+    await tester.tap(find.text('YES'));
     await tester.pumpAndSettle();
 
     // Tap on the future 10:00 AM slot.
@@ -318,8 +345,8 @@ void main() {
     expect(find.text('LOCKED UNTIL 10:00 AM'), findsOneWidget);
     expect(find.text('INSPECTION FOR 10:00 AM IS LOCKED'), findsOneWidget);
 
-    // Attempting to tap GOOD on locked slot does not mark it
-    await tester.tap(find.text('GOOD'));
+    // Attempting to tap YES on locked slot does not mark it
+    await tester.tap(find.text('YES'));
     await tester.pumpAndSettle();
 
     // The 9:00 AM task becomes editable immediately at 9:00 AM.
@@ -329,28 +356,163 @@ void main() {
     expect(find.text('TIME WINDOW CLOSED FOR 8:00 AM'), findsNothing);
     expect(find.text('SELECT CONDITION FOR 9:00 AM:'), findsOneWidget);
 
-    await tester.tap(find.text('GOOD'));
+    await tester.tap(find.text('YES'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('SAVE DRAFT'));
+    await tester.tap(find.widgetWithText(FilledButton, 'NEXT'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('YES'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SUBMIT'));
     await tester.pumpAndSettle();
 
-    expect(repository.savedSlug, 'utilities');
-    expect(repository.savedResponses, hasLength(2));
-    final mirrorResponse = repository.savedResponses.firstWhere(
+    expect(repository.submittedSlug, 'utilities');
+    expect(repository.submittedResponses, hasLength(2));
+    final mirrorResponse = repository.submittedResponses.firstWhere(
       (response) => response['item_key'] == 'mirror-clean',
     );
-    final sinkResponse = repository.savedResponses.firstWhere(
+    final sinkResponse = repository.submittedResponses.firstWhere(
       (response) => response['item_key'] == 'sink-clean',
     );
     expect(mirrorResponse['details']['slots']['09:00'], 'good');
     // Every unanswered question in the expired hour is recorded as Not Good.
     expect(mirrorResponse['details']['slots']['08:00'], 'not_good');
     expect(sinkResponse['details']['slots']['08:00'], 'not_good');
-    expect(sinkResponse['details']['slots']['09:00'], isNull);
+    expect(sinkResponse['details']['slots']['09:00'], 'good');
     // Future hours are never added early.
     expect(mirrorResponse['details']['slots']['23:00'], isNull);
     expect(sinkResponse['details']['slots']['23:00'], isNull);
   });
+
+  testWidgets(
+    'utilities submits the complete 8 AM inspection without requiring 9 AM',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _FakeChecklistRepository();
+      var returnedToChecklistList = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'utilities',
+            repository: repository,
+            auditDate: '2026-09-08',
+            nowProvider: () => DateTime(2026, 9, 8, 8, 52),
+            onBack: () => returnedToChecklistList = true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('YES'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'NEXT'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('YES'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SUBMIT'));
+      await tester.pumpAndSettle();
+
+      // Intermediate hours submit to Server so compliance administrators receive notifications
+      // while subsequent hours remain open.
+      expect(repository.submittedSlug, 'utilities');
+      expect(repository.submittedResponses, hasLength(2));
+      for (final response in repository.submittedResponses) {
+        final slots = response['details']['slots'] as Map<String, String>;
+        expect(slots['08:00'], 'good');
+        expect(slots['09:00'], isNull);
+        expect(response['details']['submitted_slots'], contains('08:00'));
+      }
+      expect(find.text('HOUR COMPLETE'), findsOneWidget);
+      expect(find.text('8:00 AM inspection submitted'), findsOneWidget);
+      expect(
+        find.text(
+          'This hour was saved. The next inspection will be available at 9:00 AM.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('checklist-message-ok-button')),
+      );
+      await tester.pumpAndSettle();
+      expect(returnedToChecklistList, isTrue);
+    },
+  );
+
+  testWidgets(
+    'utilities shows a green already-submitted state and disables submission for a completed hour',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _FakeChecklistRepository();
+      repository.initialSubmission = const ChecklistSubmissionData(
+        id: 101,
+        status: 'draft',
+        auditDate: '2026-09-08',
+        templateVersion: 1,
+        scores: {'total': 2, 'answered': 2},
+        responses: {
+          'mirror-clean': ChecklistResponseData(
+            itemId: 101,
+            itemKey: 'mirror-clean',
+            status: 'yes',
+            remark: null,
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {
+              'slots': {'08:00': 'good'},
+              'submitted_slots': ['08:00'],
+            },
+          ),
+          'sink-clean': ChecklistResponseData(
+            itemId: 102,
+            itemKey: 'sink-clean',
+            status: 'yes',
+            remark: null,
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {
+              'slots': {'08:00': 'good'},
+              'submitted_slots': ['08:00'],
+            },
+          ),
+        },
+        answeredItems: 2,
+        totalItems: 2,
+        completionPercentage: 20,
+        submittedAt: null,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'utilities',
+            repository: repository,
+            auditDate: '2026-09-08',
+            nowProvider: () => DateTime(2026, 9, 8, 8, 55),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('ALREADY SUBMITTED'), findsOneWidget);
+      expect(
+        find.text('INSPECTION FOR 8:00 AM IS ALREADY SUBMITTED'),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(FilledButton, 'SUBMIT'), findsNothing);
+    },
+  );
 
   testWidgets(
     'utilities can submit the current hour when the previous hour was missed',
@@ -413,11 +575,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('SELECT CONDITION FOR 10:00 AM:'), findsOneWidget);
-      await tester.tap(find.text('GOOD'));
+      await tester.tap(find.text('YES'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'NEXT'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('GOOD'));
+      await tester.tap(find.text('YES'));
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('SUBMIT'));
@@ -432,11 +594,168 @@ void main() {
         expect(slots['10:00'], 'good');
         expect(slots['23:00'], isNull);
       }
+      expect(find.text('10:00 AM inspection submitted'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'utilities submits completed inspections without a mark for the active 1 PM slot',
+    'utilities moves a stale 1 PM selection to the active 4 PM inspection',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _FakeChecklistRepository();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'utilities',
+            repository: repository,
+            auditDate: '2026-09-08',
+            initialSlotKey: '13:00',
+            nowProvider: () => DateTime(2026, 9, 8, 16, 15),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('SELECT CONDITION FOR 4:00 PM:'), findsOneWidget);
+      expect(find.text('TIME WINDOW CLOSED FOR 1:00 PM'), findsNothing);
+
+      await tester.tap(find.text('YES'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'NEXT'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('YES'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SUBMIT'));
+      await tester.pumpAndSettle();
+
+      expect(repository.submittedSlug, 'utilities');
+      for (final response in repository.submittedResponses) {
+        final slots = response['details']['slots'] as Map<String, String>;
+        expect(slots['13:00'], 'not_good');
+        expect(slots['16:00'], 'good');
+      }
+    },
+  );
+
+  testWidgets(
+    '5S utilities displays information icon and opens how to check guide or empty fallback',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _FakeChecklistRepository();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'utilities',
+            repository: repository,
+            auditDate: '2026-09-08',
+            nowProvider: () => DateTime(2026, 9, 8, 10, 30),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // First question ('mirror-clean') has no inputted guide
+      final infoButton1 = find.byKey(
+        const ValueKey('mirror-clean-how-to-check'),
+      );
+      expect(infoButton1, findsOneWidget);
+
+      await tester.tap(infoButton1);
+      await tester.pumpAndSettle();
+
+      expect(find.text('HOW TO CHECK GUIDE'), findsOneWidget);
+      expect(find.text('Question #1'), findsOneWidget);
+      expect(find.text('Are mirrors clean and spotless?'), findsNWidgets(2));
+      expect(
+        find.text(
+          'No detailed verification guide has been inputted for this checklist item yet.',
+        ),
+        findsOneWidget,
+      );
+
+      // Close modal
+      await tester.tap(find.text('GOT IT'));
+      await tester.pumpAndSettle();
+
+      // Answer and proceed to second question ('sink-clean')
+      await tester.tap(find.text('YES'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'NEXT'));
+      await tester.pumpAndSettle();
+
+      // Second question has an existing guide
+      final infoButton2 = find.byKey(
+        const ValueKey('sink-clean-how-to-check'),
+      );
+      expect(infoButton2, findsOneWidget);
+
+      await tester.tap(infoButton2);
+      await tester.pumpAndSettle();
+
+      expect(find.text('HOW TO CHECK GUIDE'), findsOneWidget);
+      expect(find.text('Question #2'), findsOneWidget);
+      expect(
+        find.text('Is the sink clean and working properly?'),
+        findsNWidgets(2),
+      );
+      expect(
+        find.text('Check sink for clogs, water flow, and soap residue.'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('GOT IT'));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'utilities reports an empty time-slot template without crashing',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _EmptyHourlyChecklistRepository();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'utilities',
+            repository: repository,
+            auditDate: '2026-09-08',
+            nowProvider: () => DateTime(2026, 9, 8, 16, 15),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('SUBMIT'));
+      await tester.pumpAndSettle();
+
+      expect(repository.savedSlug, isNull);
+      expect(find.text('Checklist incomplete'), findsOneWidget);
+      expect(
+        find.text(
+          'This checklist has no inspection time slots. Please ask an administrator to review its template.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'utilities blocks hourly submission until every item in the active slot is answered',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -458,29 +777,111 @@ void main() {
       await tester.pumpAndSettle();
 
       // Mark only the first question at 1 PM. The second question remains
-      // unanswered, which must not block the submission.
+      // unanswered, so the hour must remain incomplete.
       await tester.tap(find.text('YES'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('SUBMIT'));
       await tester.pumpAndSettle();
 
-      expect(repository.submittedSlug, 'utilities');
-      expect(repository.submittedResponses, hasLength(2));
-      for (final response in repository.submittedResponses) {
-        final slots = response['details']['slots'] as Map<String, String>;
-        expect(slots['08:00'], 'not_good');
-      }
-      final answeredItem = repository.submittedResponses.firstWhere(
-        (response) => response['item_key'] == 'mirror-clean',
+      expect(repository.savedSlug, isNull);
+      expect(repository.submittedSlug, isNull);
+      expect(find.text('Checklist incomplete'), findsOneWidget);
+      expect(
+        find.text(
+          'Select a condition for every item in the 1:00 PM inspection.',
+        ),
+        findsOneWidget,
       );
-      final unansweredItem = repository.submittedResponses.firstWhere(
-        (response) => response['item_key'] == 'sink-clean',
-      );
-      expect(answeredItem['details']['slots']['13:00'], 'good');
-      expect(unansweredItem['details']['slots']['13:00'], isNull);
-      expect(find.text('Checklist submitted'), findsOneWidget);
     },
   );
+
+  testWidgets('utilities final scheduled hour closes the daily checklist', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = _FakeChecklistRepository();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GacTheme.light,
+        home: UserChecklistDetailScreen(
+          slug: 'utilities',
+          repository: repository,
+          auditDate: '2026-09-08',
+          nowProvider: () => DateTime(2026, 9, 8, 23, 30),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('YES'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'NEXT'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('YES'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SUBMIT'));
+    await tester.pumpAndSettle();
+
+    expect(repository.savedSlug, isNull);
+    expect(repository.submittedSlug, 'utilities');
+    expect(repository.submittedResponses, hasLength(2));
+    for (final response in repository.submittedResponses) {
+      final slots = response['details']['slots'] as Map<String, String>;
+      expect(slots['23:00'], 'good');
+    }
+    expect(find.text('Checklist submitted'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('checklist-message-ok-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Checklist submitted'), findsNothing);
+  });
+
+  testWidgets('failed submission stops loading and can be retried', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = _FakeChecklistRepository()
+      ..submitError = const ChecklistApiException('Server unavailable.');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GacTheme.light,
+        home: UserChecklistDetailScreen(
+          slug: 'sales',
+          repository: repository,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('YES'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SUBMIT'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Unable to save checklist'), findsOneWidget);
+    expect(find.text('Server unavailable.'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('checklist-message-ok-button')),
+    );
+    await tester.pumpAndSettle();
+
+    repository.submitError = null;
+    await tester.tap(find.text('SUBMIT'));
+    await tester.pumpAndSettle();
+    expect(find.text('Checklist submitted'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(repository.submittedResponses.single['status'], 'yes');
+  });
 
   testWidgets(
     'sales and service checklist requires remark on NO or N/A and supports optional photo attachment',
@@ -548,8 +949,13 @@ void main() {
       await tester.tap(find.text('NO'));
       await tester.pumpAndSettle();
 
-      // Save draft with remark
-      await tester.tap(find.text('SAVE DRAFT'));
+      // Leaving the checklist auto-saves the current response as a draft.
+      expect(find.text('SAVE DRAFT'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('checklist-header-submit-button')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('Back to checklists'));
       await tester.pumpAndSettle();
 
       expect(repository.savedSlug, 'sales');
@@ -581,6 +987,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+
+      expect(find.text('SAVE DRAFT'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('checklist-header-submit-button')),
+        findsOneWidget,
+      );
 
       final nextButtonFinder = find.byKey(const ValueKey('dos-next-question'));
       expect(nextButtonFinder, findsOneWidget);
@@ -661,6 +1073,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+
+      expect(find.text('SAVE DRAFT'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('checklist-header-submit-button')),
+        findsOneWidget,
+      );
 
       final nextButtonFinder = find.byKey(const ValueKey('dos-next-question'));
       expect(nextButtonFinder, findsOneWidget);
@@ -744,6 +1162,8 @@ void main() {
       expect(nextButton.onPressed, isNotNull);
 
       // Advance to Question 2
+      await tester.ensureVisible(nextButtonFinder);
+      await tester.pumpAndSettle();
       await tester.tap(nextButtonFinder);
       await tester.pumpAndSettle();
 
@@ -784,7 +1204,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Tap NOT GOOD: NEXT is disabled until defect remark is provided
-      await tester.tap(find.text('NOT GOOD'));
+      await tester.tap(find.text('NO'));
       await tester.pumpAndSettle();
 
       FilledButton nextButton = tester.widget<FilledButton>(nextButtonFinder);
@@ -954,6 +1374,8 @@ void main() {
             slug: 'utilities',
             initialSlotKey: '08:00',
             repository: repository,
+            auditDate: '2026-08-29',
+            nowProvider: () => DateTime(2026, 8, 29, 8, 30),
           ),
         ),
       );
@@ -969,7 +1391,7 @@ void main() {
   );
 
   testWidgets(
-    'completed checklist in submitted mode opens at the first question',
+    'completed checklist in submitted mode opens at the last question',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -1022,8 +1444,389 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Read-only view starts at Question 1
-      expect(find.text('QUESTION 1 OF 2'), findsOneWidget);
+      // Read-only view starts at the last question
+      expect(find.text('QUESTION 2 OF 2'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'completed checklist opens at last question for Admin user as well',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _MultiItemChecklistRepository();
+      repository.initialSubmission = ChecklistSubmissionData(
+        id: 1,
+        status: 'submitted',
+        auditDate: '2026-08-29',
+        templateVersion: 4,
+        scores: const {'total': 2, 'answered': 2},
+        responses: const {
+          'item-1': ChecklistResponseData(
+            itemId: 1,
+            itemKey: 'item-1',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+          'item-2': ChecklistResponseData(
+            itemId: 2,
+            itemKey: 'item-2',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+        },
+        answeredItems: 2,
+        totalItems: 2,
+        completionPercentage: 100,
+        submittedAt: DateTime(2026, 8, 29),
+      );
+
+      const adminUser = AuthenticatedUser(
+        id: 99,
+        name: 'Admin User',
+        email: 'admin@gateway.com',
+        userType: 'ADMIN',
+        accountStatus: 'active',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'service',
+            repository: repository,
+            user: adminUser,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('QUESTION 2 OF 2'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'completed checklist opens at last question for Checker user as well',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _MultiItemChecklistRepository();
+      repository.initialSubmission = ChecklistSubmissionData(
+        id: 1,
+        status: 'submitted',
+        auditDate: '2026-08-29',
+        templateVersion: 4,
+        scores: const {'total': 2, 'answered': 2},
+        responses: const {
+          'item-1': ChecklistResponseData(
+            itemId: 1,
+            itemKey: 'item-1',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+          'item-2': ChecklistResponseData(
+            itemId: 2,
+            itemKey: 'item-2',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+        },
+        answeredItems: 2,
+        totalItems: 2,
+        completionPercentage: 100,
+        submittedAt: DateTime(2026, 8, 29),
+      );
+
+      const checkerUser = AuthenticatedUser(
+        id: 10,
+        name: 'WS Supervisor',
+        email: 'ws.sup@gateway.com',
+        userType: 'WS SUP',
+        accountStatus: 'active',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'service',
+            repository: repository,
+            user: checkerUser,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('QUESTION 2 OF 2'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'completed checklist opens at last question even when initialSectionIndex is passed',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _MultiItemChecklistRepository();
+      repository.initialSubmission = ChecklistSubmissionData(
+        id: 1,
+        status: 'submitted',
+        auditDate: '2026-08-29',
+        templateVersion: 4,
+        scores: const {'total': 2, 'answered': 2},
+        responses: const {
+          'item-1': ChecklistResponseData(
+            itemId: 1,
+            itemKey: 'item-1',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+          'item-2': ChecklistResponseData(
+            itemId: 2,
+            itemKey: 'item-2',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+        },
+        answeredItems: 2,
+        totalItems: 2,
+        completionPercentage: 100,
+        submittedAt: DateTime(2026, 8, 29),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'service',
+            repository: repository,
+            initialSectionIndex: 0,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('QUESTION 2 OF 2'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'checklist with all questions answered opens at last question',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _MultiItemChecklistRepository();
+      repository.initialSubmission = ChecklistSubmissionData(
+        id: 1,
+        status: 'draft',
+        auditDate: '2026-08-29',
+        templateVersion: 4,
+        scores: const {'total': 2, 'answered': 2},
+        responses: const {
+          'item-1': ChecklistResponseData(
+            itemId: 1,
+            itemKey: 'item-1',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+          'item-2': ChecklistResponseData(
+            itemId: 2,
+            itemKey: 'item-2',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+        },
+        answeredItems: 2,
+        totalItems: 2,
+        completionPercentage: 100,
+        submittedAt: null,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'service',
+            repository: repository,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('QUESTION 2 OF 2'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'utilities checklist NEXT button turns into SUBMIT CHECKLIST on final question and submits',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _FakeChecklistRepository();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            slug: 'utilities',
+            repository: repository,
+            nowProvider: () => DateTime(2026, 8, 29, 8, 15),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Question 1: Next button is NEXT
+      expect(find.text('QUESTION #1'), findsOneWidget);
+      expect(find.text('NEXT'), findsOneWidget);
+
+      await tester.tap(find.text('YES'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('NEXT'));
+      await tester.pumpAndSettle();
+
+      // Question 2 (final question): Next button turns into SUBMIT CHECKLIST
+      expect(find.text('QUESTION #2'), findsOneWidget);
+      expect(find.text('SUBMIT CHECKLIST'), findsOneWidget);
+
+      await tester.tap(find.text('YES'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('SUBMIT CHECKLIST'));
+      await tester.pumpAndSettle();
+
+      expect(repository.submittedSlug, 'utilities');
+      expect(repository.submittedResponses, isNotEmpty);
+    },
+  );
+
+  testWidgets(
+    'view toggle between step-by-step and list view is available for both editable and read-only / submitted checklists',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = _MultiItemChecklistRepository();
+      // Case 1: Active editable checklist
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            key: const ValueKey('active-checklist'),
+            slug: 'service',
+            repository: repository,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Step-by-step view is active by default
+      expect(find.byTooltip('Switch to list view'), findsOneWidget);
+      expect(find.byIcon(Icons.view_list_rounded), findsOneWidget);
+
+      // Tap to switch to list view
+      await tester.tap(find.byTooltip('Switch to list view'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Switch to step-by-step'), findsOneWidget);
+      expect(find.byIcon(Icons.view_carousel_rounded), findsOneWidget);
+
+      // Case 2: Read-only / submitted checklist
+      final submittedRepo = _MultiItemChecklistRepository();
+      submittedRepo.initialSubmission = ChecklistSubmissionData(
+        id: 99,
+        status: 'submitted',
+        auditDate: '2026-08-29',
+        templateVersion: 4,
+        scores: const {},
+        responses: {
+          'item-1': ChecklistResponseData(
+            itemId: 1,
+            itemKey: 'item-1',
+            status: 'yes',
+            remark: '',
+            finding: null,
+            actionPlan: null,
+            commitmentDate: null,
+            details: {'choice': 'yes'},
+          ),
+        },
+        answeredItems: 1,
+        totalItems: 2,
+        completionPercentage: 50,
+        submittedAt: DateTime(2026, 8, 29, 10, 0),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserChecklistDetailScreen(
+            key: const ValueKey('submitted-checklist'),
+            slug: 'service',
+            repository: submittedRepo,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Read-only user MUST have access to toggle view
+      expect(find.byTooltip('Switch to list view'), findsOneWidget);
+      expect(find.byIcon(Icons.view_list_rounded), findsOneWidget);
+
+      // Can switch to list view even when read-only
+      await tester.tap(find.byTooltip('Switch to list view'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Switch to step-by-step'), findsOneWidget);
+      expect(find.byIcon(Icons.view_carousel_rounded), findsOneWidget);
     },
   );
 }
@@ -1094,8 +1897,34 @@ class _MultiItemChecklistRepository extends _FakeChecklistRepository {
   }
 }
 
+class _EmptyHourlyChecklistRepository extends _FakeChecklistRepository {
+  @override
+  Future<ChecklistLoadResult> fetchChecklist(
+    String slug, {
+    String? date,
+  }) async {
+    final template = _template(slug);
+    return ChecklistLoadResult(
+      template: ChecklistTemplateData(
+        id: template.id,
+        slug: template.slug,
+        name: template.name,
+        description: template.description,
+        version: template.version,
+        settings: const {
+          'validation_mode': 'time_slots',
+          'time_slots': <Map<String, String>>[],
+        },
+        sections: template.sections,
+      ),
+      submission: initialSubmission,
+    );
+  }
+}
+
 class _FakeChecklistRepository implements ChecklistRepository {
   String? savedSlug;
+  Map<String, dynamic>? savedContext;
   List<Map<String, dynamic>> savedResponses = const [];
   String? submittedSlug;
   List<Map<String, dynamic>> submittedResponses = const [];
@@ -1103,6 +1932,7 @@ class _FakeChecklistRepository implements ChecklistRepository {
   List<int>? uploadedBytes;
   String? uploadedFilename;
   ChecklistSubmissionData? initialSubmission;
+  ChecklistApiException? submitError;
 
   @override
   Future<List<ChecklistCatalogItem>> fetchCatalog({String? date}) async {
@@ -1129,8 +1959,10 @@ class _FakeChecklistRepository implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) async {
     savedSlug = slug;
+    savedContext = context;
     savedResponses = responses;
     return _submission(status: 'draft');
   }
@@ -1143,6 +1975,7 @@ class _FakeChecklistRepository implements ChecklistRepository {
   }) async {
     submittedSlug = slug;
     submittedResponses = responses;
+    if (submitError case final error?) throw error;
     return _submission(status: 'submitted');
   }
 
@@ -1194,6 +2027,7 @@ ChecklistTemplateData _template(String slug) {
           {'key': '09:00', 'label': '9:00 AM'},
           {'key': '10:00', 'label': '10:00 AM'},
           {'key': '13:00', 'label': '1:00 PM'},
+          {'key': '16:00', 'label': '4:00 PM'},
           {'key': '23:00', 'label': '11:00 PM'},
         ],
       },
@@ -1217,7 +2051,11 @@ ChecklistTemplateData _template(String slug) {
               key: 'sink-clean',
               prompt: 'Is the sink clean and working properly?',
               sortOrder: 1,
-              metadata: {'number': 2},
+              metadata: {
+                'number': 2,
+                'how_to_check':
+                    'Check sink for clogs, water flow, and soap residue.',
+              },
             ),
           ],
         ),

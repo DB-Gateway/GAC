@@ -151,9 +151,15 @@ class DosSubmissionContractTest extends TestCase
             ->assertViewHas('summarySheet', fn (array $summary): bool => $summary['canSelectUser'] === true
                 && (int) $summary['selectedUserId'] === (int) $manager->id
                 && $summary['selectedUserType'] === User::ROLE_SALES_MANAGER
+                && count($summary['printCoverageOrder']) === 13
                 && (int) $summary['selectedSubmissionId'] === (int) $first->json('submission.id'))
             ->assertSee('id="summaryUserSelect"', false)
-            ->assertSee('Sales Manager &mdash; Sales Manager &mdash; Pasong Tamo', false);
+            ->assertSee('Sales Manager &mdash; Sales Manager &mdash; Pasong Tamo', false)
+            ->assertSee('data-print-template="sales"', false)
+            ->assertSee('data-print-scope="user"', false)
+            ->assertSee('data-print-user-id="'.$manager->id.'"', false)
+            ->assertSee('SALES STANDARDS COMPLIANCE AUDIT FORM FY2025')
+            ->assertSee('Sales Manager:');
 
         // Equivalent aliases/envelopes and datetime separators identify the same submission.
         $payload['responses'][0]['commitment_date'] = '2026-09-30 15:45';
@@ -203,6 +209,8 @@ class DosSubmissionContractTest extends TestCase
 
     public function test_each_aftersales_operational_checker_notifies_active_gm_and_same_branch_bom(): void
     {
+        $this->assertFileExists(public_path('images/mitsubishi-motors-logo.png'));
+
         $gm = $this->user(User::ROLE_ADMINISTRATOR, 'General Manager');
         $bom = $this->user(User::ROLE_BRANCH_OPERATIONS_MANAGER, 'Branch Manager');
         $template = ChecklistTemplate::query()
@@ -214,7 +222,6 @@ class DosSubmissionContractTest extends TestCase
             User::ROLE_JOB_CONTROLLER,
             User::ROLE_PARTS_SUPERVISOR,
             User::ROLE_WORKSHOP_SUPERVISOR,
-            User::ROLE_WORKSHOP,
         ];
         $checkers = collect();
         $answeredItemKeys = collect();
@@ -259,12 +266,20 @@ class DosSubmissionContractTest extends TestCase
                     && $summary['cards']['total_questions'] === $selectedChecker['item_count']
                     && $summary['cards']['answered'] === $selectedChecker['item_count']
                     && $summary['cards']['count_yes'] === $selectedChecker['item_count']
+                    && count($summary['printCoverageOrder']) === 15
                     && $summary['overallSummaryRow']['total'] === $selectedChecker['item_count']
                     && $summary['overallSummaryRow']['score'] === $selectedChecker['item_count']
                     && $summary['coverageSummaryRow']['total'] === $selectedChecker['item_count'];
             })
             ->assertSee('User Audit Score per Criteria')
-            ->assertSee('User Audit Score per Category');
+            ->assertSee('User Audit Score per Category')
+            ->assertSee('data-print-template="aftersales"', false)
+            ->assertSee('data-print-scope="user"', false)
+            ->assertSee('data-print-user-id="'.$selectedChecker['user']->id.'"', false)
+            ->assertSee('AFTERSALES STANDARDS COMPLIANCE AUDIT FORM FY2025')
+            ->assertSee('data-print-coverage="Advance Info to Parts Store"', false)
+            ->assertSee('data-print-assigned="false"', false)
+            ->assertSee('Service Manager:');
 
         $overallAnswered = $answeredItemKeys->unique()->count();
         $this->actingAs($gm)
@@ -275,6 +290,8 @@ class DosSubmissionContractTest extends TestCase
             ]))
             ->assertOk()
             ->assertViewHas('summarySheet', function (array $summary) use ($roles, $overallAnswered): bool {
+                $beyondRow = collect($summary['overallScores'])->firstWhere('category', 'Beyond');
+
                 return $summary['summaryMode'] === 'overall'
                     && $summary['aggregateUserCount'] === count($roles)
                     && $summary['selectedUserId'] === null
@@ -282,12 +299,57 @@ class DosSubmissionContractTest extends TestCase
                     && $summary['cards']['total_questions'] === 75
                     && $summary['cards']['answered'] === $overallAnswered
                     && $summary['cards']['count_yes'] === $overallAnswered
-                    && $summary['overallSummaryRow']['total'] === 75
-                    && $summary['overallSummaryRow']['score'] === $overallAnswered;
+                    && $summary['overallSummaryRow']['total'] === 71
+                    && $summary['overallSummaryRow']['score'] === 71
+                    && $summary['overallSummaryRow']['uses_beyond_bonus'] === true
+                    && $summary['overallSummaryRow']['beyond_total'] === 4
+                    && $summary['overallSummaryRow']['beyond_score'] === 4
+                    && $summary['overallSummaryRow']['beyond_bonus_applied'] === 0
+                    && $beyondRow['target'] === null
+                    && ! in_array($beyondRow['rating'], ['PASS', 'FAIL'], true);
             })
             ->assertSee('Overall Aftersales Score per Criteria')
             ->assertSee('Overall Aftersales Score per Category')
-            ->assertSee('Overall Aftersales');
+            ->assertSee('No rating &middot; Bonus credit', false)
+            ->assertSee('Overall Aftersales')
+            ->assertSee('data-print-scope="overall"', false)
+            ->assertSee('data-print-overall-percent="100.0"', false)
+            ->assertSee('workbook-rating-cell is-neutral', false)
+            ->assertSee('workbook-column-chart', false)
+            ->assertSee('workbook-radar-chart', false);
+
+        $baseItemKeys = $template->items()
+            ->get()
+            ->filter(fn (ChecklistItem $item): bool => strcasecmp(
+                trim((string) data_get($item->metadata, 'level', data_get($item->metadata, 'category', ''))),
+                'Beyond'
+            ) !== 0)
+            ->pluck('key')
+            ->take(16);
+
+        $this->assertSame(16, ChecklistResponse::query()
+            ->whereIn('item_key', $baseItemKeys)
+            ->update(['status' => 'no']));
+
+        $this->actingAs($gm)
+            ->get(route('dashboard', [
+                'form' => 'aftersales',
+                'score_view' => 'overall',
+                'branch' => 'Pasong Tamo',
+            ]))
+            ->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['overallSummaryRow']['base_score'] === 55
+                    && $summary['overallSummaryRow']['base_percent'] === 77.5
+                    && $summary['overallSummaryRow']['beyond_score'] === 4
+                    && $summary['overallSummaryRow']['beyond_bonus_applied'] === 4
+                    && $summary['overallSummaryRow']['beyond_bonus_percentage_points'] === 5.6
+                    && $summary['overallSummaryRow']['score'] === 59
+                    && $summary['overallSummaryRow']['percent'] === 83.1
+                    && $summary['overallSummaryRow']['rating'] === 'PASS';
+            })
+            ->assertSee('data-print-scope="overall"', false)
+            ->assertSee('data-print-overall-percent="83.1"', false);
     }
 
     /**

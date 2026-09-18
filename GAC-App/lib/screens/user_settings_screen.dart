@@ -267,7 +267,11 @@ class _UserSettingsScreenState extends State<UserSettingsScreen>
     setState(() => _sendingTest = kind);
     try {
       final shown = await LocalNotificationService.instance
-          .showTestNotification(kind, leadTimeMinutes: _leadTimeMinutes);
+          .showTestNotification(
+            kind,
+            leadTimeMinutes: _leadTimeMinutes,
+            userType: widget.profile?.userType,
+          );
       if (!mounted) return;
       _showMessage(
         shown
@@ -303,6 +307,9 @@ class _UserSettingsScreenState extends State<UserSettingsScreen>
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width < 380 ? 16.0 : 20.0;
+    final isDosProfile = TaskReminderPlanner.isDosRole(
+      widget.profile?.userType,
+    );
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
@@ -396,11 +403,15 @@ class _UserSettingsScreenState extends State<UserSettingsScreen>
                                   ),
                                   _SettingRow(
                                     icon: Icons.alarm_outlined,
-                                    title: 'Due-time reminders',
-                                    description: 'Get reminded before a checklist becomes overdue.',
+                                    title: isDosProfile
+                                        ? 'Month-end DOS reminder'
+                                        : 'Due-time reminders',
+                                    description: isDosProfile
+                                        ? 'Alert at 8:00 AM on the final calendar day; finish by 11:59 PM.'
+                                        : 'Get reminded before a checklist becomes overdue.',
                                     value: _remindersEnabled,
                                     enabled: !_loadingPreferences,
-                                    action: _remindersEnabled
+                                    action: _remindersEnabled && !isDosProfile
                                         ? InkWell(
                                             onTap: _showReminderLeadTimeModal,
                                             borderRadius: BorderRadius.circular(
@@ -821,7 +832,7 @@ class _UserSettingsScreenState extends State<UserSettingsScreen>
                                           : isSalesService
                                           ? 'Send the pre-shift Sales & Service reminder now to preview it on the Home or lock screen.'
                                           : isDos
-                                          ? 'DOS assignments do not use the Utilities or 5S reminder schedule. Use the background test to verify Android alerts.'
+                                          ? 'Send the month-end DOS reminder now. The live reminder arrives at 8:00 AM on the final calendar day and is due that same day.'
                                           : 'Send the real high-priority reminder now to preview it on the Home or lock screen.';
 
                                       return Column(
@@ -872,6 +883,24 @@ class _UserSettingsScreenState extends State<UserSettingsScreen>
                                                   onPressed: () => unawaited(
                                                     _sendTestNotification(
                                                       TaskReminderKind.shift,
+                                                    ),
+                                                  ),
+                                                ),
+                                              if (isDos)
+                                                _TestNotificationButton(
+                                                  key: const ValueKey(
+                                                    'test-dos-month-end-notification',
+                                                  ),
+                                                  label: 'DOS MONTH-END TEST',
+                                                  loading:
+                                                      _sendingTest ==
+                                                      TaskReminderKind
+                                                          .dosMonthEnd,
+                                                  enabled: _sendingTest == null,
+                                                  onPressed: () => unawaited(
+                                                    _sendTestNotification(
+                                                      TaskReminderKind
+                                                          .dosMonthEnd,
                                                     ),
                                                   ),
                                                 ),

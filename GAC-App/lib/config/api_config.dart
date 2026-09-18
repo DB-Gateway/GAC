@@ -14,6 +14,12 @@ const String gacPreviousUserTypeKey = 'gac_previous_user_type';
 const String gacPreviousAssignmentKey = 'gac_previous_user_assignment';
 const String gacPreviousAssignmentLabelKey =
     'gac_previous_user_assignment_label';
+const String gacPreviousAuthTokenKey = 'gac_previous_auth_token';
+const String gacNotificationTokenKey = 'gac_notification_token';
+const String gacNotificationDeviceIdKey = 'gac_notification_device_id';
+const String gacPreviousUserIdKey = 'gac_previous_user_id';
+const String gacPreviousRememberMeKey = 'gac_previous_remember_me';
+const String gacPreviousBranchKey = 'gac_previous_user_branch';
 const String gacPendingNotificationPayloadKey =
     'gac_pending_notification_payload';
 const String gacSecurityPinKey = 'gac_security_pin';
@@ -24,7 +30,7 @@ const String gacCachedChecklistCatalogKey = 'gac_cached_checklist_catalog';
 
 /// Local checklist data is for deliberate offline/demo builds only. Keeping it
 /// disabled prevents an API failure from looking like a connected checklist
-/// that will later fail when the user tries to submit it to Laravel.
+/// that will later fail when the user tries to submit it to Server.
 const bool gacEnableOfflineChecklistFallback = bool.fromEnvironment(
   'GAC_ENABLE_OFFLINE_CHECKLIST_FALLBACK',
   defaultValue: false,

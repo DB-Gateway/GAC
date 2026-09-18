@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'admin/admin_destination.dart';
@@ -8,11 +10,16 @@ import 'config/api_config.dart';
 import 'index.dart';
 import 'login.dart';
 import 'models/authenticated_user.dart';
+import 'screens/dos_dashboard_screen.dart';
+import 'screens/force_password_change_screen.dart';
 import 'screens/user_notifications_screen.dart';
 import 'screens/user_settings_screen.dart';
 import 'services/local_notification_service.dart';
 import 'services/battery_optimization_service.dart';
 import 'services/session_service.dart';
+import 'services/background_notification_service.dart';
+import 'services/notification_service.dart';
+import 'widgets/escalation_details_dialog.dart';
 import 'theme/gac_theme.dart';
 import 'widgets/admin_tabs_layout.dart';
 import 'widgets/dos_tabs_layout.dart';
@@ -24,16 +31,21 @@ final GlobalKey<ScaffoldMessengerState> gacScaffoldMessengerKey =
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _disableDebugPaintOverlays();
   registerAdminTabRouteHandling();
   registerUserTabRouteHandling();
   String? launchPayload;
   try {
     launchPayload = await LocalNotificationService.instance.initialize(
-      onNotificationTap: _openNotificationPayload,
+      onNotificationTap: openNotificationPayload,
     );
     // Ensure scheduled notifications matching the last logged-in user type are active
     // even before sign-in, after app restart, or when an account has timed out.
     await LocalNotificationService.instance.syncForPreviousUser();
+    // Check for incoming BOM or GM notifications, especially if remember me was on
+    unawaited(LocalNotificationService.instance.syncBomGmNotifications());
+    LocalNotificationService.instance.startTimedOutManagerNotificationPolling();
+    await startBackgroundNotificationPolling();
   } catch (_) {
     // Notification setup must never prevent the audit app from opening.
   }
@@ -49,15 +61,71 @@ Future<void> main() async {
   if (launchPayload != null && launchPayload.isNotEmpty) {
     final pendingPayload = launchPayload;
     WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _openNotificationPayload(pendingPayload),
+      (_) => openNotificationPayload(pendingPayload),
     );
   }
 }
-Future<void> _openNotificationPayload(String encodedPayload) async {
+
+void _disableDebugPaintOverlays() {
+  assert(() {
+    // These can be left enabled by Flutter Inspector between debug runs. They
+    // draw the yellow/green lines beneath every text baseline and are not part
+    // of the application's visual design.
+    debugPaintBaselinesEnabled = false;
+    debugPaintTextLayoutBoxes = false;
+    debugPaintSizeEnabled = false;
+    debugPaintLayerBordersEnabled = false;
+    debugPaintPointersEnabled = false;
+    debugRepaintRainbowEnabled = false;
+    debugRepaintTextRainbowEnabled = false;
+    return true;
+  }());
+}
+
+Future<void> openNotificationPayload(
+  String encodedPayload, {
+  NotificationRepository? notificationRepository,
+}) async {
   final payload = TaskReminderPayload.tryParse(encodedPayload);
   if (payload == null) return;
 
   final preferences = await SharedPreferences.getInstance();
+  await preferences.reload();
+  if (payload.recipientUserId != null &&
+      payload.recipientUserId != preferences.getString(gacPreviousUserIdKey)) {
+    return;
+  }
+  if (payload.event == 'finding_escalated' && payload.notificationId != null) {
+    try {
+      final repository = notificationRepository ?? NotificationApiService();
+      final inbox = await repository.fetchNotifications();
+      final notification = inbox.notifications
+          .where(
+            (item) =>
+                item.id == payload.notificationId &&
+                item.type == 'finding_escalated',
+          )
+          .firstOrNull;
+      if (notification == null) return;
+      final context = gacNavigatorKey.currentState?.overlay?.context;
+      if (context == null || !context.mounted) return;
+      unawaited(
+        repository
+            .markRead(notification.id)
+            .catchError((Object error) => inbox),
+      );
+      await showEscalationDetailsDialog(context, notification);
+    } catch (_) {
+      gacScaffoldMessengerKey.currentState?.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not load this escalation. Check your connection and try again.',
+          ),
+        ),
+      );
+    }
+    return;
+  }
   final rememberMe = preferences.getBool(gacRememberMeKey) ?? false;
   final token = preferences.getString(gacAuthTokenKey);
   final encodedUser = preferences.getString(gacAuthUserKey);
@@ -73,7 +141,8 @@ Future<void> _openNotificationPayload(String encodedPayload) async {
     try {
       final user = AuthenticatedUser.fromJson(jsonDecode(encodedUser));
       final userType = user.userType.trim().toUpperCase();
-      destination = (user.is5sUtilities ||
+      final defaultDestination =
+          (user.is5sUtilities ||
               user.is5sService ||
               user.is5sSales ||
               user.isUtilities ||
@@ -81,9 +150,13 @@ Future<void> _openNotificationPayload(String encodedPayload) async {
               userType == 'PIC' ||
               userType == 'PERSON IN CHARGE')
           ? '/(user)/checklists'
-          : (user.isDosAuditor
-              ? '/(dos)/dashboard'
-              : '/(admin)/dashboard');
+          : (user.isDosAuditor ? '/(dos)/dashboard' : '/(admin)/dashboard');
+      destination =
+          user.isDosAuditor &&
+              (payload.event == 'dos_month_end_due' ||
+                  payload.targetsDosChecklist)
+          ? '/(dos)/audit'
+          : defaultDestination;
     } catch (_) {
       destination = '/login';
     }
@@ -100,11 +173,15 @@ Future<void> _openNotificationPayload(String encodedPayload) async {
     navigator.pushNamedAndRemoveUntil(
       destination,
       (route) => false,
-      arguments: destination == '/(user)/checklists'
+      arguments:
+          destination == '/(user)/checklists' || destination == '/(dos)/audit'
           ? {
               'template_slug': payload.templateSlug,
               'slot_key': payload.slotKey,
               'audit_date': payload.auditDate,
+              'submission_id': payload.submissionId,
+              'item_key': payload.itemKey,
+              'customer_index': payload.customerIndex,
             }
           : null,
     );
@@ -125,9 +202,8 @@ class GacApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: GacTheme.light,
       onGenerateRoute: _routeFor,
-      builder: (context, child) => SessionActivityListener(
-        child: child ?? const SizedBox.shrink(),
-      ),
+      builder: (context, child) =>
+          SessionActivityListener(child: child ?? const SizedBox.shrink()),
     );
   }
 
@@ -159,13 +235,24 @@ class GacApp extends StatelessWidget {
               ? const Duration(milliseconds: 1050)
               : Duration.zero,
           reverseTransitionDuration: const Duration(milliseconds: 250),
-          pageBuilder: (_, animation, secondaryAnimation) =>
-              GatewayLoginScreen(
-                arrivedFromWelcome: arrivedFromWelcome,
-                fromTimeout: fromTimeout,
-              ),
+          pageBuilder: (_, animation, secondaryAnimation) => GatewayLoginScreen(
+            arrivedFromWelcome: arrivedFromWelcome,
+            fromTimeout: fromTimeout,
+          ),
           transitionsBuilder: (_, animation, secondaryAnimation, child) =>
               child,
+        );
+      case '/force-password-change':
+        final arguments = settings.arguments;
+        final data = arguments is Map ? arguments : const {};
+        return MaterialPageRoute<void>(
+          settings: settings,
+          builder: (_) => ForcePasswordChangeScreen(
+            currentPassword: data['currentPassword'] as String?,
+            destination: (data['destination'] as String?) ?? '/login',
+            destinationArguments: data['destinationArguments'],
+            rememberMe: data['rememberMe'] == true,
+          ),
         );
       case '/(user)/home':
         return MaterialPageRoute<void>(
@@ -187,6 +274,15 @@ class GacApp extends StatelessWidget {
                 : null,
             initialChecklistAuditDate: data['audit_date'] is String
                 ? data['audit_date'] as String
+                : null,
+            initialChecklistSubmissionId: data['submission_id'] is num
+                ? (data['submission_id'] as num).toInt()
+                : null,
+            initialChecklistItemKey: data['item_key'] is String
+                ? data['item_key'] as String
+                : null,
+            initialChecklistCustomerIndex: data['customer_index'] is num
+                ? (data['customer_index'] as num).toInt()
                 : null,
           ),
         );
@@ -218,9 +314,32 @@ class GacApp extends StatelessWidget {
           builder: (_) => const DosTabsLayout(),
         );
       case '/(dos)/audit':
+        final arguments = settings.arguments;
+        final data = arguments is Map ? arguments : const {};
+        final templateSlug = data['template_slug'];
+        final initialTrack = templateSlug == 'dealer-operations-standards-sales'
+            ? DosAuditTrack.sales
+            : templateSlug == 'dealer-operations-standards'
+            ? DosAuditTrack.aftersales
+            : null;
         return MaterialPageRoute<void>(
           settings: settings,
-          builder: (_) => const DosTabsLayout(initialIndex: 1),
+          builder: (_) => DosTabsLayout(
+            initialIndex: 1,
+            initialTrack: initialTrack,
+            initialAuditDate: data['audit_date'] is String
+                ? data['audit_date'] as String
+                : null,
+            initialSubmissionId: data['submission_id'] is num
+                ? (data['submission_id'] as num).toInt()
+                : null,
+            initialItemKey: data['item_key'] is String
+                ? data['item_key'] as String
+                : null,
+            initialCustomerIndex: data['customer_index'] is num
+                ? (data['customer_index'] as num).toInt()
+                : null,
+          ),
         );
       case '/(admin)/dashboard':
         return MaterialPageRoute<void>(

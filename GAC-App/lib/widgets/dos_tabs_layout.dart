@@ -26,6 +26,11 @@ class DosTabsLayout extends StatefulWidget {
   const DosTabsLayout({
     this.initialIndex = 0,
     this.initialTrack,
+    this.initialAuditDate,
+    this.initialSubmissionId,
+    this.initialItemKey,
+    this.initialSlotKey,
+    this.initialCustomerIndex,
     this.profileRepository,
     this.notificationController,
     this.checklistRepository,
@@ -34,6 +39,11 @@ class DosTabsLayout extends StatefulWidget {
 
   final int initialIndex;
   final DosAuditTrack? initialTrack;
+  final String? initialAuditDate;
+  final int? initialSubmissionId;
+  final String? initialItemKey;
+  final String? initialSlotKey;
+  final int? initialCustomerIndex;
   final ProfileRepository? profileRepository;
   final UserNotificationController? notificationController;
   final ChecklistRepository? checklistRepository;
@@ -50,8 +60,10 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
   String? _activeCategoryFilter;
   int? _activeSectionIndex;
   int? _activeQuestionIndex;
+  String? _activeItemKey;
   late bool _isViewingAuditDetail;
   bool _hasExplicitlyNavigated = false;
+  bool _hasRequestedReminderPermission = false;
   late final ProfileRepository _profileRepository;
   late final ChecklistRepository _baseChecklistRepository;
   late ChecklistRepository _checklistRepository;
@@ -77,6 +89,7 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
     _isViewingAuditDetail = widget.initialIndex == 1;
     _activeTrack = widget.initialTrack ?? DosAuditTrack.sales;
     _activeAuditSlug = _slugForTrack(_activeTrack);
+    _activeAuditDate = widget.initialAuditDate;
     _profileRepository = widget.profileRepository ?? ProfileApiService();
     _baseChecklistRepository =
         widget.checklistRepository ?? ChecklistApiService();
@@ -88,6 +101,7 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
         widget.notificationController ?? UserNotificationController();
     _ownsNotificationController = widget.notificationController == null;
     _notificationController.addListener(_handleNotificationChange);
+    if (_ownsNotificationController) _notificationController.startPolling();
     unawaited(_loadProfile());
     if (!_notificationController.initialized) {
       unawaited(_notificationController.load());
@@ -140,6 +154,17 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
       }
       _activeAuditSlug = _slugForTrack(_activeTrack);
     });
+    if (profile.isDosAuditor) {
+      final requestPermission = !_hasRequestedReminderPermission;
+      _hasRequestedReminderPermission = true;
+      unawaited(
+        LocalNotificationService.instance.syncForUser(
+          user: profile,
+          checklists: const [],
+          requestPermission: requestPermission,
+        ),
+      );
+    }
   }
 
   void _onTabTapped(int index) {
@@ -174,6 +199,7 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
           },
           profile: _profile,
           controller: _notificationController,
+          checklistRepository: _checklistRepository,
         ),
       ),
     );
@@ -197,7 +223,11 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
     Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
   }
 
-  void _openAssignedAudit(String slug, String auditDate) {
+  void _openAssignedAudit(
+    String slug,
+    String auditDate, [
+    String? initialItemKey,
+  ]) {
     final track = slug == 'dealer-operations-standards-sales'
         ? DosAuditTrack.sales
         : DosAuditTrack.aftersales;
@@ -207,6 +237,8 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
       _activeAuditDate = auditDate;
       _activeCategoryFilter = null;
       _activeSectionIndex = null;
+      _activeQuestionIndex = null;
+      _activeItemKey = initialItemKey;
       _isViewingAuditDetail = true;
       _hasExplicitlyNavigated = true;
       _selectedIndex = 1;
@@ -229,6 +261,8 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
               _isViewingAuditDetail = false;
               _activeCategoryFilter = null;
               _activeSectionIndex = null;
+              _activeQuestionIndex = null;
+              _activeItemKey = null;
             } else {
               _selectedIndex = 0;
             }
@@ -252,8 +286,12 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
                   _isViewingAuditDetail = false;
                   _activeCategoryFilter = null;
                   _activeSectionIndex = null;
+                  _activeQuestionIndex = null;
+                  _activeItemKey = null;
                 }),
                 onOpenChecklist: _openAssignedAudit,
+                onOpenChecklistWithQuestion: (slug, date, slot, itemKey) =>
+                    _openAssignedAudit(slug, date, itemKey),
                 onOpenProfile: () => setState(() => _selectedIndex = 2),
                 onOpenNotifications: _openNotifications,
                 activeTrack: _activeTrack,
@@ -280,6 +318,10 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
                       },
                       initialSectionIndex: _activeSectionIndex,
                       initialQuestionIndex: _activeQuestionIndex,
+                      expectedDraftId: widget.initialSubmissionId,
+                      initialItemKey: _activeItemKey ?? widget.initialItemKey,
+                      initialSlotKey: widget.initialSlotKey,
+                      initialCustomerIndex: widget.initialCustomerIndex,
                       repository: _checklistRepository,
                       auditDate: _activeAuditDate,
                       onBack: () {
@@ -292,6 +334,7 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
                           _activeCategoryFilter = null;
                           _activeSectionIndex = null;
                           _activeQuestionIndex = null;
+                          _activeItemKey = null;
                         });
                       },
                       user: _profile,
@@ -303,8 +346,11 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
                         });
                       },
                       isCurrentTab: _selectedIndex == 1,
+                      onOpenNotifications: _openNotifications,
+                      unreadNotifications: _notificationController.unreadCount,
                     )
                   : UserChecklistsScreen(
+                      isActive: _selectedIndex == 1,
                       key: ValueKey(
                         'dos_checklists_${_activeTrack}_${_activeAuditSlug}_${_profile.userType}',
                       ),
@@ -331,7 +377,12 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
                         });
                       },
                       onOpenCategoryChecklist:
-                          (slug, {categoryFilter, sectionIndex, initialQuestionIndex}) {
+                          (
+                            slug, {
+                            categoryFilter,
+                            sectionIndex,
+                            initialQuestionIndex,
+                          }) {
                             setState(() {
                               _activeAuditSlug = slug;
                               _activeTrack =
@@ -345,6 +396,9 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
                             });
                           },
                       onBack: () => setState(() => _selectedIndex = 0),
+                      onOpenNotifications: _openNotifications,
+                      onOpenProfile: () => setState(() => _selectedIndex = 2),
+                      unreadNotifications: _notificationController.unreadCount,
                     ),
               UserProfileScreen(
                 initialProfile: _profile,
@@ -353,6 +407,8 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
                 onOpenSettings: _openSettings,
                 onSignOut: () => unawaited(_signOut()),
                 onBack: () => setState(() => _selectedIndex = 0),
+                onOpenNotifications: _openNotifications,
+                unreadNotifications: _notificationController.unreadCount,
               ),
             ],
           ),

@@ -345,7 +345,7 @@ return new class extends Migration
                         'prompt' => 'Dedicated MQS bay with complete MQS basic and advanced tools',
                         'metadata' => [
                             'number' => 1, 'level' => 'Standard', 'coverage' => 'Repair Order Processing and Quality of Work',
-                            'subject' => 'Mitsubishi Quick Service', 'checker' => 'WS', 'pic' => 'GM',
+                            'subject' => 'Mitsubishi Quick Service', 'checker' => 'WORKSHOP SUP', 'pic' => 'GM',
                             'bom_task' => 'follow up action plan and monitor compliance',
                             'escalation' => 'GM',
                             'how_to_check' => 'Verify dedicated MQS bay has complete basic and advanced tool sets.',
@@ -356,7 +356,7 @@ return new class extends Migration
                         'prompt' => 'Proper execution of MQS sequence',
                         'metadata' => [
                             'number' => 2, 'level' => 'Standard', 'coverage' => 'Repair Order Processing and Quality of Work',
-                            'subject' => 'Mitsubishi Quick Service', 'checker' => 'WS', 'pic' => 'GM',
+                            'subject' => 'Mitsubishi Quick Service', 'checker' => 'WORKSHOP SUP', 'pic' => 'GM',
                             'bom_task' => 'follow up action plan and monitor compliance',
                             'escalation' => 'GM',
                             'how_to_check' => 'Observe technicians conducting standard MQS sequence.',
@@ -367,7 +367,7 @@ return new class extends Migration
                         'prompt' => 'Check 1 sample of MQS vehicle if within prescribed time',
                         'metadata' => [
                             'number' => 3, 'level' => 'Standard', 'coverage' => 'Repair Order Processing and Quality of Work',
-                            'subject' => 'Mitsubishi Quick Service', 'checker' => 'WS', 'pic' => 'GM',
+                            'subject' => 'Mitsubishi Quick Service', 'checker' => 'WORKSHOP SUP', 'pic' => 'GM',
                             'bom_task' => 'follow up action plan and monitor compliance',
                             'escalation' => 'GM',
                             'how_to_check' => 'Sample 1 MQS job to ensure adherence to promised delivery duration.',
@@ -378,7 +378,7 @@ return new class extends Migration
                         'prompt' => 'MQS technician must be provided with complete QS uniforms',
                         'metadata' => [
                             'number' => 4, 'level' => 'Standard', 'coverage' => 'Repair Order Processing and Quality of Work',
-                            'subject' => 'Mitsubishi Quick Service', 'checker' => 'WS', 'pic' => 'GM',
+                            'subject' => 'Mitsubishi Quick Service', 'checker' => 'WORKSHOP SUP', 'pic' => 'GM',
                             'bom_task' => 'follow up action plan and monitor compliance',
                             'escalation' => 'GM',
                             'how_to_check' => 'Inspect MQS technician uniforms.',

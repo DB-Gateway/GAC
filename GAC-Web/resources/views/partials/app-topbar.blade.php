@@ -29,7 +29,6 @@
         </button>
         <div class="topbar-title">
             <h1>{{ $topbarTitle }}</h1>
-            <p>{{ $topbarSubtitle }}</p>
         </div>
     </div>
 

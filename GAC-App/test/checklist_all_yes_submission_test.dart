@@ -241,6 +241,7 @@ class _SubmissionRepository implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) async {
     draftCalls++;
     for (final response in responses) {

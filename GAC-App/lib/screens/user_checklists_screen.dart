@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 import '../data/admin_data.dart';
 import '../models/authenticated_user.dart';
 import '../models/checklist_models.dart';
 import '../services/checklist_service.dart';
 import '../theme/gac_theme.dart';
+import '../utils/checklist_time_slot.dart';
 import '../widgets/gac_surfaces.dart';
+import '../widgets/user_floating_header.dart';
 import 'dos_dashboard_screen.dart';
 import 'user_checklist_detail_screen.dart';
+import 'user_notifications_screen.dart';
 
 enum _ChecklistFilter { all, sales, service, restroom, dos }
 
@@ -15,19 +20,30 @@ enum _DosViewMode { byCategory, byCoverage, completeAudit }
 
 class UserChecklistsScreen extends StatefulWidget {
   const UserChecklistsScreen({
+    this.isActive = true,
     this.onOpenChecklist,
     this.onOpenCategoryChecklist,
     this.repository,
     this.initialSlug,
     this.initialSlotKey,
     this.initialAuditDate,
+    this.initialSubmissionId,
+    this.initialItemKey,
+    this.initialCustomerIndex,
     this.onBack,
     this.user,
     this.activeTrack,
     this.onTrackChanged,
+    this.now,
+    this.onOpenNotifications,
+    this.onOpenProfile,
+    this.unreadNotifications = 0,
+    this.title,
+    this.subtitle,
     super.key,
   });
 
+  final bool isActive;
   final ValueChanged<String>? onOpenChecklist;
   final void Function(
     String slug, {
@@ -40,10 +56,19 @@ class UserChecklistsScreen extends StatefulWidget {
   final String? initialSlug;
   final String? initialSlotKey;
   final String? initialAuditDate;
+  final int? initialSubmissionId;
+  final String? initialItemKey;
+  final int? initialCustomerIndex;
   final VoidCallback? onBack;
   final AuthenticatedUser? user;
   final DosAuditTrack? activeTrack;
   final ValueChanged<DosAuditTrack>? onTrackChanged;
+  final DateTime Function()? now;
+  final VoidCallback? onOpenNotifications;
+  final VoidCallback? onOpenProfile;
+  final int unreadNotifications;
+  final String? title;
+  final String? subtitle;
 
   @override
   State<UserChecklistsScreen> createState() => _UserChecklistsScreenState();
@@ -55,11 +80,15 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       widget.repository ?? ChecklistApiService();
   List<ChecklistCatalogItem> _checklists = const [];
   ChecklistLoadResult? _dosRecord;
+  ChecklistLoadResult? _docRecord;
   _ChecklistFilter _filter = _ChecklistFilter.all;
   _DosViewMode _dosViewMode = _DosViewMode.byCategory;
+  late final ScrollController _scrollController;
+  bool _topBarExpanded = true;
   DosAuditTrack? _internalTrack;
   bool _loading = true;
   bool _openedInitialChecklist = false;
+  int _requestGeneration = 0;
   String? _error;
 
   bool get _isDosWorkspace {
@@ -210,6 +239,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     } else if (user != null && user.isSalesService5s) {
       _filter = _ChecklistFilter.sales;
     }
+    _scrollController = ScrollController()..addListener(_handleScroll);
     WidgetsBinding.instance.addObserver(this);
     _load();
   }
@@ -243,12 +273,21 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       }
       _dosRecord = null;
       _error = null;
+    }
+
+    if (trackChanged ||
+        userChanged ||
+        repoChanged ||
+        (!oldWidget.isActive && widget.isActive)) {
       _load(showSpinner: false);
     }
   }
 
   @override
   void dispose() {
+    _requestGeneration++;
+    _scrollController.removeListener(_handleScroll);
+    _scrollController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -259,6 +298,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
   }
 
   Future<void> _load({bool showSpinner = true}) async {
+    final generation = ++_requestGeneration;
     if (showSpinner && mounted) {
       setState(() {
         _loading = true;
@@ -266,85 +306,53 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       });
     }
     try {
-      final dateStr = _dateString(DateTime.now());
+      final dateStr = _dateString((widget.now ?? DateTime.now)());
       final checklists = await _repository.fetchCatalog(date: dateStr);
-      final existingSlugs = checklists.map((e) => e.slug).toSet();
-      final updatedChecklists = List<ChecklistCatalogItem>.of(checklists);
+      if (!mounted || generation != _requestGeneration) return;
+      final catalog = checklists
+          .where((e) => e.slug != 'dealer-operations-standards-subform')
+          .toList(growable: false);
+      final updatedChecklists = List<ChecklistCatalogItem>.of(catalog);
       final user = widget.user;
-      if (user != null && user.canAccessSubform) {
-        final (title, count) = switch (user.dosCheckerCode) {
-          'CE SERVICE' => (
-            'Dealer Operations Standards - Subform (Reception & Lounge)',
-            20,
-          ),
-          'WS SUP' => (
-            'Dealer Operations Standards - Subform (Employee Facilities & MQS)',
-            16,
-          ),
-          'ASM' => ('Dealer Operations Standards - Subform (Meeting Room)', 3),
-          _ => (
-            user.isAdmin
-                ? 'Dealer Operations Standards - Subform (All Sections)'
-                : 'Dealer Operations Standards - Subform',
-            user.isAdmin ? 39 : 0,
-          ),
-        };
-        final subformIdx = updatedChecklists.indexWhere(
-          (e) => e.slug == 'dealer-operations-standards-subform',
-        );
-        if (subformIdx >= 0) {
-          if (!user.isAdmin) {
-            final old = updatedChecklists[subformIdx];
-            updatedChecklists[subformIdx] = ChecklistCatalogItem(
-              id: old.id,
-              slug: old.slug,
-              name: title,
-              description: old.description,
-              version: old.version,
-              settings: old.settings,
-              sectionCount: old.sectionCount,
-              itemCount: count,
-              workUnitCount: count,
-              submission: old.submission,
+      ChecklistLoadResult? docRecord;
+      if (user != null && user.canAccessDocumentation) {
+        try {
+          docRecord = await _repository.fetchChecklist(
+            'dealer-operations-standards-documentation',
+            date: dateStr,
+          );
+        } catch (_) {
+          // Fallback gracefully to template
+        }
+      }
+
+      final docIndex = updatedChecklists.indexWhere(
+        (e) => e.slug == 'dealer-operations-standards-documentation',
+      );
+      if (user != null && user.canAccessDocumentation) {
+        if (docIndex >= 0) {
+          if (docRecord?.submission != null) {
+            updatedChecklists[docIndex] = updatedChecklists[docIndex].copyWith(
+              submission: docRecord!.submission,
             );
           }
         } else {
           updatedChecklists.add(
             ChecklistCatalogItem(
-              id: 10,
-              slug: 'dealer-operations-standards-subform',
-              name: title,
+              id: 11,
+              slug: 'dealer-operations-standards-documentation',
+              name: 'Dealer Operations Standards - Documentation',
               description:
-                  'FY2025 Aftersales Standards Compliance Audit Subform Sheet',
+                  'FY2025 Aftersales Standards Compliance Audit Documentation Sheet',
               version: 1,
-              settings: const {'validation_mode': 'dos_subform'},
-              sectionCount: 5,
-              itemCount: count,
-              workUnitCount: count,
-              submission: null,
+              settings: const {'validation_mode': 'dos_documentation'},
+              sectionCount: 3,
+              itemCount: 17,
+              workUnitCount: 17,
+              submission: docRecord?.submission,
             ),
           );
         }
-      }
-      if (user != null &&
-          user.canAccessDocumentation &&
-          !existingSlugs.contains(
-            'dealer-operations-standards-documentation',
-          )) {
-        updatedChecklists.add(
-          const ChecklistCatalogItem(
-            id: 11,
-            slug: 'dealer-operations-standards-documentation',
-            name: 'Dealer Operations Standards - Documentation',
-            description: 'FY2025 Aftersales Standards Compliance Audit Documentation Sheet',
-            version: 1,
-            settings: {'validation_mode': 'dos_documentation'},
-            sectionCount: 3,
-            itemCount: 17,
-            workUnitCount: 17,
-            submission: null,
-          ),
-        );
       }
       ChecklistLoadResult? dosRecord;
       try {
@@ -355,22 +363,23 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       } catch (_) {
         // Fallback gracefully to template
       }
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _checklists = updatedChecklists;
         _dosRecord = dosRecord;
+        _docRecord = docRecord;
         _loading = false;
         _error = null;
       });
       _openInitialChecklist(updatedChecklists);
     } on ChecklistApiException catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _loading = false;
         _error = error.message;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _loading = false;
         _error = 'The checklists could not be loaded from Laravel.';
@@ -398,6 +407,9 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
           target!,
           initialSlotKey: widget.initialSlotKey,
           auditDate: widget.initialAuditDate,
+          expectedDraftId: widget.initialSubmissionId,
+          initialItemKey: widget.initialItemKey,
+          initialCustomerIndex: widget.initialCustomerIndex,
         );
       }
     });
@@ -408,22 +420,54 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     String? initialSlotKey,
     String? auditDate,
     int? initialQuestionIndex,
+    int? expectedDraftId,
+    String? initialItemKey,
+    int? initialCustomerIndex,
   }) async {
+    final submission = checklist.submission;
+    final target =
+        submission != null &&
+            !submission.isSubmitted &&
+            (submission.effectiveAnsweredItems > 0 ||
+                (submission.completionPercentage ?? 0) > 0)
+        ? _latestResumeTarget(_visibleChecklists)
+        : null;
+    final resolvedChecklist = target ?? checklist;
+    final resolvedSubmission = resolvedChecklist.submission;
+    final isContinuing =
+        resolvedSubmission != null &&
+        !resolvedSubmission.isSubmitted &&
+        resolvedSubmission.hasStarted;
+    final resolvedSlotKey =
+        initialSlotKey ??
+        (isContinuing
+            ? checklistSlotForLocalTime(
+                resolvedChecklist,
+                (widget.now ?? DateTime.now)(),
+              )
+            : null);
+
     final callback = widget.onOpenChecklist;
     if (callback != null) {
-      callback(checklist.slug);
+      callback(resolvedChecklist.slug);
       return;
     }
 
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => UserChecklistDetailScreen(
-          slug: checklist.slug,
+          slug: resolvedChecklist.slug,
           repository: _repository,
-          initialSlotKey: initialSlotKey,
+          initialSlotKey: resolvedSlotKey,
           initialQuestionIndex: initialQuestionIndex,
+          expectedDraftId: expectedDraftId,
+          initialItemKey: initialItemKey,
+          initialCustomerIndex: initialCustomerIndex,
           auditDate: auditDate,
           user: widget.user,
+          nowProvider: widget.now,
+          onOpenNotifications: widget.onOpenNotifications,
+          unreadNotifications: widget.unreadNotifications,
         ),
       ),
     );
@@ -467,6 +511,8 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
           auditDate: widget.initialAuditDate,
           user: widget.user,
           activeTrack: _effectiveTrack,
+          onOpenNotifications: widget.onOpenNotifications,
+          unreadNotifications: widget.unreadNotifications,
         ),
       ),
     );
@@ -808,6 +854,104 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     };
   }
 
+  ChecklistCatalogItem? _latestResumeTarget(List<ChecklistCatalogItem> tasks) {
+    final candidates = tasks
+        .where((task) {
+          final submission = task.submission;
+          if (submission == null || submission.isSubmitted) return false;
+          final total = (submission.totalItems ?? 0) > 0
+              ? submission.totalItems!
+              : task.totalWorkUnits;
+          final answered = submission.effectiveAnsweredItems;
+          return (answered > 0 || (submission.completionPercentage ?? 0) > 0) &&
+              (total == 0 || answered < total);
+        })
+        .toList(growable: false);
+
+    if (candidates.isEmpty) return null;
+
+    candidates.sort((left, right) {
+      final leftAnswered = left.submission!.effectiveAnsweredItems;
+      final rightAnswered = right.submission!.effectiveAnsweredItems;
+      final leftTotal = (left.submission!.totalItems ?? 0) > 0
+          ? left.submission!.totalItems!
+          : left.totalWorkUnits;
+      final rightTotal = (right.submission!.totalItems ?? 0) > 0
+          ? right.submission!.totalItems!
+          : right.totalWorkUnits;
+      final leftProgress = leftTotal == 0
+          ? left.submission!.completionPercentage ?? 0
+          : (leftAnswered / leftTotal) * 100;
+      final rightProgress = rightTotal == 0
+          ? right.submission!.completionPercentage ?? 0
+          : (rightAnswered / rightTotal) * 100;
+
+      final progressDelta = rightProgress.compareTo(leftProgress);
+      if (progressDelta != 0) return progressDelta;
+      return rightAnswered.compareTo(leftAnswered);
+    });
+
+    return candidates.first;
+  }
+
+  void _handleScroll() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.userScrollDirection == ScrollDirection.idle &&
+        position.pixels > 8) {
+      return;
+    }
+
+    final shouldExpand =
+        position.pixels <= 8 ||
+        position.userScrollDirection == ScrollDirection.forward;
+    if (shouldExpand == _topBarExpanded) return;
+    setState(() => _topBarExpanded = shouldExpand);
+  }
+
+  void _scrollToTop() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _handleOpenNotifications() {
+    if (widget.onOpenNotifications != null) {
+      widget.onOpenNotifications!();
+      return;
+    }
+    if (widget.user != null) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => UserNotificationsScreen(
+            profile: widget.user!,
+            onOpenProfile: widget.onOpenProfile ?? () {},
+            onGoHome: () => Navigator.of(context).pop(),
+            onOpenSettings: () {},
+          ),
+        ),
+      );
+    }
+  }
+
+  String get _headerTitle {
+    if (widget.title != null) return widget.title!;
+    if (_isDosWorkspace) {
+      return _effectiveTrack == DosAuditTrack.sales
+          ? 'Sales Audit'
+          : 'Aftersales Audit';
+    }
+    return 'Checklists';
+  }
+
+  String? get _headerSubtitle {
+    if (widget.subtitle != null) return widget.subtitle;
+    return 'Audit Compliance App';
+  }
+
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
@@ -818,37 +962,70 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
         ? (24 + bottomClearance)
         : (78 + 28 + bottomClearance);
 
-    return GacScreenBackground(
-      child: SafeArea(
-        bottom: false,
-        child: RefreshIndicator(
-          onRefresh: () => _load(showSpinner: false),
-          child: ListView(
-            key: const PageStorageKey<String>('user-checklist-scroll'),
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            physics: const AlwaysScrollableScrollPhysics(
-              parent: BouncingScrollPhysics(),
-            ),
-            padding: EdgeInsets.fromLTRB(
-              horizontalPadding,
-              24,
-              horizontalPadding,
-              bottomPadding,
-            ),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light.copyWith(
+        statusBarColor: GacColors.canvas,
+        systemNavigationBarColor: GacColors.canvas,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarIconBrightness: Brightness.light,
+      ),
+      child: GacScreenBackground(
+        child: SafeArea(
+          bottom: false,
+          child: Stack(
             children: [
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 620),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _ChecklistIntro(onBack: widget.onBack),
-                      const SizedBox(height: 19),
-                      _buildFilters(),
-                      const SizedBox(height: 15),
-                      _buildContent(),
-                    ],
+              RefreshIndicator(
+                edgeOffset: UserChecklistFloatingHeader.extent,
+                onRefresh: () => _load(showSpinner: false),
+                child: ListView(
+                  key: const PageStorageKey<String>('user-checklist-scroll'),
+                  controller: _scrollController,
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics(),
                   ),
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    UserChecklistFloatingHeader.extent + 12,
+                    horizontalPadding,
+                    bottomPadding,
+                  ),
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 620),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const _ChecklistIntro(),
+                            const SizedBox(height: 19),
+                            _buildFilters(),
+                            const SizedBox(height: 15),
+                            _buildContent(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: UserChecklistFloatingHeader.extent,
+                child: UserChecklistFloatingHeader(
+                  expanded: _topBarExpanded,
+                  user: widget.user,
+                  title: _headerTitle,
+                  subtitle: _headerSubtitle,
+                  fontFamily: 'EurostileExtendedBlack',
+                  onBack: widget.onBack,
+                  onOpenProfile: widget.onOpenProfile,
+                  onOpenNotifications: _handleOpenNotifications,
+                  onTapTitle: _scrollToTop,
+                  unreadNotifications: widget.unreadNotifications,
                 ),
               ),
             ],
@@ -951,10 +1128,12 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     }
 
     if (_dosViewMode == _DosViewMode.byCoverage) {
-      final validItems = visible.where((item) {
-        final total = item.submission?.totalItems ?? item.itemCount;
-        return total > 0;
-      }).toList(growable: false);
+      final validItems = visible
+          .where((item) {
+            final total = item.submission?.totalItems ?? item.itemCount;
+            return total > 0;
+          })
+          .toList(growable: false);
 
       if (validItems.isEmpty) {
         return const _ChecklistEmpty();
@@ -990,10 +1169,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       final stats = _computeItemCategoryStats(item);
       if (stats.total > 0) {
         cards.add(
-          _DosCategoryCard(
-            stats: stats,
-            onPressed: () => _openChecklist(item),
-          ),
+          _DosCategoryCard(stats: stats, onPressed: () => _openChecklist(item)),
         );
       }
     }
@@ -1170,60 +1346,29 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     );
   }
 
-  _DosCategoryStats _computeSubformStats() {
-    final user = widget.user;
-    final checker = user?.dosCheckerCode ?? '';
-
-    final (String title, String subtitle, int total) = switch (checker) {
-      'CE SERVICE' => (
-        'Subform Sheet — Service Reception & Lounge',
-        'Service Reception & Delivery (9) and Customer Lounge (11) standards compliance audit.',
-        20,
-      ),
-      'WS SUP' => (
-        'Subform Sheet — Employee Facilities & MQS',
-        'Employee Facilities (12) and Mitsubishi Quick Service (4) standards compliance audit.',
-        16,
-      ),
-      'ASM' => (
-        'Subform Sheet — Meeting Room',
-        'Meeting and conference room facilities standards compliance audit (3 standards).',
-        3,
-      ),
-      _ =>
-        (user == null || user.isAdmin)
-            ? (
-                'Subform Sheet — All Aftersales Sections',
-                'FY2025 Subform Standards Compliance Audit (39 standards across 5 sections).',
-                39,
-              )
-            : (
-                'Subform Sheet',
-                'Assigned subform standards compliance audit.',
-                0,
-              ),
-    };
+  _DosCategoryStats _computeDocumentationStats() {
+    final submission = _docRecord?.submission ??
+        _checklists
+            .where((e) => e.slug == 'dealer-operations-standards-documentation')
+            .firstOrNull
+            ?.submission;
+    final isSubmitted = submission?.isSubmitted ?? false;
+    final total = _docRecord?.template.sections
+            .fold<int>(0, (sum, sec) => sum + sec.items.length) ??
+        17;
+    final answered =
+        isSubmitted ? total : (submission?.effectiveAnsweredItems ?? 0);
 
     return _DosCategoryStats(
-      category: 'SUBFORM AUDIT',
-      title: title,
-      subtitle: subtitle,
-      total: total,
-      answered: 0,
-      accentColor: const Color(0xFF10B981),
-      icon: Icons.checklist_rounded,
-    );
-  }
-
-  _DosCategoryStats _computeDocumentationStats() {
-    return const _DosCategoryStats(
-      category: 'DOCUMENTATION AUDIT',
+      category: 'DOCUMENTATION AUDIT (OPTIONAL)',
       title: 'Documentation Sheet — Customer Repair Orders',
-      subtitle: 'Multi-customer audit: Rationalized Checksheet (11), Repair Order (3), and Service Invoice (3).',
-      total: 17,
-      answered: 0,
-      accentColor: Color(0xFF06B6D4),
+      subtitle:
+          'Multi-customer audit: Rationalized Checksheet (11), Repair Order (3), and Service Invoice (3). Optional audit.',
+      total: total,
+      answered: answered,
+      accentColor: const Color(0xFF06B6D4),
       icon: Icons.description_rounded,
+      completedLabel: 'Submitted',
     );
   }
 
@@ -1311,8 +1456,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     final basicStats = _computeCategoryStats(
       category: 'BASIC',
       title: 'Basic Standards Checklist',
-      subtitle:
-          'Mandatory baseline standards required for full operational compliance (100% required).',
+      subtitle: 'Mandatory baseline standards required for full operational compliance (100% required).',
       accentColor: const Color(0xFF06B6D4),
       icon: Icons.verified_user_rounded,
     );
@@ -1320,8 +1464,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     final standardStats = _computeCategoryStats(
       category: 'STANDARD',
       title: 'Standard Standards Checklist',
-      subtitle:
-          'Core operational benchmarks and day-to-day dealership process standards (80% target).',
+      subtitle: 'Core operational benchmarks and day-to-day dealership process standards (80% target).',
       accentColor: const Color(0xFF8B5CF6),
       icon: Icons.fact_check_rounded,
     );
@@ -1329,8 +1472,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     final beyondStats = _computeCategoryStats(
       category: 'BEYOND',
       title: 'Beyond Standards Checklist',
-      subtitle:
-          'Bonus excellence standards showcasing premium customer care and top performance.',
+      subtitle: 'Bonus excellence standards showcasing premium customer care and top performance.',
       accentColor: const Color(0xFFF59E0B),
       icon: Icons.military_tech_rounded,
     );
@@ -1746,30 +1888,16 @@ class _DosSectionCard extends StatelessWidget {
 }
 
 class _ChecklistIntro extends StatelessWidget {
-  const _ChecklistIntro({this.onBack});
+  const _ChecklistIntro() : onBack = null;
 
   final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (onBack != null) ...[
-          IconButton(
-            key: const ValueKey('checklist-back-button'),
-            tooltip: 'Back to home',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            icon: const Icon(
-              Icons.arrow_back_rounded,
-              color: GacColors.textPrimary,
-            ),
-            onPressed: onBack,
-          ),
-          const SizedBox(height: 12),
-        ],
-        const Text(
+        Text(
           'ASSIGNED WORK',
           style: TextStyle(
             color: GacColors.gray,
@@ -1778,8 +1906,8 @@ class _ChecklistIntro extends StatelessWidget {
             letterSpacing: 1.7,
           ),
         ),
-        const SizedBox(height: 6),
-        const Text(
+        SizedBox(height: 6),
+        Text(
           'My checklists',
           style: TextStyle(
             color: GacColors.black,
@@ -1789,8 +1917,8 @@ class _ChecklistIntro extends StatelessWidget {
             letterSpacing: -0.7,
           ),
         ),
-        const SizedBox(height: 7),
-        const Text(
+        SizedBox(height: 7),
+        Text(
           'These checklists are loaded live from the compliance database. Pull down to fetch administrator updates.',
           style: TextStyle(color: GacColors.gray, fontSize: 11, height: 1.55),
         ),
@@ -2170,6 +2298,7 @@ IconData _categoryIcon(String slug) => switch (slug) {
   'gateway-5s' => Icons.auto_awesome_outlined,
   'dealer-operations-standards' ||
   'dealer-operations-standards-sales' => Icons.assignment_outlined,
+  'dealer-operations-standards-documentation' => Icons.description_rounded,
   'restroom' || 'utilities' => Icons.cleaning_services_rounded,
   _ => Icons.checklist_rounded,
 };

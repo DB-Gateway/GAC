@@ -68,10 +68,9 @@ return new class extends Migration
     {
         return match (true) {
             in_array($number, [28, 30, 31, 32, 33, 34, 64, 66, 74], true) => 'CE SERVICE',
-            in_array($number, [39, 43, 45, 46, 47, 48, 49, 51, 52, 53, 65], true) => 'WS',
+            in_array($number, [36, 39, 43, 45, 46, 47, 48, 49, 51, 52, 53, 65], true) => 'WORKSHOP SUP',
             in_array($number, [40, 41, 42], true) => 'Parts Supervisor',
             $number === 38 => 'JC',
-            $number === 36 => 'WORKSHOP SUP',
             default => 'ASM',
         };
     }

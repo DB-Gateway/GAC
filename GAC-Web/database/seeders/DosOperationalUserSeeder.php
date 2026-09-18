@@ -46,11 +46,6 @@ class DosOperationalUserSeeder extends Seeder
             'email' => 'ws.sup@gateway.com',
             'role' => User::ROLE_WORKSHOP_SUPERVISOR,
         ],
-        [
-            'name' => 'Workshop',
-            'email' => 'ws@gateway.com',
-            'role' => User::ROLE_WORKSHOP,
-        ],
     ];
 
     public function run(): void
@@ -112,7 +107,7 @@ class DosOperationalUserSeeder extends Seeder
         }
 
         $this->command?->info(sprintf(
-            'Ensured seven DOS operational accounts (%d created, %d reused). Existing passwords and account state were preserved.',
+            'Ensured six DOS operational accounts (%d created, %d reused). Existing passwords and account state were preserved.',
             $created,
             $reused
         ));

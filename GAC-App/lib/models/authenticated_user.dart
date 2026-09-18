@@ -4,11 +4,28 @@
 /// existing accounts keep working while the server data is migrated.
 String normalizeUserType(String userType) {
   final trimmed = userType.trim();
+  final compact = trimmed
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^A-Z0-9]+'), '')
+      .trim();
   final normalized = trimmed
       .toUpperCase()
       .replaceAll(RegExp(r'[^A-Z0-9]+'), ' ')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
+
+  final isWorkshopSupAlias = const {
+    'WS',
+    'WORKSHOP',
+    'WSUP',
+    'WSSUP',
+    'WORKSHOPSUP',
+    'WORKSHOPSUPERVISOR',
+    'WORSHOPSUP',
+    'WORSHOPSUPERVISOR',
+  }.contains(compact);
+
+  if (isWorkshopSupAlias) return 'WS SUP';
 
   return switch (normalized) {
     'WS' ||
@@ -33,6 +50,7 @@ class AuthenticatedUser {
     this.picAssignmentType,
     this.picAssignmentLabel,
     this.avatarUrl,
+    this.mustChangePassword = false,
   });
 
   final int id;
@@ -44,6 +62,7 @@ class AuthenticatedUser {
   final String? picAssignmentLabel;
   final String accountStatus;
   final String? avatarUrl;
+  final bool mustChangePassword;
 
   String get canonicalUserType => normalizeUserType(userType);
 
@@ -371,7 +390,7 @@ class AuthenticatedUser {
 
   factory AuthenticatedUser.fromJson(Object? value) {
     if (value is! Map) {
-      throw const FormatException('Laravel returned invalid profile data.');
+      throw const FormatException('Server returned invalid profile data.');
     }
     final data = <String, dynamic>{
       for (final entry in value.entries)
@@ -385,14 +404,14 @@ class AuthenticatedUser {
         name is! String ||
         email is! String ||
         userType is! String) {
-      throw const FormatException('Laravel returned invalid profile data.');
+      throw const FormatException('Server returned invalid profile data.');
     }
 
     String? optionalString(String key) {
       final raw = data[key];
       if (raw == null) return null;
       if (raw is! String) {
-        throw FormatException('Laravel returned an invalid $key.');
+        throw FormatException('Server returned an invalid $key.');
       }
       final normalized = raw.trim();
       return normalized.isEmpty ? null : normalized;
@@ -408,6 +427,7 @@ class AuthenticatedUser {
       picAssignmentLabel: optionalString('pic_assignment_label'),
       accountStatus: optionalString('account_status') ?? 'active',
       avatarUrl: optionalString('avatar_url'),
+      mustChangePassword: data['must_change_password'] == true,
     );
   }
 
@@ -421,18 +441,35 @@ class AuthenticatedUser {
     'pic_assignment_label': picAssignmentLabel,
     'account_status': accountStatus,
     'avatar_url': avatarUrl,
+    'must_change_password': mustChangePassword,
   };
 }
 
 String? canonicalDosChecker(String? checker) {
   if (checker == null) return null;
 
+  final compact = checker.trim().toUpperCase().replaceAll(
+    RegExp(r'[^A-Z0-9]+'),
+    '',
+  );
   final normalized = normalizeUserType(checker)
       .trim()
       .toUpperCase()
       .replaceAll('_', ' ')
       .replaceAll('.', ' ')
       .replaceAll(RegExp(r'\s+'), ' ');
+
+  if (const {
+    'WS',
+    'WSUP',
+    'WORKSHOP',
+    'WORKSHOPSUP',
+    'WORKSHOPSUPERVISOR',
+    'WORSHOPSUP',
+    'WORSHOPSUPERVISOR',
+  }.contains(compact)) {
+    return 'WS SUP';
+  }
 
   return switch (normalized) {
     'SM' || 'SALES MANAGER' || 'SALES MGR' => 'SALES MANAGER',

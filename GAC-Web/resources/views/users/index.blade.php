@@ -10,12 +10,21 @@
             'title' => 'Password changed successfully',
             'message' => 'The new password is active and existing mobile access tokens were signed out.',
         ],
+        'User account created with the default password.' => [
+            'title' => 'User created successfully',
+            'message' => 'The account is active with the default password (Gateway@2026). The user will be asked to change it on first login.',
+        ],
+        'Password reset to the default. The user will be asked to change it on next login.' => [
+            'title' => 'Password reset successfully',
+            'message' => 'The password has been reset to the default (Gateway@2026). The user will be prompted to change it on their next login.',
+        ],
         default => null,
     };
 @endphp
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    @include('partials.browser-push-head')
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#F5F6F8">
@@ -160,6 +169,10 @@
                                                     <input type="hidden" name="account_status" value="{{ $user->account_status === 'active' ? 'inactive' : 'active' }}">
                                                     <button class="button" type="submit">{{ $user->account_status === 'active' ? 'Deactivate' : 'Activate' }}</button>
                                                 </form>
+                                                <form method="POST" action="{{ route('users.password.reset', $user) }}" style="margin-top:8px" onsubmit="return confirm('Reset this user\'s password to the default (Gateway@2026)? They will be required to change it on next login.')">
+                                                    @csrf
+                                                    <button class="button" type="submit"><i class="fas fa-arrow-rotate-left" style="margin-right:4px"></i>Reset to Default Password</button>
+                                                </form>
                                             @endif
                                         </td>
                                     @endif
@@ -203,16 +216,17 @@
                         <div class="field"><label for="userBranchInput">Branch</label><select id="userBranchInput" name="branch" required>@foreach ($branches as $branch)<option value="{{ $branch }}" @selected(old('branch', auth()->user()->branch) === $branch)>{{ $branch }}</option>@endforeach</select></div>
                         <div class="field"><label for="userStatusInput">Account Status</label><select id="userStatusInput" name="account_status"><option value="active">Active</option><option value="pending">Pending</option><option value="inactive">Inactive</option></select></div>
                         <div class="field full">
-                            <label for="userPasswordInput">Temporary Password</label>
+                            <label for="userPasswordInput">Default Password</label>
                             <div class="password-input">
-                                <input id="userPasswordInput" name="password" type="password" minlength="8" autocomplete="new-password" required>
-                                <button class="password-toggle" type="button" data-password-toggle aria-controls="userPasswordInput" aria-label="Show temporary password" aria-pressed="false"><i class="fas fa-eye" aria-hidden="true"></i><span>Show</span></button>
+                                <input id="userPasswordInput" name="password" type="password" value="Gateway@2026" readonly minlength="8" autocomplete="new-password" required style="background:#f0f4f8;font-family:monospace;font-weight:600">
+                                <button class="password-toggle" type="button" data-password-toggle aria-controls="userPasswordInput" aria-label="Show default password" aria-pressed="false"><i class="fas fa-eye" aria-hidden="true"></i><span>Show</span></button>
                             </div>
+                            <small style="color:#64748b;margin-top:6px;display:block"><i class="fas fa-info-circle" style="margin-right:4px"></i>Preset default password is "Gateway@2026". The user will be required to change it on their first login.</small>
                         </div>
-                        <div class="field full">
+                        <div class="field full" style="display:none">
                             <label for="userPasswordConfirmationInput">Confirm Password</label>
                             <div class="password-input">
-                                <input id="userPasswordConfirmationInput" name="password_confirmation" type="password" minlength="8" autocomplete="new-password" required>
+                                <input id="userPasswordConfirmationInput" name="password_confirmation" type="password" value="Gateway@2026" readonly minlength="8" autocomplete="new-password" required>
                                 <button class="password-toggle" type="button" data-password-toggle aria-controls="userPasswordConfirmationInput" aria-label="Show password confirmation" aria-pressed="false"><i class="fas fa-eye" aria-hidden="true"></i><span>Show</span></button>
                             </div>
                         </div>
@@ -269,14 +283,40 @@
             modal?.setAttribute('aria-hidden', 'true');
         }));
         modal?.addEventListener('click', (event) => { if (event.target === modal) event.currentTarget.querySelector('[data-close-modal]')?.click(); });
+        const sidebar = document.getElementById('sidebar');
+        const mainShell = document.getElementById('mainShell');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+
+        const setDesktopSidebarCollapsed = (collapsed) => {
+            if (!sidebar || !mainShell || !sidebarToggle) return;
+
+            sidebar.classList.toggle('desktop-collapsed', collapsed);
+            mainShell.classList.toggle('sidebar-collapsed', collapsed);
+            sidebarToggle.classList.toggle('is-active', collapsed);
+            sidebarToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            sidebarToggle.setAttribute('aria-label', collapsed ? 'Expand navigation' : 'Collapse navigation');
+            const icon = sidebarToggle.querySelector('i');
+            if (icon) icon.className = collapsed ? 'fas fa-angles-right' : 'fas fa-angles-left';
+            localStorage.setItem('gatewaySidebarCollapsed', collapsed ? '1' : '0');
+        };
+
+        sidebarToggle?.addEventListener('click', () => {
+            setDesktopSidebarCollapsed(!sidebar?.classList.contains('desktop-collapsed'));
+        });
+
         document.getElementById('mobileMenuButton')?.addEventListener('click', () => {
-            document.getElementById('sidebar')?.classList.add('mobile-open', 'open');
-            document.getElementById('sidebarBackdrop')?.classList.add('visible', 'open');
+            sidebar?.classList.add('mobile-open', 'open');
+            sidebarBackdrop?.classList.add('visible', 'open');
         });
-        document.getElementById('sidebarBackdrop')?.addEventListener('click', () => {
-            document.getElementById('sidebar')?.classList.remove('mobile-open', 'open');
-            document.getElementById('sidebarBackdrop')?.classList.remove('visible', 'open');
+        sidebarBackdrop?.addEventListener('click', () => {
+            sidebar?.classList.remove('mobile-open', 'open');
+            sidebarBackdrop?.classList.remove('visible', 'open');
         });
+
+        if (localStorage.getItem('gatewaySidebarCollapsed') === '1' && window.innerWidth > 900) {
+            setDesktopSidebarCollapsed(true);
+        }
     </script>
 
     @include('partials.notifications-modal')

@@ -19,9 +19,28 @@ class NotificationController extends Controller
             ->notifications()
             ->get();
 
+        $escalationIds = $notifications
+            ->filter(fn (DatabaseNotification $n) => data_get($n->data, 'event') === 'finding_escalated')
+            ->pluck('id')
+            ->map(fn ($id) => (string) $id)
+            ->all();
+
+        $followedUpIds = ! empty($escalationIds)
+            ? \App\Models\Report::where('type', 'escalation_follow_up')
+                ->where('generated_by_user_id', $request->user()->getKey())
+                ->get(['data_snapshot'])
+                ->map(fn ($r) => (string) data_get($r->data_snapshot, 'source_notification_id'))
+                ->filter()
+                ->flip()
+                ->all()
+            : [];
+
         return response()->json([
             'notifications' => $notifications
-                ->map(fn (DatabaseNotification $notification): array => $this->payload($notification))
+                ->map(fn (DatabaseNotification $notification): array => $this->payload(
+                    $notification,
+                    isset($followedUpIds[(string) $notification->getKey()])
+                ))
                 ->values(),
             'unread_count' => $notifications
                 ->filter(fn (DatabaseNotification $notification): bool => $notification->unread())
@@ -81,13 +100,24 @@ class NotificationController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function payload(DatabaseNotification $notification): array
+    private function payload(DatabaseNotification $notification, ?bool $hasReportFollowUp = null): array
     {
         $data = is_array($notification->data) ? $notification->data : [];
         $type = trim((string) ($data['event'] ?? ''));
 
         if ($type === '') {
             $type = Str::snake(class_basename($notification->type));
+        }
+
+        if ($type === 'finding_escalated' && ! isset($data['has_follow_up'])) {
+            if ($hasReportFollowUp !== null) {
+                $data['has_follow_up'] = $hasReportFollowUp;
+            } else {
+                $data['has_follow_up'] = \App\Models\Report::where('type', 'escalation_follow_up')
+                    ->where('generated_by_user_id', $notification->notifiable_id)
+                    ->where('data_snapshot->source_notification_id', (string) $notification->getKey())
+                    ->exists();
+            }
         }
 
         $title = trim((string) ($data['title'] ?? ''));

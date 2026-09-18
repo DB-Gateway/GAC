@@ -19,6 +19,7 @@ dependencies:
   shared_preferences: ^2.5.5
   timezone: ^0.11.1
   web: ^1.1.1
+  workmanager: ^0.10.10
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -26,6 +27,11 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: EurostileExtendedBlack
+      fonts:
+        - asset: assets/fonts/EurostileExtendedBlack.ttf
+          weight: 900
   assets:
     - assets/images/Gateway_logo_circle.png
     - assets/images/G-logo-no-bg.png

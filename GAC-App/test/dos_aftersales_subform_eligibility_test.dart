@@ -66,6 +66,7 @@ class _FakeDosAftersalesRepository implements ChecklistRepository {
     String slug, {
     required String date,
     required List<Map<String, dynamic>> responses,
+    Map<String, dynamic>? context,
   }) async {
     savedResponses = responses;
     return ChecklistSubmissionData(

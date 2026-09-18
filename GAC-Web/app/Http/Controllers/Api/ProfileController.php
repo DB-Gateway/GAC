@@ -42,12 +42,15 @@ class ProfileController extends Controller
 
     public function updatePassword(UpdatePasswordRequest $request): JsonResponse
     {
-        $request->user()->update([
+        $user = $request->user();
+        $user->update([
             'password' => Hash::make($request->validated('password')),
+            'must_change_password' => false,
         ]);
 
         return response()->json([
             'message' => 'Password updated successfully.',
+            'user' => UserResource::make($user->fresh())->resolve($request),
         ]);
     }
 

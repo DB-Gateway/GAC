@@ -308,7 +308,8 @@ return new class extends Migration
         $checker = trim($checker);
 
         return match (strtoupper($checker)) {
-            'WORSHOP SUP', 'WORKSHOP SUP' => 'WORKSHOP SUP',
+            'WS', 'WS SUP', 'WORKSHOP', 'WORSHOP SUP',
+            'WORKSHOP SUP', 'WORKSHOP SUPERVISOR' => 'WORKSHOP SUP',
             default => $checker,
         };
     }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -21,6 +22,8 @@ class UserProfileScreen extends StatefulWidget {
     this.onOpenSettings,
     this.onSignOut,
     this.onBack,
+    this.onOpenNotifications,
+    this.unreadNotifications = 0,
     this.welcomeRoute = '/',
     super.key,
   });
@@ -32,6 +35,8 @@ class UserProfileScreen extends StatefulWidget {
   final VoidCallback? onOpenSettings;
   final VoidCallback? onSignOut;
   final VoidCallback? onBack;
+  final VoidCallback? onOpenNotifications;
+  final int unreadNotifications;
   final String welcomeRoute;
 
   @override
@@ -41,6 +46,8 @@ class UserProfileScreen extends StatefulWidget {
 class _UserProfileScreenState extends State<UserProfileScreen> {
   late ProfileRepository _repository;
   late AuthenticatedUser _profile;
+  late final ScrollController _scrollController;
+  bool _topBarExpanded = true;
   bool _loading = true;
   bool _avatarBusy = false;
   String? _error;
@@ -51,6 +58,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _repository = widget.repository ?? ProfileApiService();
     _profile = widget.initialProfile ?? AuthenticatedUser.fallback;
     _loading = widget.initialProfile == null;
+    _scrollController = ScrollController()..addListener(_handleScroll);
     unawaited(_loadProfile());
   }
 
@@ -89,7 +97,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Your profile could not be refreshed from Laravel.';
+        _error = 'Your profile could not be refreshed from Server.';
       });
     }
   }
@@ -227,9 +235,49 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       );
   }
 
+  void _handleScroll() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.userScrollDirection == ScrollDirection.idle &&
+        position.pixels > 8) {
+      return;
+    }
+
+    final shouldExpand =
+        position.pixels <= 8 ||
+        position.userScrollDirection == ScrollDirection.forward;
+    if (shouldExpand == _topBarExpanded) return;
+    setState(() => _topBarExpanded = shouldExpand);
+  }
+
+  void _scrollToTop() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _handleOpenNotifications() {
+    widget.onOpenNotifications?.call();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_handleScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomClearance = MediaQuery.viewPaddingOf(context).bottom;
+    final isHomeTabOnly = widget.onBack != null;
+    final bottomPadding = isHomeTabOnly
+        ? (24 + bottomClearance)
+        : (UserProfileFloatingHeader.extent + 36 + bottomClearance);
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light.copyWith(
         statusBarColor: GacColors.canvas,
@@ -247,86 +295,106 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 final horizontalPadding = constraints.maxWidth < 380
                     ? 16.0
                     : 20.0;
-                return RefreshIndicator(
-                  onRefresh: _loadProfile,
-                  child: ListView(
-                    key: const PageStorageKey<String>('user-profile-scroll'),
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    physics: const BouncingScrollPhysics(
-                      parent: AlwaysScrollableScrollPhysics(),
-                    ),
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      22,
-                      horizontalPadding,
-                      widget.onBack != null
-                          ? (24 + bottomClearance)
-                          : (UserFloatingHeader.extent + 36 + bottomClearance),
-                    ),
-                    children: [
-                      Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 620),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _PageHeading(onBack: widget.onBack),
-                              if (_loading) ...[
-                                const SizedBox(height: 12),
-                                const LinearProgressIndicator(minHeight: 2),
-                              ],
-                              if (_error != null) ...[
-                                const SizedBox(height: 12),
-                                _ErrorBanner(
-                                  message: _error!,
-                                  onRetry: _loadProfile,
-                                ),
-                              ],
-                              const SizedBox(height: 16),
-                              _ProfileCard(
-                                profile: _profile,
-                                avatarBusy: _avatarBusy,
-                                onEditPhoto: _chooseAvatar,
-                                onRemovePhoto: _profile.avatarUrl == null
-                                    ? null
-                                    : _removeAvatar,
-                                onEditProfile: _editProfile,
-                              ),
-                              const SizedBox(height: 14),
-                              _DetailsCard(profile: _profile),
-                              const SizedBox(height: 14),
-                              _ActionCard(
-                                key: const ValueKey('change-password-action'),
-                                title: 'Change password',
-                                description: 'Verify your current password and create a new one',
-                                icon: Icons.lock_reset_rounded,
-                                onPressed: _changePassword,
-                              ),
-                              const SizedBox(height: 10),
-                              _ActionCard(
-                                title: 'Workspace settings',
-                                description: 'Notifications, reminders, and display preferences',
-                                icon: Icons.settings_outlined,
-                                onPressed: _openSettings,
-                              ),
-                              const SizedBox(height: 14),
-                              _SignOutButton(onPressed: _signOut),
-                              const SizedBox(height: 19),
-                              const Text(
-                                'Gateway Audit Compliance · Mobile v1.0',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: GacColors.slate,
-                                  fontSize: 8,
-                                ),
-                              ),
-                            ],
-                          ),
+                return Stack(
+                  children: [
+                    RefreshIndicator(
+                      edgeOffset: UserProfileFloatingHeader.extent,
+                      onRefresh: _loadProfile,
+                      child: ListView(
+                        key: const PageStorageKey<String>('user-profile-scroll'),
+                        controller: _scrollController,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
                         ),
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          UserProfileFloatingHeader.extent + 12,
+                          horizontalPadding,
+                          bottomPadding,
+                        ),
+                        children: [
+                          Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 620),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  const _PageHeading(),
+                                  if (_loading) ...[
+                                    const SizedBox(height: 12),
+                                    const LinearProgressIndicator(minHeight: 2),
+                                  ],
+                                  if (_error != null) ...[
+                                    const SizedBox(height: 12),
+                                    _ErrorBanner(
+                                      message: _error!,
+                                      onRetry: _loadProfile,
+                                    ),
+                                  ],
+                                  const SizedBox(height: 16),
+                                  _ProfileCard(
+                                    profile: _profile,
+                                    avatarBusy: _avatarBusy,
+                                    onEditPhoto: _chooseAvatar,
+                                    onRemovePhoto: _profile.avatarUrl == null
+                                        ? null
+                                        : _removeAvatar,
+                                    onEditProfile: _editProfile,
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _DetailsCard(profile: _profile),
+                                  const SizedBox(height: 14),
+                                  _ActionCard(
+                                    key: const ValueKey('change-password-action'),
+                                    title: 'Change password',
+                                    description: 'Verify your current password and create a new one',
+                                    icon: Icons.lock_reset_rounded,
+                                    onPressed: _changePassword,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _ActionCard(
+                                    title: 'Workspace settings',
+                                    description: 'Notifications, reminders, and display preferences',
+                                    icon: Icons.settings_outlined,
+                                    onPressed: _openSettings,
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _SignOutButton(onPressed: _signOut),
+                                  const SizedBox(height: 19),
+                                  const Text(
+                                    'Gateway Audit Compliance · Mobile v1.0',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: GacColors.slate,
+                                      fontSize: 8,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      height: UserProfileFloatingHeader.extent,
+                      child: UserProfileFloatingHeader(
+                        expanded: _topBarExpanded,
+                        user: _profile,
+                        title: 'Profile',
+                        subtitle: 'Audit Compliance App',
+                        onBack: widget.onBack,
+                        onOpenNotifications: _handleOpenNotifications,
+                        onTapTitle: _scrollToTop,
+                        unreadNotifications: widget.unreadNotifications,
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -338,29 +406,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 }
 
 class _PageHeading extends StatelessWidget {
-  const _PageHeading({this.onBack});
-
-  final VoidCallback? onBack;
+  const _PageHeading();
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) => const Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      if (onBack != null) ...[
-        IconButton(
-          key: const ValueKey('profile-back-button'),
-          tooltip: 'Back to home',
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-          icon: const Icon(
-            Icons.arrow_back_rounded,
-            color: GacColors.textPrimary,
-          ),
-          onPressed: onBack,
-        ),
-        const SizedBox(height: 12),
-      ],
-      const Text(
+      Text(
         'MY ACCOUNT',
         style: TextStyle(
           color: GacColors.cyan,
@@ -369,8 +421,8 @@ class _PageHeading extends StatelessWidget {
           letterSpacing: 1.7,
         ),
       ),
-      const SizedBox(height: 5),
-      const Text(
+      SizedBox(height: 5),
+      Text(
         'Profile',
         style: TextStyle(
           color: GacColors.textPrimary,

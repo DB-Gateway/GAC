@@ -50,10 +50,7 @@ class SessionManager {
   /// Starts tracking session activity.
   ///
   /// If [isRemembered] is true, session inactivity auto-logout is disabled.
-  void startTracking({
-    required bool isRemembered,
-    Duration? customTimeout,
-  }) {
+  void startTracking({required bool isRemembered, Duration? customTimeout}) {
     if (customTimeout != null) {
       _timeoutDuration = customTimeout;
     }
@@ -110,12 +107,38 @@ class SessionManager {
 
     try {
       final prefs = await SharedPreferences.getInstance();
+      // Ensure previous auth token and remember-me preference are preserved for background BOM/GM sync
+      final wasRemembered = prefs.getBool(gacRememberMeKey) ?? false;
+      final token = prefs.getString(gacAuthTokenKey);
+      if (prefs.getString(gacNotificationTokenKey) != null) {
+        await prefs.remove(gacPreviousAuthTokenKey);
+      } else if (token != null && token.isNotEmpty) {
+        await prefs.setString(gacPreviousAuthTokenKey, token);
+      }
+      if (wasRemembered) {
+        await prefs.setBool(gacPreviousRememberMeKey, true);
+      }
+
       await prefs.remove(gacAuthTokenKey);
       await prefs.remove(gacAuthUserKey);
       await prefs.setBool(gacRememberMeKey, false);
       // NOTE: Scheduled local notifications matching the user's role continue uninterrupted
       // based on the previous login's account user type.
       await LocalNotificationService.instance.syncForPreviousUser();
+      if (TaskReminderPlanner.isUtilitiesRole(
+            prefs.getString(gacPreviousUserTypeKey),
+          ) ||
+          TaskReminderPlanner.isUtilitiesAssignment(
+            prefs.getString(gacPreviousAssignmentKey) ?? '',
+          )) {
+        await LocalNotificationService.instance.cancelBomGmReminders();
+      }
+
+      // Notification delivery is independent of Remember Me and assignment.
+      // Do not hold the login redirect open while waiting for the network.
+      unawaited(LocalNotificationService.instance.syncBomGmNotifications());
+      LocalNotificationService.instance
+          .startTimedOutManagerNotificationPolling();
     } catch (_) {}
 
     onTimeout?.call();
