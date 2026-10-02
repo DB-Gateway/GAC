@@ -1,5 +1,5 @@
 @php
-    $topbarTitle = $topbarTitle ?? 'Administrator Dashboard';
+    $topbarTitle = $topbarTitle ?? '';
     $topbarSubtitle = $topbarSubtitle ?? 'Gateway Audit Compliance Monitoring System';
     $notificationId = $notificationId ?? null;
     $notificationLabel = $notificationLabel ?? 'Open notifications';

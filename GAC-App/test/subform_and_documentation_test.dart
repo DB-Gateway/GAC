@@ -1340,7 +1340,7 @@ void main() {
     );
 
     testWidgets(
-      'UserHomeScreen excludes unsubmitted documentation from To-do tab and count, showing it in All tab with OPTIONAL badge',
+      'UserHomeScreen shows unsubmitted documentation in All tab with OPTIONAL badge',
       (tester) async {
         tester.view.physicalSize = const Size(800, 1000);
         tester.view.devicePixelRatio = 1;
@@ -1364,24 +1364,11 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // 1. To-do count should only be 1 (Dealer Operations Standards), not 2
-        expect(find.text('To do · 1'), findsOneWidget);
+        // 1. All count should be 2 (Dealer Operations Standards and Documentation)
         expect(find.text('All · 2'), findsOneWidget);
+        expect(find.text('In progress · 0'), findsOneWidget);
 
-        // 2. Tapping To-do should only show the primary DOS checklist, NOT the documentation checklist
-        await tester.tap(find.text('To do · 1'));
-        await tester.pumpAndSettle();
-
-        expect(find.text('Dealer Operations Standards'), findsOneWidget);
-        expect(
-          find.text('Dealer Operations Standards - Documentation'),
-          findsNothing,
-        );
-
-        // 3. Tapping All should show both, with Documentation displaying OPTIONAL
-        await tester.tap(find.text('All · 2'));
-        await tester.pumpAndSettle();
-
+        // 2. Both tasks are displayed in All tab, with Documentation displaying OPTIONAL
         expect(find.text('Dealer Operations Standards'), findsOneWidget);
         expect(
           find.text('Dealer Operations Standards - Documentation'),
@@ -1393,7 +1380,7 @@ void main() {
     );
 
     testWidgets(
-      'UserHomeScreen shows submitted documentation in Completed tab with COMPLETED badge and 100% progress',
+      'UserHomeScreen shows submitted documentation in All tab with COMPLETED badge and 100% progress',
       (tester) async {
         tester.view.physicalSize = const Size(800, 1000);
         tester.view.devicePixelRatio = 1;
@@ -1430,12 +1417,9 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Completed · 1'), findsOneWidget);
+        expect(find.text('All · 2'), findsOneWidget);
 
-        // Tapping Completed should show the documentation checklist with COMPLETED badge
-        await tester.tap(find.text('Completed · 1'));
-        await tester.pumpAndSettle();
-
+        // Shows the documentation checklist with COMPLETED badge
         expect(
           find.text('Dealer Operations Standards - Documentation'),
           findsOneWidget,

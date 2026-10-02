@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gac_flutter/config/api_config.dart';
+import 'package:gac_flutter/models/authenticated_user.dart';
 import 'package:gac_flutter/models/escalation_follow_up.dart';
 import 'package:gac_flutter/models/user_notification.dart';
 import 'package:gac_flutter/services/escalation_follow_up_service.dart';
@@ -10,6 +12,7 @@ import 'package:gac_flutter/theme/gac_theme.dart';
 import 'package:gac_flutter/widgets/escalation_details_dialog.dart';
 import 'package:gac_flutter/widgets/escalation_follow_up_sheet.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _notice = UserNotification(
   id: 'escalation-1',
@@ -283,6 +286,151 @@ void main() {
       expect(
         find.byKey(const ValueKey('escalation-details-dialog')),
         findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'non-utility user sees notice banner and cannot follow up on escalation',
+    (tester) async {
+      const salesUser = AuthenticatedUser(
+        id: 10,
+        name: 'Sam Sales',
+        email: 'sam@gac.ph',
+        userType: 'SALES_MANAGER',
+        accountStatus: 'active',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showEscalationDetailsDialog(
+                  context,
+                  _notice,
+                  currentUser: salesUser,
+                  canFollowUp: false,
+                ),
+                child: const Text('Open escalation'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open escalation'));
+      await tester.pumpAndSettle();
+
+      // Follow-up button should NOT exist
+      expect(find.byKey(const ValueKey('escalation-follow-up')), findsNothing);
+      expect(find.text('Follow-up'), findsNothing);
+
+      // Utility-only banner should be visible
+      expect(
+        find.byKey(const ValueKey('escalation-utility-only-banner')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Only utility personnel can submit a follow-up for this escalation.'),
+        findsOneWidget,
+      );
+
+      // Close button should be present and work
+      expect(
+        find.byKey(const ValueKey('escalation-details-close')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('escalation-details-close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('escalation-details-dialog')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'utility user sees follow-up button on escalation and can open sheet',
+    (tester) async {
+      const utilityUser = AuthenticatedUser(
+        id: 12,
+        name: 'Ursula Utility',
+        email: 'ursula@gac.ph',
+        userType: '5S_UTILITIES',
+        accountStatus: 'active',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showEscalationDetailsDialog(
+                  context,
+                  _notice,
+                  currentUser: utilityUser,
+                  canFollowUp: true,
+                ),
+                child: const Text('Open escalation'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open escalation'));
+      await tester.pumpAndSettle();
+
+      // Follow-up button should exist
+      expect(find.byKey(const ValueKey('escalation-follow-up')), findsOneWidget);
+      expect(find.text('Follow-up'), findsOneWidget);
+
+      // Utility-only banner should NOT be visible
+      expect(
+        find.byKey(const ValueKey('escalation-utility-only-banner')),
+        findsNothing,
+      );
+    },
+  );
+
+  test(
+    'EscalationFollowUpApiService rejects non-utility users',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        gacAuthTokenKey: 'test-token',
+        gacPreviousUserIdKey: '10',
+        gacAuthUserKey: jsonEncode(const AuthenticatedUser(
+          id: 10,
+          name: 'Sam Sales',
+          email: 'sam@gac.ph',
+          userType: 'SALES_MANAGER',
+          accountStatus: 'active',
+        ).toJson()),
+      });
+
+      final service = EscalationFollowUpApiService();
+      const notif = UserNotification(
+        id: 'notif-1',
+        type: 'finding_escalated',
+        title: 'Escalated',
+        message: 'Review finding',
+        unread: false,
+        data: {'recipient_user_id': 10},
+      );
+
+      expect(
+        () => service.submit(
+          notification: notif,
+          requestId: '0123456789abcdef0123456789abcdef',
+          remark: EscalationRemark.inProgress,
+          otherRemarks: '',
+          photos: [],
+        ),
+        throwsA(
+          isA<EscalationFollowUpException>().having(
+            (e) => e.message,
+            'message',
+            'Only utility personnel can submit an escalation follow-up.',
+          ),
+        ),
       );
     },
   );

@@ -8,31 +8,36 @@ import 'package:gac_flutter/theme/gac_theme.dart';
 
 void main() {
   testWidgets(
-    'Next and Previous review only NO and N/A across categories, then finish',
+    'Next and Previous review only NO across categories, excluding N/A, then finish',
     (tester) async {
       final repository = _ReviewRepository(
         _record(['yes', 'no', 'yes', 'na', 'no', 'yes'], mode: 'dos'),
       );
       await _openReview(tester, repository, category: 'Basic');
-      expect(find.text('1 of 3 responses · No / N/A'), findsOneWidget);
+      expect(find.text('1 of 2 responses · No'), findsOneWidget);
       expect(find.text('Question 1'), findsOneWidget);
       expect(find.text('Question 0'), findsNothing);
+      expect(find.text('Question 3'), findsNothing);
       expect(find.byTooltip('Switch to list view'), findsNothing);
       expect(find.text('Randomize answers'), findsNothing);
 
       await _next(tester);
-      expect(find.text('Question 3'), findsOneWidget);
+      expect(find.text('Question 4'), findsOneWidget);
       expect(find.text('Question 2'), findsNothing);
-      expect(find.text('2 of 3 responses · No / N/A'), findsOneWidget);
+      expect(find.text('Question 3'), findsNothing);
+      expect(find.text('2 of 2 responses · No'), findsOneWidget);
+      expect(find.text('Finish review'), findsOneWidget);
+
       await tester.tap(find.byKey(const ValueKey('attention-review-previous')));
       await tester.pumpAndSettle();
       expect(find.text('Question 1'), findsOneWidget);
-      await _next(tester);
+      expect(find.text('1 of 2 responses · No'), findsOneWidget);
+
       await _next(tester);
       expect(find.text('Question 4'), findsOneWidget);
-      expect(find.text('Finish review'), findsOneWidget);
       await _next(tester);
       expect(find.text('Review complete'), findsOneWidget);
+      expect(find.text('All No responses have been reviewed.'), findsOneWidget);
       expect(find.text('Question 5'), findsNothing);
       expect(repository.saveCalls, 0);
       expect(repository.submitCalls, 0);
@@ -40,7 +45,7 @@ void main() {
   );
 
   testWidgets(
-    'hourly review skips good slots and visits only affected item and slot pairs',
+    'hourly review skips good and na slots and visits only affected item and slot pairs',
     (tester) async {
       final repository = _ReviewRepository(
         _record(
@@ -60,21 +65,19 @@ void main() {
         ),
       );
       await _openReview(tester, repository);
-      expect(find.text('1 of 2 responses · No / N/A'), findsOneWidget);
-      expect(find.text('Question 0'), findsOneWidget);
-      expect(find.text('Inspection: 9 AM'), findsOneWidget);
-      expect(find.text('8 AM'), findsNothing);
-      await _next(tester);
+      expect(find.text('1 of 1 responses · No'), findsOneWidget);
       expect(find.text('Question 1'), findsOneWidget);
       expect(find.text('Inspection: 8 AM'), findsOneWidget);
       expect(find.text('9 AM'), findsNothing);
+      expect(find.text('Question 0'), findsNothing);
       await _next(tester);
       expect(find.text('Review complete'), findsOneWidget);
+      expect(find.text('All No responses have been reviewed.'), findsOneWidget);
       expect(repository.saveCalls, 0);
     },
   );
 
-  testWidgets('documentation review skips YES for each customer sample', (
+  testWidgets('documentation review skips YES and N/A for each customer sample', (
     tester,
   ) async {
     final repository = _ReviewRepository(
@@ -102,14 +105,13 @@ void main() {
       ),
     );
     await _openReview(tester, repository);
-    expect(find.text('1 of 2 responses · No / N/A'), findsOneWidget);
-    expect(find.text('Customer 1'), findsOneWidget);
-    expect(find.text('Question 1'), findsOneWidget);
-    await _next(tester);
+    expect(find.text('1 of 1 responses · No'), findsOneWidget);
     expect(find.text('Customer 2'), findsOneWidget);
     expect(find.text('Question 2'), findsOneWidget);
+    expect(find.text('Customer 1'), findsNothing);
     await _next(tester);
     expect(find.text('Review complete'), findsOneWidget);
+    expect(find.text('All No responses have been reviewed.'), findsOneWidget);
     expect(repository.submitCalls, 0);
   });
 
@@ -117,6 +119,16 @@ void main() {
     tester,
   ) async {
     await _openReview(tester, _ReviewRepository(_record(['yes', 'yes'])));
+    expect(find.text('No responses need review.'), findsOneWidget);
+    expect(find.text('Question 0'), findsNothing);
+    expect(find.text('Done'), findsOneWidget);
+    expect(find.byKey(const ValueKey('attention-review-next')), findsNothing);
+  });
+
+  testWidgets('all-N/A review has a clear end without opening any question', (
+    tester,
+  ) async {
+    await _openReview(tester, _ReviewRepository(_record(['na', 'na'])));
     expect(find.text('No responses need review.'), findsOneWidget);
     expect(find.text('Question 0'), findsNothing);
     expect(find.text('Done'), findsOneWidget);

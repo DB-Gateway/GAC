@@ -19,6 +19,8 @@ const String gacDueRemindersEnabledKey = 'gac_due_reminders_enabled';
 
 const String _scheduledReminderIdsKey = 'gac_scheduled_reminder_ids';
 const String _scheduledReminderUserKey = 'gac_scheduled_reminder_user';
+String _catalogCacheKey(String userId, String? branch) =>
+    '$gacCachedChecklistCatalogKey:$userId:${Uri.encodeComponent((branch ?? '').trim().toLowerCase())}';
 const String _reminderChannelId = 'gac_checklist_reminders_v3';
 const String _inboxChannelId = 'gac_inbox_alerts_v1';
 const String _bomGmChannelId = 'gac_manager_alerts_v1';
@@ -160,14 +162,9 @@ abstract final class TaskReminderPlanner {
 
   static const List<String> defaultUtilitiesSlots = [
     '08:00',
-    '09:00',
-    '10:00',
     '11:00',
-    '13:00',
     '14:00',
-    '15:00',
     '16:00',
-    '17:00',
   ];
 
   static bool isAdminRole(String? userType) {
@@ -326,7 +323,7 @@ abstract final class TaskReminderPlanner {
         hour: 12,
         minute: 0,
         title: 'Midday audit oversight',
-        body: 'Check hourly utilities and restroom inspection logs for your branch.',
+        body: 'Check scheduled utilities and restroom inspection logs for your branch.',
         payload: TaskReminderPayload(event: 'admin_midday_oversight'),
       ),
       TaskReminderSpec(
@@ -440,61 +437,10 @@ abstract final class TaskReminderPlanner {
     List<ChecklistCatalogItem> checklists, {
     int leadTimeMinutes = gacDefaultReminderLeadTimeMinutes,
   }) {
-    ChecklistCatalogItem? target;
-    for (final checklist in checklists) {
-      if (checklist.slug == 'restroom' || checklist.slug == 'utilities') {
-        target = checklist;
-        break;
-      }
-      if (target == null &&
-          checklist.settings['validation_mode'] == 'time_slots') {
-        target = checklist;
-      }
-    }
-
-    final rawSlots = (target != null && target.settings['time_slots'] is List)
-        ? target.settings['time_slots'] as List
-        : (checklists.isEmpty ? defaultUtilitiesSlots : null);
-    if (rawSlots == null) return const [];
-
-    final reminders = <TaskReminderSpec>[];
-    final seenDueMinutes = <int>{};
-    final leadTimeText = formatLeadTime(leadTimeMinutes);
-
-    for (final rawSlot in rawSlots) {
-      final slotKey = switch (rawSlot) {
-        String value => value,
-        Map value when value['key'] is String => value['key'] as String,
-        _ => null,
-      };
-      final due = _parseClock(slotKey);
-      if (slotKey == null || due == null || !seenDueMinutes.add(due)) continue;
-
-      final reminderMinute = (due - leadTimeMinutes + 1440) % 1440;
-      final dueLabel = _formatClock(due);
-      reminders.add(
-        TaskReminderSpec(
-          id: 610000 + due,
-          kind: TaskReminderKind.utilities,
-          hour: reminderMinute ~/ 60,
-          minute: reminderMinute % 60,
-          title: 'Utilities check in $leadTimeText',
-          body:
-              'The $dueLabel cleaning and equipment inspection is due in $leadTimeText. '
-              'Tap to open your checklist.',
-          payload: TaskReminderPayload(
-            event: 'utilities_due_soon',
-            templateSlug: target?.slug ?? 'restroom',
-            slotKey: slotKey,
-          ),
-        ),
-      );
-    }
-
-    reminders.sort(
-      (left, right) => left.minuteOfDay.compareTo(right.minuteOfDay),
-    );
-    return List.unmodifiable(reminders);
+    // The server checks live submissions before delivering Utilities reminders.
+    // Daily device alarms would duplicate these and alert after submission on
+    // another device. Existing scheduled alarms are cancelled during sync.
+    return const [];
   }
 
   static List<TaskReminderSpec> _shiftReminders(
@@ -620,8 +566,11 @@ abstract final class TaskReminderPlanner {
     );
   }
 
-  static bool isUtilitiesAssignment(String value) =>
-      const {'utility', 'utilities', 'restroom'}.contains(value.toLowerCase());
+  static bool isUtilitiesAssignment(String value) {
+    final lower = value.toLowerCase();
+    return const {'utility', 'utilities', 'restroom'}.contains(lower) ||
+        lower.startsWith('restroom');
+  }
 
   static bool isSalesServiceAssignment(String value) {
     final normalized = value.toLowerCase();
@@ -975,7 +924,10 @@ class LocalNotificationService {
       final catalogJson = jsonEncode(
         checklists.map((c) => c.toJson()).toList(),
       );
-      await preferences.setString(gacCachedChecklistCatalogKey, catalogJson);
+      await preferences.setString(
+        _catalogCacheKey(user.id.toString(), user.branch),
+        catalogJson,
+      );
     } catch (_) {}
 
     final leadTime =
@@ -1053,9 +1005,20 @@ class LocalNotificationService {
         gacDefaultReminderLeadTimeMinutes;
 
     // Load cached checklists if in-memory list is absent
-    List<ChecklistCatalogItem>? checklists = _lastChecklists;
+    final previousUserId = preferences.getString(gacPreviousUserIdKey);
+    final previousBranch = preferences.getString(gacPreviousBranchKey);
+    List<ChecklistCatalogItem>? checklists =
+        _lastUser?.id.toString() == previousUserId &&
+            (_lastUser?.branch ?? '').trim().toLowerCase() ==
+                (previousBranch ?? '').trim().toLowerCase()
+        ? _lastChecklists
+        : null;
     if (checklists == null || checklists.isEmpty) {
-      final cachedJson = preferences.getString(gacCachedChecklistCatalogKey);
+      final cachedJson = previousUserId == null
+          ? null
+          : preferences.getString(
+              _catalogCacheKey(previousUserId, previousBranch),
+            );
       if (cachedJson != null && cachedJson.isNotEmpty) {
         try {
           final decoded = jsonDecode(cachedJson);
@@ -1568,7 +1531,7 @@ class LocalNotificationService {
     };
     final body = switch (kind) {
       TaskReminderKind.utilities =>
-        'The 9:00 AM cleaning and equipment inspection is due in '
+        'The 8:00 AM cleaning and equipment inspection is due in '
             '$leadTimeText. Tap to open your checklist.',
       TaskReminderKind.admin =>
         'Opening 5S and facility inspections have started. '
@@ -1594,7 +1557,7 @@ class LocalNotificationService {
           : kind == TaskReminderKind.dosMonthEnd
           ? TaskReminderPlanner.dosTemplateSlugForRole(userType)
           : null,
-      slotKey: kind == TaskReminderKind.utilities ? '09:00' : null,
+      slotKey: kind == TaskReminderKind.utilities ? '08:00' : null,
     );
 
     await _plugin.show(

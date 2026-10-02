@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ChecklistResponse;
 use App\Models\ChecklistSubmission;
 use App\Models\ChecklistTemplate;
+use App\Models\DealerChecklistSetting;
 use App\Models\Report;
 use App\Models\User;
 use App\Notifications\FindingFollowUpRequested;
@@ -68,9 +69,13 @@ class ReportController extends Controller
             'statusOptions' => ['submitted', 'draft'],
             'roleOptions' => User::roleOptions(),
             'recencyOptions' => self::RECENCY_OPTIONS,
-            'escalationOptions' => ChecklistResponse::escalationTargetOptions(),
+            'escalationOptions' => ChecklistResponse::managerEscalationOptions(),
+            'escalationOptionsMap' => ChecklistResponse::contextualEscalationOptionsMap(),
             'canOverrideAny' => $request->user()?->canOverrideChecklistResponses() ?? false,
-            'canViewFindings' => $request->user()?->roleCode() === User::ROLE_ADMINISTRATOR,
+            'canViewFindings' => in_array($request->user()?->roleCode(), [
+                User::ROLE_ADMINISTRATOR,
+                User::ROLE_GENERAL_MANAGER,
+            ], true),
             'canManageEscalations' => $request->user()?->roleCode() === User::ROLE_BRANCH_OPERATIONS_MANAGER,
             'followUpResponseId' => (int) $request->query('follow_up_response_id', 0),
             'reportTimezone' => $this->reportTimezone(),
@@ -243,6 +248,7 @@ class ReportController extends Controller
                 'Overridden Role',
                 'Override Date',
                 'Override Reason',
+                'Override Proof Attachment',
             ], ',', '"', '\\', "\r\n");
 
             foreach ($findings as $finding) {
@@ -270,6 +276,7 @@ class ReportController extends Controller
                     $override['overridden_by_role'] ?? '—',
                     isset($override['overridden_at']) ? Carbon::parse($override['overridden_at'])->timezone($this->reportTimezone())->format('d M Y, h:i A') : '—',
                     $override['reason'] ?? '—',
+                    $override['attachment_url'] ?? '—',
                 ]), ',', '"', '\\', "\r\n");
             }
 
@@ -310,12 +317,16 @@ class ReportController extends Controller
             'finding' => ['nullable', 'string', 'max:10000'],
             'remark' => ['nullable', 'string', 'max:10000'],
             'override_reason' => ['nullable', 'string', 'max:1000'],
+            'proof' => ['nullable', 'file', 'mimes:jpeg,jpg,png,webp,heic,pdf', 'max:15360'],
+            'attachment' => ['nullable', 'file', 'mimes:jpeg,jpg,png,webp,heic,pdf', 'max:15360'],
+            'remove_proof' => ['nullable', 'boolean'],
         ]);
 
         $submission = $response->submission;
         if (! $submission) {
             return response()->json(['message' => 'Submission not found for this response.'], 404);
         }
+
 
         $previousStatus = $response->status;
         $newStatus = Str::lower(trim($validated['status']));
@@ -341,15 +352,39 @@ class ReportController extends Controller
             $details['original_status'] = $previousStatus;
         }
 
+        $uploadedFile = $request->file('proof') ?? $request->file('attachment');
+        $overrideAttachmentPath = null;
+        $overrideAttachmentUrl = null;
+
+        if ($uploadedFile) {
+            $templateSlug = data_get($submission->template_snapshot, 'slug')
+                ?: ($submission->template?->slug ?: 'general');
+            $dateFolder = now()->format('Y/m');
+            $overrideAttachmentPath = $uploadedFile->store("checklist-overrides/{$templateSlug}/{$dateFolder}", 'public');
+            $overrideAttachmentUrl = Storage::disk('public')->url($overrideAttachmentPath);
+        } elseif (! $request->boolean('remove_proof')) {
+            $overrideAttachmentPath = data_get($details, 'override.attachment_path');
+            $overrideAttachmentUrl = data_get($details, 'override.attachment_url')
+                ?: ($overrideAttachmentPath ? Storage::disk('public')->url($overrideAttachmentPath) : null);
+        }
+
+        $overriddenAt = now();
+        $overriddenAtFormatted = $overriddenAt->copy()->timezone($reportTimezone)->format('d M Y, h:i A');
+
         $details['override'] = [
             'overridden_by_id' => $user->getKey(),
             'overridden_by_name' => $user->name,
             'overridden_by_role' => $user->roleLabel(),
-            'overridden_at' => now()->toIso8601String(),
+            'overridden_at' => $overriddenAt->toIso8601String(),
+            'overridden_at_formatted' => $overriddenAtFormatted,
             'previous_status' => $previousStatus,
             'new_status' => $newStatus,
             'reason' => trim((string) ($validated['override_reason'] ?? 'Updated by '.$user->roleLabel())),
             'override_reason' => trim((string) ($validated['override_reason'] ?? 'Updated by '.$user->roleLabel())),
+            'attachment_path' => $overrideAttachmentPath,
+            'attachment_url' => $overrideAttachmentUrl,
+            'attachment_name' => $overrideAttachmentPath ? basename($overrideAttachmentPath) : null,
+            'is_image' => $overrideAttachmentPath ? ! str_ends_with(strtolower($overrideAttachmentPath), '.pdf') : false,
         ];
 
         $targetInput = $this->nullableFilter($validated['escalation_target'] ?? null);
@@ -421,6 +456,10 @@ class ReportController extends Controller
                 'reason' => $validated['override_reason'] ?? null,
                 'branch' => $submission->branch,
                 'audit_date' => $submission->audit_date?->format('Y-m-d'),
+                'overridden_at' => $overriddenAt->toIso8601String(),
+                'overridden_at_formatted' => $overriddenAtFormatted,
+                'attachment_path' => $overrideAttachmentPath,
+                'attachment_url' => $overrideAttachmentUrl,
             ],
             'generated_at' => now(),
         ]);
@@ -515,7 +554,20 @@ class ReportController extends Controller
                     ], 403);
                 }
 
-                if ($this->normalizedStatus($response->status) !== 'no') {
+                $isNo = $this->normalizedStatus($response->status) === 'no';
+                if (! $isNo && $this->isRestroom($response->submission)) {
+                    $slots = data_get($response->details, 'slots', []);
+                    if (is_array($slots)) {
+                        foreach ($slots as $slotMark) {
+                            if ($this->isBadSlotMark($slotMark)) {
+                                $isNo = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (! $isNo) {
                     return response()->json([
                         'message' => 'Only responses currently marked NO can be updated here.',
                         'errors' => [
@@ -526,16 +578,24 @@ class ReportController extends Controller
 
                 $templateSlug = data_get($response->submission?->template_snapshot, 'slug')
                     ?: $response->submission?->template?->slug;
-                $target = $update['escalation_target'] ?? null;
-                $templateOptions = ChecklistResponse::escalationTargetOptionsFor($templateSlug);
+                $target = ChecklistResponse::normalizeEscalationTarget($update['escalation_target'] ?? null);
+                $metadata = is_array($response->item_snapshot)
+                    ? (data_get($response->item_snapshot, 'metadata') ?: [])
+                    : ($response->item?->metadata ?: []);
+                $templateOptions = ChecklistResponse::escalationTargetOptionsFor(
+                    templateSlug: $templateSlug,
+                    userOrRole: $response->submission?->submittedBy ?: $response->submission?->submitted_by_user_type,
+                    checkerRole: data_get($metadata, 'checker'),
+                    isRestroom: $this->isRestroom($response->submission)
+                );
 
                 if (array_key_exists('escalation_target', $update)
                     && $target !== null
                     && ! array_key_exists($target, $templateOptions)) {
                     return response()->json([
-                        'message' => 'The selected escalation recipient is not available for this checklist.',
+                        'message' => 'The selected escalation recipient is not available for this checklist finding.',
                         'errors' => [
-                            'responses' => ['Choose a recipient from the applicable checklist recipient list.'],
+                            'responses' => ['Choose a designated manager from the applicable recipient list.'],
                         ],
                     ], 422);
                 }
@@ -638,11 +698,62 @@ class ReportController extends Controller
                 $response->details = $details;
                 $response->save();
 
-                $owner = $submission?->user;
-                if ($owner && $owner->account_status === 'active'
-                    && mb_strtolower(trim((string) $owner->branch)) === mb_strtolower(trim((string) $submission->branch))
-                    && $owner->canAccessChecklist((string) (data_get($submission->template_snapshot, 'slug') ?: $submission->template?->slug))) {
-                    $owner->notify(new FindingEscalated($response, $user));
+                // For Utilities checklists, sync the escalation details to all other
+                // responses of the missed inspection so all 30 questions are updated together.
+                if ($this->isRestroom($submission) && $submission) {
+                    $siblingResponses = $submission->responses()
+                        ->whereKeyNot($response->getKey())
+                        ->get();
+
+                    foreach ($siblingResponses as $sibling) {
+                        $sDetails = is_array($sibling->details) ? $sibling->details : [];
+                        if ($target) {
+                            $sDetails['escalation_target'] = $target;
+                            $sDetails['escalation'] = $target;
+                        } else {
+                            unset($sDetails['escalation_target'], $sDetails['escalation']);
+                        }
+
+                        if ($actionPlan) {
+                            $sDetails['action_plan'] = $actionPlan;
+                        } else {
+                            unset($sDetails['action_plan'], $sDetails['action']);
+                        }
+
+                        $sDetails['bom_follow_up'] = $details['bom_follow_up'] ?? null;
+                        $sibling->escalation_target = $target;
+                        $sibling->action_plan = $actionPlan;
+                        $sibling->commitment_date = $commitmentDate;
+                        $sibling->details = $sDetails;
+                        $sibling->save();
+                    }
+                }
+
+                $branch = mb_strtolower(trim((string) $submission?->branch));
+                $recipientsQuery = User::query()
+                    ->where('account_status', 'active')
+                    ->whereKeyNot($user->getKey());
+
+                if ($branch !== '') {
+                    $recipients = $recipientsQuery
+                        ->whereRaw('LOWER(TRIM(branch)) = ?', [$branch])
+                        ->get();
+
+                    $owner = $submission?->user;
+                    if ($owner && $owner->account_status === 'active'
+                        && (int) $owner->getKey() !== (int) $user->getKey()
+                        && ! $recipients->contains('id', $owner->getKey())) {
+                        $recipients->push($owner);
+                    }
+                } else {
+                    $owner = $submission?->user;
+                    $recipients = ($owner && $owner->account_status === 'active' && (int) $owner->getKey() !== (int) $user->getKey())
+                        ? collect([$owner])
+                        : collect();
+                }
+
+                if ($recipients->isNotEmpty()) {
+                    Notification::send($recipients, new FindingEscalated($response, $user));
                 }
 
                 Report::query()->create([
@@ -710,7 +821,10 @@ class ReportController extends Controller
     public function requestFindingFollowUp(Request $request, ChecklistResponse $response): JsonResponse
     {
         $user = $request->user();
-        if (! $user || $user->roleCode() !== User::ROLE_ADMINISTRATOR) {
+        if (! $user || ! in_array($user->roleCode(), [
+            User::ROLE_ADMINISTRATOR,
+            User::ROLE_GENERAL_MANAGER,
+        ], true)) {
             return response()->json([
                 'message' => 'Only the General Manager may request a BOM finding follow-up.',
             ], 403);
@@ -723,7 +837,20 @@ class ReportController extends Controller
             return response()->json(['message' => 'Submission not found for this response.'], 404);
         }
 
-        if ($this->normalizedStatus($response->status) !== 'no') {
+        $isNo = $this->normalizedStatus($response->status) === 'no';
+        if (! $isNo && $this->isRestroom($response->submission)) {
+            $slots = data_get($response->details, 'slots', []);
+            if (is_array($slots)) {
+                foreach ($slots as $slotMark) {
+                    if ($this->isBadSlotMark($slotMark)) {
+                        $isNo = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (! $isNo) {
             return response()->json([
                 'message' => 'Follow-up can only be requested for a finding currently marked NO.',
             ], 422);
@@ -932,6 +1059,22 @@ class ReportController extends Controller
             [mb_strtolower($assignedBranch)]
         );
 
+        $availableSlugs = ChecklistTemplate::query()->pluck('slug')
+            ->merge(collect(DealerChecklistSetting::CATEGORIES)->flatMap(fn (array $category): array => $category['slugs']))
+            ->filter(fn (string $slug): bool => DealerChecklistSetting::isChecklistEnabled($user?->branch, $slug))
+            ->unique()
+            ->values()
+            ->all();
+        $query->where(function (Builder $templateQuery) use ($availableSlugs): void {
+            $templateQuery
+                ->whereHas('template', fn (Builder $template): Builder => $template->whereIn('slug', $availableSlugs))
+                ->orWhere(function (Builder $archivedQuery) use ($availableSlugs): void {
+                    $archivedQuery
+                        ->whereNull('checklist_template_id')
+                        ->whereIn('template_snapshot->slug', $availableSlugs);
+                });
+        });
+
         if ($user?->isDosOperationalRole() === true) {
             $allowedSlugs = $user->allowedChecklistSlugs() ?? [];
 
@@ -968,6 +1111,8 @@ class ReportController extends Controller
                 fn (Builder $query): Builder => $query->whereIn('slug', $allowedSlugs)
             )
             ->get(['slug', 'name'])
+            ->filter(fn (ChecklistTemplate $template): bool => $request->user()?->hasAdministrativeAccess() === true
+                || DealerChecklistSetting::isChecklistEnabled($request->user()?->branch, $template->slug))
             ->map(fn (ChecklistTemplate $template): array => [
                 'slug' => $template->slug,
                 'name' => $template->name,
@@ -1098,22 +1243,75 @@ class ReportController extends Controller
         $findings = collect();
 
         foreach ($submissions as $submission) {
-            foreach ($submission->responses as $response) {
-                if ($this->isHourlyRestroom($submission)) {
-                    $badSlots = collect(data_get($response->details, 'slots', []))
-                        ->filter(fn (mixed $value): bool => $this->isBadSlotMark($value));
+            if ($this->isHourlyRestroom($submission)) {
+                $badResponsesBySlot = [];
+                $nonSlotResponses = [];
 
-                    foreach ($badSlots as $slot => $value) {
-                        $findings->push($this->findingRow($submission, $response, 'x', (string) $slot, $viewer));
+                foreach ($submission->responses as $response) {
+                    $slots = data_get($response->details, 'slots', []);
+                    $hasBadSlot = false;
+
+                    if (is_array($slots)) {
+                        foreach ($slots as $slot => $val) {
+                            if ($this->isBadSlotMark($val)) {
+                                $badResponsesBySlot[(string) $slot][] = $response;
+                                $hasBadSlot = true;
+                            }
+                        }
                     }
 
-                    if ($badSlots->isEmpty() && (in_array($this->normalizedStatus($response->status), ['no', 'na'], true) || $response->isOverridden())) {
-                        $findings->push($this->findingRow($submission, $response, $this->normalizedStatus($response->status), null, $viewer));
+                    if (! $hasBadSlot && (in_array($this->normalizedStatus($response->status), ['no', 'na'], true) || $response->isOverridden())) {
+                        $nonSlotResponses[] = $response;
                     }
-
-                    continue;
                 }
 
+                foreach ($badResponsesBySlot as $slot => $slotResponses) {
+                    $slotResponsesCol = collect($slotResponses);
+                    $primaryResponse = $slotResponsesCol->first();
+                    $compiledRow = $this->findingRow($submission, $primaryResponse, 'x', (string) $slot, $viewer);
+
+                    $compiledQuestions = $slotResponsesCol->map(function (ChecklistResponse $resp, int $idx) use ($slot): array {
+                        $itemSnapshot = is_array($resp->item_snapshot) ? $resp->item_snapshot : [];
+                        $metadata = data_get($itemSnapshot, 'metadata')
+                            ?: (is_array($resp->item?->metadata) ? $resp->item->metadata : []);
+                        $prompt = data_get($itemSnapshot, 'prompt')
+                            ?: ($resp->item?->prompt ?: $resp->item_key);
+                        $area = data_get($itemSnapshot, 'section.title')
+                            ?: ($resp->item?->section?->title ?: 'General');
+
+                        return [
+                            'number' => data_get($metadata, 'number', $idx + 1),
+                            'item_key' => $resp->item_key,
+                            'question' => $prompt,
+                            'area' => $area,
+                            'status' => 'x',
+                            'result' => 'X',
+                            'response_id' => $resp->getKey(),
+                            'slot' => $slot,
+                        ];
+                    })->values()->all();
+
+                    $questionCount = count($compiledQuestions);
+                    $compiledRow['is_compiled'] = true;
+                    $compiledRow['compiled_count'] = $questionCount;
+                    $compiledRow['compiled_questions'] = $compiledQuestions;
+                    $compiledRow['response_ids'] = $slotResponsesCol->pluck('id')->all();
+                    $compiledRow['item'] = 'Missed Utilities Inspection (' . $slot . ') — ' . $questionCount . ' Questions Compiled';
+                    $compiledRow['item_key'] = 'utilities_slot_' . str_replace(':', '', $slot);
+                    $compiledRow['detail'] = 'Full checklist of ' . $questionCount . ' inspection questions failed for the ' . $slot . ' inspection. Automatically compiled for GM and BOM review.';
+                    $compiledRow['result'] = 'FAILED (' . $questionCount . ' ITEMS)';
+
+                    $findings->push($compiledRow);
+                }
+
+                foreach ($nonSlotResponses as $response) {
+                    $findings->push($this->findingRow($submission, $response, $this->normalizedStatus($response->status), null, $viewer));
+                }
+
+                continue;
+            }
+
+            foreach ($submission->responses as $response) {
                 $status = $this->normalizedStatus($response->status);
 
                 if (in_array($status, ['no', 'na'], true) || $response->isOverridden()) {
@@ -1212,6 +1410,34 @@ class ReportController extends Controller
 
         $override = data_get($response->details, 'override');
         $isOverridden = is_array($override);
+        $overrideDetails = null;
+        if ($isOverridden) {
+            $overrideAt = data_get($override, 'overridden_at');
+            $overrideAtFormatted = null;
+            if ($overrideAt) {
+                try {
+                    $overrideAtFormatted = Carbon::parse($overrideAt)->timezone($reportTimezone)->format('d M Y, h:i A');
+                } catch (\Throwable) {
+                    $overrideAtFormatted = (string) $overrideAt;
+                }
+            }
+            $overrideAttachmentPath = data_get($override, 'attachment_path');
+            $overrideAttachmentUrl = data_get($override, 'attachment_url')
+                ?: ($overrideAttachmentPath ? Storage::disk('public')->url($overrideAttachmentPath) : null);
+
+            $overrideDetails = [
+                'reason' => data_get($override, 'reason'),
+                'override_reason' => data_get($override, 'override_reason') ?? data_get($override, 'reason'),
+                'overridden_by_name' => data_get($override, 'overridden_by_name'),
+                'overridden_by_role' => data_get($override, 'overridden_by_role'),
+                'overridden_at' => $overrideAt,
+                'overridden_at_formatted' => $overrideAtFormatted,
+                'attachment_path' => $overrideAttachmentPath,
+                'attachment_url' => $overrideAttachmentUrl,
+                'attachment_name' => $overrideAttachmentPath ? basename($overrideAttachmentPath) : null,
+                'is_image' => $overrideAttachmentPath ? ! str_ends_with(strtolower($overrideAttachmentPath), '.pdf') : false,
+            ];
+        }
 
         $submitter = $submission->submittedBy ?? $submission->user;
         $submitterName = $submission->submitted_by_name
@@ -1257,7 +1483,7 @@ class ReportController extends Controller
             'due_status' => $dueStatus,
             'attachment_url' => $this->attachmentUrl($response->attachment_path),
             'is_overridden' => $isOverridden,
-            'override_details' => $override,
+            'override_details' => $overrideDetails,
             'can_override' => $canOverride,
         ];
     }

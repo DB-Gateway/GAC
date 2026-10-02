@@ -95,7 +95,7 @@ String destinationForUserType(String userType) {
 }
 
 Future<_LoginApiResponse> _loginWithServer(
-  String email,
+  String username,
   String password,
 ) async {
   final apiUrl = gacApiUrl.replaceFirst(RegExp(r'/$'), '');
@@ -110,7 +110,7 @@ Future<_LoginApiResponse> _loginWithServer(
         'Content-Type': 'application/json',
       },
       body: jsonEncode({
-        'email': email.trim().toLowerCase(),
+        'username': username.trim(),
         'password': password,
         'notification_device_id': deviceId,
       }),
@@ -155,6 +155,35 @@ Future<_LoginApiResponse> _loginWithServer(
     user: user,
     notificationToken: data?['notification_token'] as String?,
   );
+}
+
+Future<bool> _storedSessionIsAvailable(String token) async {
+  final apiUrl = gacApiUrl.replaceFirst(RegExp(r'/$'), '');
+  late final http.Response response;
+
+  try {
+    response = await http.get(
+      Uri.parse('$apiUrl/me'),
+      headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+    );
+  } catch (_) {
+    return false;
+  }
+
+  if (response.statusCode >= 200 && response.statusCode < 300) {
+    return true;
+  }
+
+  if (response.statusCode == 401 || response.statusCode == 403) {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(gacAuthTokenKey);
+    await preferences.remove(gacAuthUserKey);
+    await preferences.remove(gacNotificationTokenKey);
+    await preferences.remove(gacPreviousAuthTokenKey);
+    await preferences.remove(gacLastActivityTimeKey);
+  }
+
+  return false;
 }
 
 String _messageForError(Object error) {
@@ -217,6 +246,9 @@ class GatewayLoginScreen extends StatefulWidget {
   /// Overrides the built-in Server request when supplied.
   final FutureOr<void> Function(LoginCredentials credentials)? onLogin;
 
+  /// Overrides remembered-session server validation in widget tests.
+  final Future<bool> Function(String token)? storedSessionValidator;
+
   /// Overrides the placeholder forgot-password alert when supplied.
   final VoidCallback? onForgotPassword;
 
@@ -225,6 +257,7 @@ class GatewayLoginScreen extends StatefulWidget {
     this.arrivedFromWelcome = false,
     this.fromTimeout = false,
     this.onLogin,
+    this.storedSessionValidator,
     this.onForgotPassword,
   });
 
@@ -260,10 +293,11 @@ class _AuthUser {
 
   static _AuthUser? fromJson(Object? value) {
     final data = _stringKeyedMap(value);
+    final username = data?['username'] ?? data?['email'];
     if (data == null ||
         data['id'] is! int ||
         data['name'] is! String ||
-        data['email'] is! String ||
+        username is! String ||
         (data['branch'] != null && data['branch'] is! String) ||
         data['user_type'] is! String) {
       return null;
@@ -271,6 +305,8 @@ class _AuthUser {
 
     final userType = normalizeUserType(data['user_type'] as String);
     final normalizedData = Map<String, dynamic>.of(data)
+      ..['username'] = username
+      ..['email'] = username
       ..['user_type'] = userType;
     return _AuthUser(userType: userType, raw: normalizedData);
   }
@@ -476,11 +512,13 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
   String? _passwordError;
 
   bool _isQuickUnlock = false;
+  int _expectedPinLength = 6;
   String _quickUnlockPin = '';
   String? _quickUnlockError;
   _AuthUser? _quickUnlockUser;
   Map<String, dynamic>? _quickUnlockUserData;
   bool _biometricAvailable = false;
+  bool _showTimeoutNotice = false;
 
   @override
   Widget build(BuildContext context) {
@@ -609,7 +647,7 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
               if (_isQuickUnlock) ...[
                 SizedBox(height: 4 * scale),
                 Text(
-                  'Enter your 4-digit PIN to continue',
+                  'Enter your $_expectedPinLength-digit PIN to continue',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: _LoginColors.muted,
@@ -634,6 +672,7 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
                       children: [
                         PinDots(
                           length: _quickUnlockPin.length,
+                          total: _expectedPinLength,
                           hasError: _quickUnlockError != null,
                         ),
                         SizedBox(height: 10 * scale),
@@ -708,6 +747,8 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
                           _saveRememberMe();
                         });
                       },
+                      onShowRememberGuide: () =>
+                          showRememberMeGuideDialog(context),
                       onEmailSubmitted: (_) =>
                           _passwordFocusNode.requestFocus(),
                       onPasswordSubmitted: (_) => _handleLogin(),
@@ -717,6 +758,113 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
             ),
           ),
         ),
+        if (_showTimeoutNotice) ...[
+          SizedBox(height: 16 * scale),
+          _LoginEntrance(
+            progress: cardEntrance,
+            offsetY: 10,
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: 14 * scale,
+                vertical: 12 * scale,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF132238),
+                borderRadius: BorderRadius.circular(14 * scale),
+                border: Border.all(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.5),
+                  width: 1.2,
+                ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(6 * scale),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.timer_outlined,
+                      size: 18 * scale,
+                      color: const Color(0xFFF59E0B),
+                    ),
+                  ),
+                  SizedBox(width: 10 * scale),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Session Timed Out',
+                          style: TextStyle(
+                            color: const Color(0xFFF59E0B),
+                            fontSize: 12 * scale,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(height: 2 * scale),
+                        Text(
+                          'You were logged out after 1 hour of inactivity.',
+                          style: TextStyle(
+                            color: _LoginColors.ink.withValues(alpha: 0.9),
+                            fontSize: 10.5 * scale,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 8 * scale),
+                  _PressSurface(
+                    onTap: () => showRememberMeGuideDialog(context),
+                    semanticLabel: 'How to stay signed in guide',
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 8 * scale,
+                        vertical: 6 * scale,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _LoginColors.icon.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8 * scale),
+                        border: Border.all(
+                          color: _LoginColors.icon.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            size: 14 * scale,
+                            color: _LoginColors.icon,
+                          ),
+                          SizedBox(width: 4 * scale),
+                          Text(
+                            'Guide',
+                            style: TextStyle(
+                              color: _LoginColors.icon,
+                              fontSize: 10.5 * scale,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
         SizedBox(height: 22 * scale),
         _LoginEntrance(
           progress: footerEntrance,
@@ -787,6 +935,7 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
   @override
   void initState() {
     super.initState();
+    _showTimeoutNotice = widget.fromTimeout;
     _entranceController = AnimationController(
       vsync: this,
       duration: _entranceDuration,
@@ -888,6 +1037,7 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
         }
 
         final userEmail =
+            (result.user.raw['username'] as String?)?.trim() ??
             (result.user.raw['email'] as String?)?.trim() ??
             credentials.login.trim();
 
@@ -954,6 +1104,7 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
       if (!mounted) return;
       setState(() {
         _loginError =
+            error.errors['username']?.firstOrNull ??
             error.errors['email']?.firstOrNull ??
             error.errors['login']?.firstOrNull;
         _passwordError = error.errors['password']?.firstOrNull;
@@ -1013,17 +1164,40 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
       final token = prefs.getString(gacAuthTokenKey);
       final userJson = prefs.getString(gacAuthUserKey);
 
-      if (rememberMe && token != null && userJson != null) {
-        final userData = jsonDecode(userJson);
-        final user = _AuthUser.fromJson(userData);
+      if (token == null || token.trim().isEmpty || userJson == null) {
+        return;
+      }
 
-        if (user != null && mounted) {
-          if (userData is Map && userData['user_type'] != user.userType) {
-            await prefs.setString(gacAuthUserKey, jsonEncode(user.raw));
-          }
-          final userEmail =
-              (user.raw['email'] as String?)?.trim() ??
-              prefs.getString(_rememberEmailKey)?.trim();
+      final storedSessionIsAvailable =
+          await (widget.storedSessionValidator?.call(token) ??
+              _storedSessionIsAvailable(token));
+      if (!storedSessionIsAvailable) {
+        return;
+      }
+
+      final isSessionActive = await SessionManager.instance.isSessionActive();
+      if (!isSessionActive) {
+        await SessionManager.instance.handleSessionTimeout();
+        if (mounted) {
+          setState(() {
+            _showTimeoutNotice = true;
+          });
+        }
+        return;
+      }
+
+      final userData = jsonDecode(userJson);
+      final user = _AuthUser.fromJson(userData);
+
+      if (user != null && mounted) {
+        if (userData is Map && userData['user_type'] != user.userType) {
+          await prefs.setString(gacAuthUserKey, jsonEncode(user.raw));
+        }
+        final userEmail =
+            (user.raw['email'] as String?)?.trim() ??
+            prefs.getString(_rememberEmailKey)?.trim();
+
+        if (rememberMe) {
           final hasPin = await SecurityService.instance.hasPin(
             email: userEmail,
           );
@@ -1032,12 +1206,20 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
                 .isBiometricsSupported();
             final enabled = await SecurityService.instance
                 .isBiometricsEnabled();
+            final storedPin = await SecurityService.instance.getStoredPin(
+              email: userEmail,
+            );
+            final expectedLength = (storedPin != null && storedPin.length == 4)
+                ? 4
+                : 6;
+
             setState(() {
               _isQuickUnlock = true;
               _quickUnlockUser = user;
               _quickUnlockUserData = user.raw;
               _quickUnlockPin = '';
               _quickUnlockError = null;
+              _expectedPinLength = expectedLength;
               _biometricAvailable = supported && enabled;
             });
             if (_biometricAvailable) {
@@ -1047,51 +1229,56 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
           }
 
           SessionManager.instance.startTracking(isRemembered: true);
-          final authUser = AuthenticatedUser.fromJson(user.raw);
-          if (authUser.is5sUtilities || authUser.isUtilities) {
-            unawaited(
-              UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
-                repository: ChecklistApiService(),
-                user: authUser,
-              ).catchError((_) => null),
-            );
-          }
-          final destination = destinationForUserType(user.userType);
-          final pendingPayload = await LocalNotificationService.instance
-              .consumePendingPayload();
-          String targetDestination = destination;
-          Object? targetArguments;
-          if (pendingPayload != null &&
-              (destination == _userHomeRoute ||
-                  (destination == _dosDashboardRoute &&
-                      (pendingPayload.event == 'dos_month_end_due' ||
-                          pendingPayload.targetsDosChecklist)))) {
-            targetDestination = destination == _dosDashboardRoute
-                ? '/(dos)/audit'
-                : '/(user)/checklists';
-            targetArguments = {
-              'template_slug': pendingPayload.templateSlug,
-              'slot_key': pendingPayload.slotKey,
-              'audit_date': pendingPayload.auditDate,
-              'submission_id': pendingPayload.submissionId,
-              'item_key': pendingPayload.itemKey,
-              'customer_index': pendingPayload.customerIndex,
-            };
-          }
-          if (user.raw['must_change_password'] == true) {
-            await _openDestination(
-              '/force-password-change',
-              arguments: {
-                'destination': targetDestination,
-                'destinationArguments': targetArguments,
-                'rememberMe': true,
-              },
-            );
-            return;
-          }
-
-          await _openDestination(targetDestination, arguments: targetArguments);
+        } else {
+          // Non-remembered user is still within the 1-hour session timeout!
+          SessionManager.instance.startTracking(isRemembered: false);
+          SessionManager.instance.recordUserActivity();
         }
+
+        final authUser = AuthenticatedUser.fromJson(user.raw);
+        if (authUser.is5sUtilities || authUser.isUtilities) {
+          unawaited(
+            UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+              repository: ChecklistApiService(),
+              user: authUser,
+            ).catchError((_) => null),
+          );
+        }
+        final destination = destinationForUserType(user.userType);
+        final pendingPayload = await LocalNotificationService.instance
+            .consumePendingPayload();
+        String targetDestination = destination;
+        Object? targetArguments;
+        if (pendingPayload != null &&
+            (destination == _userHomeRoute ||
+                (destination == _dosDashboardRoute &&
+                    (pendingPayload.event == 'dos_month_end_due' ||
+                        pendingPayload.targetsDosChecklist)))) {
+          targetDestination = destination == _dosDashboardRoute
+              ? '/(dos)/audit'
+              : '/(user)/checklists';
+          targetArguments = {
+            'template_slug': pendingPayload.templateSlug,
+            'slot_key': pendingPayload.slotKey,
+            'audit_date': pendingPayload.auditDate,
+            'submission_id': pendingPayload.submissionId,
+            'item_key': pendingPayload.itemKey,
+            'customer_index': pendingPayload.customerIndex,
+          };
+        }
+        if (user.raw['must_change_password'] == true) {
+          await _openDestination(
+            '/force-password-change',
+            arguments: {
+              'destination': targetDestination,
+              'destinationArguments': targetArguments,
+              'rememberMe': rememberMe,
+            },
+          );
+          return;
+        }
+
+        await _openDestination(targetDestination, arguments: targetArguments);
       }
     } catch (e) {
       // Silently handle auto-login errors - user will see login screen
@@ -1110,12 +1297,12 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
   }
 
   void _onQuickUnlockDigit(String digit) {
-    if (_quickUnlockPin.length >= 4) return;
+    if (_quickUnlockPin.length >= _expectedPinLength) return;
     setState(() {
       _quickUnlockPin += digit;
       _quickUnlockError = null;
     });
-    if (_quickUnlockPin.length == 4) {
+    if (_quickUnlockPin.length == _expectedPinLength) {
       unawaited(_verifyQuickUnlockPin());
     }
   }
@@ -1264,14 +1451,14 @@ class _GatewayLoginScreenState extends State<GatewayLoginScreen>
   }
 
   bool _validate() {
-    final email = _emailController.text.trim();
+    final username = _emailController.text.trim();
     String? loginError;
     String? passwordError;
 
-    if (email.isEmpty) {
-      loginError = 'Enter your email address.';
-    } else if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
-      loginError = 'Enter a valid email address.';
+    if (username.isEmpty) {
+      loginError = 'Enter your username.';
+    } else if (RegExp(r'\s').hasMatch(username)) {
+      loginError = 'Enter a valid username without spaces.';
     }
 
     if (_passwordController.text.isEmpty) {
@@ -1418,6 +1605,7 @@ class _ScaledLoginForm extends StatelessWidget {
   final ValueChanged<String> onPasswordChanged;
   final VoidCallback onTogglePassword;
   final VoidCallback onToggleRememberMe;
+  final VoidCallback onShowRememberGuide;
   final ValueChanged<String> onEmailSubmitted;
   final ValueChanged<String> onPasswordSubmitted;
   final VoidCallback onForgotPassword;
@@ -1437,6 +1625,7 @@ class _ScaledLoginForm extends StatelessWidget {
     required this.onPasswordChanged,
     required this.onTogglePassword,
     required this.onToggleRememberMe,
+    required this.onShowRememberGuide,
     required this.onEmailSubmitted,
     required this.onPasswordSubmitted,
     required this.onForgotPassword,
@@ -1449,16 +1638,16 @@ class _ScaledLoginForm extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         _FormField(
-          accessibilityLabel: 'Email address',
-          label: 'Email address',
+          accessibilityLabel: 'Username',
+          label: 'Username',
           leadingIcon: Icons.person_outline_rounded,
           controller: emailController,
           focusNode: emailFocusNode,
-          placeholder: 'name@gateway.com',
+          placeholder: 'Enter username',
           error: loginError,
-          keyboardType: TextInputType.emailAddress,
+          keyboardType: TextInputType.text,
           textInputAction: TextInputAction.next,
-          autofillHints: const [AutofillHints.email],
+          autofillHints: const [AutofillHints.username],
           onChanged: onEmailChanged,
           onSubmitted: onEmailSubmitted,
           scale: scale,
@@ -1501,15 +1690,15 @@ class _ScaledLoginForm extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Flexible(
-              child: _PressSurface(
-                onTap: onToggleRememberMe,
-                semanticLabel: 'Remember me',
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 4 * scale),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 4 * scale),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _PressSurface(
+                      onTap: onToggleRememberMe,
+                      semanticLabel: 'Remember me',
+                      child: Container(
                         width: 18 * scale,
                         height: 18 * scale,
                         decoration: BoxDecoration(
@@ -1532,8 +1721,12 @@ class _ScaledLoginForm extends StatelessWidget {
                               )
                             : null,
                       ),
-                      SizedBox(width: 7 * scale),
-                      Flexible(
+                    ),
+                    SizedBox(width: 6 * scale),
+                    Flexible(
+                      child: _PressSurface(
+                        onTap: onToggleRememberMe,
+                        semanticLabel: 'Remember me',
                         child: Text(
                           'Remember me',
                           overflow: TextOverflow.ellipsis,
@@ -1544,8 +1737,21 @@ class _ScaledLoginForm extends StatelessWidget {
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    SizedBox(width: 4 * scale),
+                    _PressSurface(
+                      onTap: onShowRememberGuide,
+                      semanticLabel: 'Remember me guide info',
+                      child: Padding(
+                        padding: EdgeInsets.all(2 * scale),
+                        child: Icon(
+                          Icons.info_outline_rounded,
+                          size: 14 * scale,
+                          color: _LoginColors.icon,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

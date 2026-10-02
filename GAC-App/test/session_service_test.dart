@@ -35,13 +35,15 @@ void main() {
       expect(SessionManager.instance.lastActivityTime, isNotNull);
     });
 
-    test('startTracking with isRemembered: true does not set inactivity timer', () {
+    test('startTracking with isRemembered: true sets inactivity timer and tracks activity for strict timeout', () {
       SessionManager.instance.startTracking(
         isRemembered: true,
+        customTimeout: const Duration(seconds: 10),
       );
 
       expect(SessionManager.instance.isTracking, isTrue);
       expect(SessionManager.instance.isRemembered, isTrue);
+      expect(SessionManager.instance.lastActivityTime, isNotNull);
     });
 
     test('recordUserActivity updates lastActivityTime', () async {
@@ -171,6 +173,116 @@ void main() {
         email: 'makati.pic@gateway.local',
       );
       expect(wrongPinValid, isFalse);
+    });
+
+    test('supports 6-digit PIN creation and validation', () async {
+      final saved = await SecurityService.instance.savePin(
+        '123456',
+        email: 'user6@gateway.local',
+      );
+      expect(saved, isTrue);
+
+      final hasPin = await SecurityService.instance.hasPin(
+        email: 'user6@gateway.local',
+      );
+      expect(hasPin, isTrue);
+
+      final stored = await SecurityService.instance.getStoredPin(
+        email: 'user6@gateway.local',
+      );
+      expect(stored, '123456');
+
+      final valid = await SecurityService.instance.verifyPin(
+        '123456',
+        email: 'user6@gateway.local',
+      );
+      expect(valid, isTrue);
+
+      final invalid = await SecurityService.instance.verifyPin(
+        '654321',
+        email: 'user6@gateway.local',
+      );
+      expect(invalid, isFalse);
+    });
+  });
+
+  group('Session 1-Hour Inactivity and isSessionActive', () {
+    test('standard session timeout duration is 1 hour', () {
+      expect(gacSessionTimeoutDuration, const Duration(hours: 1));
+      expect(SessionManager.instance.timeoutDuration, const Duration(hours: 1));
+    });
+
+    test('isSessionActive returns true when within 1 hour for non-remembered user', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(gacAuthTokenKey, 'auth-token');
+      await prefs.setString(gacAuthUserKey, '{"id":1,"name":"Alex"}');
+      await prefs.setBool(gacRememberMeKey, false);
+      // Last active 10 minutes ago
+      final recent = DateTime.now().subtract(const Duration(minutes: 10));
+      await prefs.setString(gacLastActivityTimeKey, recent.toIso8601String());
+
+      final active = await SessionManager.instance.isSessionActive();
+      expect(active, isTrue);
+    });
+
+    test('isSessionActive returns false when more than 1 hour has elapsed for non-remembered user', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(gacAuthTokenKey, 'auth-token');
+      await prefs.setString(gacAuthUserKey, '{"id":1,"name":"Alex"}');
+      await prefs.setBool(gacRememberMeKey, false);
+      // Last active 65 minutes ago
+      final past = DateTime.now().subtract(const Duration(minutes: 65));
+      await prefs.setString(gacLastActivityTimeKey, past.toIso8601String());
+
+      final active = await SessionManager.instance.isSessionActive();
+      expect(active, isFalse);
+    });
+
+    test('isSessionActive returns false when more than 1 hour has elapsed even when Remember Me is enabled', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(gacAuthTokenKey, 'auth-token');
+      await prefs.setString(gacAuthUserKey, '{"id":1,"name":"Alex"}');
+      await prefs.setBool(gacRememberMeKey, true);
+      // Last active 5 hours ago
+      final past = DateTime.now().subtract(const Duration(hours: 5));
+      await prefs.setString(gacLastActivityTimeKey, past.toIso8601String());
+
+      final active = await SessionManager.instance.isSessionActive();
+      expect(active, isFalse);
+    });
+
+    test('isSessionActive returns true when within 1 hour for Remember Me user', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(gacAuthTokenKey, 'auth-token');
+      await prefs.setString(gacAuthUserKey, '{"id":1,"name":"Alex"}');
+      await prefs.setBool(gacRememberMeKey, true);
+      // Last active 20 minutes ago
+      final recent = DateTime.now().subtract(const Duration(minutes: 20));
+      await prefs.setString(gacLastActivityTimeKey, recent.toIso8601String());
+
+      final active = await SessionManager.instance.isSessionActive();
+      expect(active, isTrue);
+    });
+
+    test('recordUserActivity triggers handleSessionTimeout when inactivity duration has elapsed', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(gacAuthTokenKey, 'test-token');
+
+      bool timedOut = false;
+      SessionManager.instance.onTimeout = () {
+        timedOut = true;
+      };
+
+      SessionManager.instance.startTracking(
+        isRemembered: true,
+        customTimeout: const Duration(milliseconds: 30),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      SessionManager.instance.recordUserActivity();
+
+      expect(timedOut, isTrue);
+      expect(prefs.getString(gacAuthTokenKey), isNull);
     });
   });
 }

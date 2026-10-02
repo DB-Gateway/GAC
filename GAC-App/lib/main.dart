@@ -114,7 +114,21 @@ Future<void> openNotificationPayload(
             .markRead(notification.id)
             .catchError((Object error) => inbox),
       );
-      await showEscalationDetailsDialog(context, notification);
+      bool canFollowUp = false;
+      AuthenticatedUser? authUser;
+      final encodedUser = preferences.getString(gacAuthUserKey);
+      if (encodedUser != null && encodedUser.isNotEmpty) {
+        try {
+          authUser = AuthenticatedUser.fromJson(jsonDecode(encodedUser));
+          canFollowUp = authUser.isUtility;
+        } catch (_) {}
+      }
+      await showEscalationDetailsDialog(
+        context,
+        notification,
+        canFollowUp: canFollowUp,
+        currentUser: authUser,
+      );
     } catch (_) {
       gacScaffoldMessengerKey.currentState?.showSnackBar(
         const SnackBar(
@@ -126,18 +140,18 @@ Future<void> openNotificationPayload(
     }
     return;
   }
-  final rememberMe = preferences.getBool(gacRememberMeKey) ?? false;
   final token = preferences.getString(gacAuthTokenKey);
   final encodedUser = preferences.getString(gacAuthUserKey);
 
-  final canDirectEnter =
-      rememberMe &&
-      token != null &&
-      token.trim().isNotEmpty &&
-      encodedUser != null;
+  final isSessionActive = await SessionManager.instance.isSessionActive();
+  final hasAuthData =
+      token != null && token.trim().isNotEmpty && encodedUser != null;
+
+  final canDirectEnter = hasAuthData && isSessionActive;
 
   String destination = '/login';
   if (canDirectEnter) {
+    SessionManager.instance.recordUserActivity();
     try {
       final user = AuthenticatedUser.fromJson(jsonDecode(encodedUser));
       final userType = user.userType.trim().toUpperCase();
@@ -162,6 +176,10 @@ Future<void> openNotificationPayload(
     }
   } else {
     await LocalNotificationService.instance.setPendingPayload(payload);
+    if (hasAuthData && !isSessionActive) {
+      await SessionManager.instance.handleSessionTimeout();
+      return;
+    }
   }
 
   void navigate() {
@@ -191,7 +209,9 @@ Future<void> openNotificationPayload(
 }
 
 class GacApp extends StatelessWidget {
-  const GacApp({super.key});
+  final Future<bool> Function(String token)? storedSessionValidator;
+
+  const GacApp({super.key, this.storedSessionValidator});
 
   @override
   Widget build(BuildContext context) {
@@ -238,6 +258,7 @@ class GacApp extends StatelessWidget {
           pageBuilder: (_, animation, secondaryAnimation) => GatewayLoginScreen(
             arrivedFromWelcome: arrivedFromWelcome,
             fromTimeout: fromTimeout,
+            storedSessionValidator: storedSessionValidator,
           ),
           transitionsBuilder: (_, animation, secondaryAnimation, child) =>
               child,
@@ -434,6 +455,9 @@ class _SessionActivityListenerState extends State<SessionActivityListener>
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => SessionManager.instance.recordUserActivity(),
       onPointerMove: (_) => SessionManager.instance.recordUserActivity(),
+      onPointerUp: (_) => SessionManager.instance.recordUserActivity(),
+      onPointerPanZoomUpdate: (_) =>
+          SessionManager.instance.recordUserActivity(),
       child: widget.child,
     );
   }

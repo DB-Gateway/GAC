@@ -15,14 +15,19 @@ class AuthenticationTest extends TestCase
         $response = $this->get('/login');
 
         $response->assertStatus(200);
+        $response->assertSee('name="username"', false);
+        $response->assertDontSee('type="email"', false);
     }
 
     public function test_users_can_authenticate_using_the_login_screen(): void
     {
-        $user = User::factory()->create(['account_status' => 'active']);
+        $user = User::factory()->create([
+            'email' => 'BOM.MitsubishiSucat',
+            'account_status' => 'active',
+        ]);
 
         $response = $this->post('/login', [
-            'email' => $user->email,
+            'username' => 'bom.mitsubishisucat',
             'password' => 'password',
         ]);
 
@@ -35,7 +40,7 @@ class AuthenticationTest extends TestCase
         $user = User::factory()->create();
 
         $this->post('/login', [
-            'email' => $user->email,
+            'username' => $user->email,
             'password' => 'wrong-password',
         ]);
 
@@ -51,13 +56,13 @@ class AuthenticationTest extends TestCase
             ]);
 
             $response = $this->from('/login')->post('/login', [
-                'email' => $user->email,
+                'username' => $user->email,
                 'password' => 'password',
             ]);
 
             $response
                 ->assertRedirect('/login')
-                ->assertSessionHasErrors('email');
+                ->assertSessionHasErrors('username');
             $this->assertGuest();
         }
     }

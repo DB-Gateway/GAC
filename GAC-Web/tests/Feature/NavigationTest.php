@@ -52,11 +52,21 @@ class NavigationTest extends TestCase
         }
     }
 
-    public function test_editor_dropdown_is_shared_by_general_and_branch_operations_managers(): void
+    public function test_editor_dropdown_is_reserved_for_system_administrator(): void
     {
         $this->seed(ChecklistTemplateSeeder::class);
 
-        foreach (['GM', 'General Manager', User::ROLE_ADMINISTRATOR, 'BOM', 'Branch Operations Manager'] as $role) {
+        $administrator = User::factory()->create([
+            'user_type' => User::ROLE_ADMINISTRATOR,
+            'account_status' => 'active',
+        ]);
+        $this->actingAs($administrator)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('id="editorDropdown">', false)
+            ->assertSee('id="editorMenu"', false);
+
+        foreach (['GM', 'General Manager', 'BOM', 'Branch Operations Manager'] as $role) {
             $manager = User::factory()->create([
                 'user_type' => $role,
                 'account_status' => 'active',
@@ -65,12 +75,9 @@ class NavigationTest extends TestCase
             $this->actingAs($manager)
                 ->get(route('dashboard'))
                 ->assertOk()
-                ->assertSee('id="editorDropdown">', false)
-                ->assertSee('id="editorMenu"', false)
-                ->assertSee('Editor')
-                ->assertSee('5S Checklist')
-                ->assertSee('DOS Checklist')
-                ->assertSee('Utilities Checklist');
+                ->assertDontSee('id="editorDropdown"', false)
+                ->assertDontSee('id="editorMenu"', false)
+                ->assertDontSee('data-editor-checklist=', false);
         }
 
         $pic = User::factory()->create([
@@ -100,7 +107,7 @@ class NavigationTest extends TestCase
                 ->assertOk()
                 ->assertSee('id="reportsDropdown"', false)
                 ->assertSee('id="reportsMenu"', false)
-                ->assertSeeInOrder(['Reports', 'Analytics', 'User Usages']);
+                ->assertSeeInOrder(['Reports', 'Analytics', 'User Usage']);
 
             $analytics = $this->reportLink($response, 'analytics');
             $userUsages = $this->reportLink($response, 'user-usages');
@@ -217,12 +224,13 @@ class NavigationTest extends TestCase
         $this->assertSame('page', $this->reportLink($response, 'user-usages')->getAttribute('aria-current'));
         $this->get(route('users.index'))->assertForbidden();
 
-        $this->actingAs(User::factory()->create(['user_type' => 'GM']))
+        $gm = User::factory()->create(['user_type' => 'GM', 'branch' => 'Cebu']);
+        $this->actingAs($gm)
             ->get(route('dashboard', ['tab' => 'users']))
             ->assertOk()
-            ->assertViewHas('userStats', fn (array $stats): bool => $stats['total'] === 4)
+            ->assertViewHas('userStats', fn (array $stats): bool => $stats['total'] === 2)
             ->assertSee($otherUser->email)
-            ->assertSee(route('users.index'), false);
+            ->assertDontSee(route('users.index'), false);
     }
 
     public function test_branch_manager_without_an_assigned_branch_has_empty_user_usages(): void
@@ -245,10 +253,10 @@ class NavigationTest extends TestCase
         }
     }
 
-    public function test_branch_manager_can_open_each_editor_checklist(): void
+    public function test_system_administrator_can_open_each_editor_checklist(): void
     {
         $this->seed(ChecklistTemplateSeeder::class);
-        $branchManager = User::factory()->create(['user_type' => User::ROLE_BRANCH_OPERATIONS_MANAGER]);
+        $branchManager = User::factory()->create(['user_type' => User::ROLE_ADMINISTRATOR]);
         $response = $this->actingAs($branchManager)->get(route('dashboard'))->assertOk();
         $links = $this->xpath($response)->query('//*[@data-editor-checklist]');
         $this->assertCount(5, $links);
@@ -270,7 +278,7 @@ class NavigationTest extends TestCase
             'account_status' => 'active',
         ]);
 
-        $overview = $this->actingAs($generalManager)->get(route('dashboard'));
+        $overview = $this->actingAs($generalManager)->get(route('dashboard', ['tab' => 'overview']));
         $this->assertNavigationLinkActive($overview, true);
         $this->assertFalse($this->elementById($overview, 'reportsDropdown')->hasAttribute('open'));
 

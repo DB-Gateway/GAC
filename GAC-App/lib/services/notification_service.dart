@@ -161,6 +161,7 @@ class UserNotificationController extends ChangeNotifier {
   UserNotificationController({
     NotificationRepository? repository,
     SystemNotificationPresenter? systemNotificationPresenter,
+    this.onMissedInspection,
   }) : _repository = repository ?? NotificationApiService(),
        _systemNotificationPresenter =
            systemNotificationPresenter ??
@@ -168,7 +169,14 @@ class UserNotificationController extends ChangeNotifier {
 
   final NotificationRepository _repository;
   final SystemNotificationPresenter _systemNotificationPresenter;
+
+  /// Called once for each *newly arrived* `utilities_inspection_missed`
+  /// notification detected during polling. The tabs layout uses this to
+  /// show a pop-up alert modal to the utilities user.
+  void Function(UserNotification notification)? onMissedInspection;
+
   List<UserNotification> _notifications = const [];
+  Set<String> _seenIds = const {};
   int _unreadCount = 0;
   bool _loading = false;
   bool _requesting = false;
@@ -213,6 +221,20 @@ class UserNotificationController extends ChangeNotifier {
       _notifications = inbox.notifications;
       _unreadCount = inbox.unreadCount;
       _initialized = true;
+
+      // Detect newly-arrived missed-inspection notifications and fire the
+      // callback so the tabs layout can show a pop-up alert modal.
+      if (onMissedInspection != null && _seenIds.isNotEmpty) {
+        for (final n in _notifications) {
+          if (n.type == 'utilities_inspection_missed' &&
+              n.unread &&
+              !_seenIds.contains(n.id)) {
+            onMissedInspection!(n);
+          }
+        }
+      }
+      _seenIds = {for (final n in _notifications) n.id};
+
       try {
         await _systemNotificationPresenter(_notifications);
       } catch (_) {

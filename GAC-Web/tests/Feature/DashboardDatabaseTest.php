@@ -8,6 +8,7 @@ use App\Models\ChecklistTemplate;
 use App\Models\User;
 use Database\Seeders\ChecklistTemplateSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 class DashboardDatabaseTest extends TestCase
@@ -81,7 +82,7 @@ class DashboardDatabaseTest extends TestCase
         ]);
 
         $this->actingAs($administrator)
-            ->get(route('dashboard'))
+            ->get(route('dashboard', ['tab' => 'overview']))
             ->assertOk()
             ->assertViewHas('dashboardSummary', fn (array $summary): bool => $summary['overall_compliance'] === null
                 && $summary['dos_completed'] === 0
@@ -163,18 +164,18 @@ class DashboardDatabaseTest extends TestCase
                 'settings' => $restroom->settings,
             ],
             'scores' => [
-                'total' => 270,
-                'answered' => 270,
-                'yes' => 269,
+                'total' => 120,
+                'answered' => 120,
+                'yes' => 119,
                 'no' => 1,
                 'na' => 0,
-                'applicable' => 270,
-                'percentage' => 99.63,
+                'applicable' => 120,
+                'percentage' => 99.17,
                 'item_total' => 30,
                 'items_answered' => 30,
-                'slot_total' => 270,
-                'slots_answered' => 270,
-                'good' => 269,
+                'slot_total' => 120,
+                'slots_answered' => 120,
+                'good' => 119,
                 'bad' => 1,
                 'completion_percentage' => 100,
             ],
@@ -220,23 +221,23 @@ class DashboardDatabaseTest extends TestCase
                     && $summary['activeSlug'] === 'restroom'
                     && $summary['fiveSArea'] === 'restroom'
                     && $summary['isTimeSlotChecklist'] === true
-                    && $summary['timeSlotCount'] === 9
-                    && $summary['cards']['total_questions'] === 270
-                    && $summary['cards']['answered'] === 270
-                    && $summary['cards']['count_yes'] === 269
+                    && $summary['timeSlotCount'] === 4
+                    && $summary['cards']['total_questions'] === 120
+                    && $summary['cards']['answered'] === 120
+                    && $summary['cards']['count_yes'] === 119
                     && $summary['cards']['count_no'] === 1
                     && $summary['cards']['item_total'] === 30
                     && count($summary['coverageRows']) === 10
-                    && $lighting['total'] === 18
-                    && $lighting['score'] === 17
-                    && $lighting['percent'] === 94.4
-                    && $summary['overallSummaryRow']['total'] === 270
-                    && $summary['overallSummaryRow']['score'] === 269
-                    && $summary['overallSummaryRow']['percent'] === 99.6;
+                    && $lighting['total'] === 8
+                    && $lighting['score'] === 7
+                    && $lighting['percent'] === 87.5
+                    && $summary['overallSummaryRow']['total'] === 120
+                    && $summary['overallSummaryRow']['score'] === 119
+                    && $summary['overallSummaryRow']['percent'] === 99.2;
             })
             ->assertSee('RESTROOM - UTILITY 5S CHECKLIST')
             ->assertSee('Restroom / Utility 5S Checklist Score')
-            ->assertSee('9 scheduled checks per item')
+            ->assertSee('4 scheduled checks per item')
             ->assertSee('name="five_s_area" value="restroom"', false)
             ->assertSee('Month and Year:')
             ->assertSee('name="utility_time"', false)
@@ -307,6 +308,8 @@ class DashboardDatabaseTest extends TestCase
             ->assertSee('name="utility_day"', false)
             ->assertSee('name="utility_time"', false)
             ->assertSee('Month and Year:')
+            ->assertSee('Audit Completion Month')
+            ->assertDontSee('Completion Date and Time')
             ->assertDontSee('name="submission_id"', false);
 
         $this->actingAs($administrator)
@@ -360,12 +363,12 @@ class DashboardDatabaseTest extends TestCase
                 'settings' => $template->settings,
             ],
             'scores' => [
-                'total' => 270,
+                'total' => 120,
                 'answered' => 0,
                 'yes' => 0,
                 'no' => 0,
                 'na' => 0,
-                'applicable' => 270,
+                'applicable' => 120,
                 'percentage' => 0,
             ],
             'submitted_at' => now(),
@@ -422,5 +425,291 @@ class DashboardDatabaseTest extends TestCase
         ]);
 
         return $submission;
+    }
+
+    public function test_standards_checklists_display_audit_month_label_and_single_month_in_select_box(): void
+    {
+        $administrator = User::factory()->create([
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_ADMINISTRATOR,
+            'account_status' => 'active',
+        ]);
+        $salesUser = User::factory()->create([
+            'name' => 'Sales Lead',
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_SALES_MANAGER,
+            'account_status' => 'active',
+        ]);
+        $template = ChecklistTemplate::where('slug', 'dealer-operations-standards-sales')->firstOrFail();
+
+        $submission = ChecklistSubmission::create([
+            'checklist_template_id' => $template->id,
+            'user_id' => $salesUser->id,
+            'submitted_by_user_id' => $salesUser->id,
+            'submitted_by_name' => $salesUser->name,
+            'submitted_by_email' => $salesUser->email,
+            'submitted_by_user_type' => $salesUser->roleCode(),
+            'status' => 'submitted',
+            'branch' => 'Pasong Tamo',
+            'scope_key' => hash('sha256', 'pasong tamo'),
+            'audit_date' => '2026-09-15',
+            'template_version' => $template->version,
+            'context' => ['auditor' => $salesUser->name, 'branch' => 'Pasong Tamo'],
+            'template_snapshot' => [
+                'slug' => $template->slug,
+                'name' => $template->name,
+                'settings' => $template->settings,
+            ],
+            'scores' => [
+                'total' => 22,
+                'answered' => 22,
+                'yes' => 22,
+                'no' => 0,
+                'na' => 0,
+                'applicable' => 22,
+                'percentage' => 100,
+            ],
+            'submitted_at' => \Illuminate\Support\Carbon::parse('2026-09-15 14:00:00'),
+        ]);
+
+        $response = $this->actingAs($administrator)->get(route('dashboard', [
+            'form' => 'sales',
+            'branch' => 'Pasong Tamo',
+            'user_id' => $salesUser->id,
+            'submission_id' => $submission->id,
+        ]));
+
+        $response->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['isStandardsChecklist'] === true
+                    && $summary['date'] === 'September'
+                    && $summary['availableSubmissions']->first()->audit_month === 'September'
+                    && $summary['completion_date_time'] === 'September 15, 2026, 10:00 PM';
+            })
+            ->assertSee('Audit Month:')
+            ->assertSee('Completion Date and Time')
+            ->assertSee('September 15, 2026, 10:00 PM')
+            ->assertSee('id="summarySubSelect"', false)
+            ->assertSee('name="submission_id"', false)
+            ->assertSee('September')
+            ->assertDontSee('September to October')
+            ->assertDontSee('id="summaryAuditDatePicker"', false);
+
+        $aftersalesUser = User::factory()->create([
+            'name' => 'Service Lead',
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_AFTERSALES_MANAGER,
+            'account_status' => 'active',
+        ]);
+        $aftersalesTemplate = ChecklistTemplate::where('slug', 'dealer-operations-standards')->firstOrFail();
+        $aftersalesSub = ChecklistSubmission::create([
+            'checklist_template_id' => $aftersalesTemplate->id,
+            'user_id' => $aftersalesUser->id,
+            'submitted_by_user_id' => $aftersalesUser->id,
+            'submitted_by_name' => $aftersalesUser->name,
+            'submitted_by_email' => $aftersalesUser->email,
+            'submitted_by_user_type' => $aftersalesUser->roleCode(),
+            'status' => 'submitted',
+            'branch' => 'Pasong Tamo',
+            'scope_key' => hash('sha256', 'pasong tamo'),
+            'audit_date' => '2026-08-10',
+            'template_version' => $aftersalesTemplate->version,
+            'context' => ['auditor' => $aftersalesUser->name, 'branch' => 'Pasong Tamo'],
+            'template_snapshot' => [
+                'slug' => $aftersalesTemplate->slug,
+                'name' => $aftersalesTemplate->name,
+                'settings' => $aftersalesTemplate->settings,
+            ],
+            'scores' => [
+                'total' => 20,
+                'answered' => 20,
+                'yes' => 20,
+                'no' => 0,
+                'na' => 0,
+                'applicable' => 20,
+                'percentage' => 100,
+            ],
+            'submitted_at' => Carbon::parse('2026-08-15 14:00:00'),
+        ]);
+
+        $aftersalesRes = $this->actingAs($administrator)->get(route('dashboard', [
+            'form' => 'aftersales',
+            'score_view' => 'user',
+            'branch' => 'Pasong Tamo',
+            'user_id' => $aftersalesUser->id,
+            'submission_id' => $aftersalesSub->id,
+        ]));
+
+        $aftersalesRes->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['isStandardsChecklist'] === true
+                    && $summary['date'] === 'August'
+                    && $summary['availableSubmissions']->first()->audit_month === 'August'
+                    && $summary['completion_date_time'] === 'August 15, 2026, 10:00 PM';
+            })
+            ->assertSee('Audit Month:')
+            ->assertSee('Completion Date and Time')
+            ->assertSee('August 15, 2026, 10:00 PM')
+            ->assertSee('id="summarySubSelect"', false)
+            ->assertSee('August')
+            ->assertDontSee('August to September')
+            ->assertDontSee('id="summaryAuditDatePicker"', false);
+
+        // Overall Aftersales (Every user aggregate view)
+        $overallRes = $this->actingAs($administrator)->get(route('dashboard', [
+            'form' => 'aftersales',
+            'score_view' => 'overall',
+            'branch' => 'Pasong Tamo',
+        ]));
+
+        $overallRes->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['isStandardsChecklist'] === true
+                    && $summary['summaryMode'] === 'overall'
+                    && $summary['date'] === 'Latest audit per user'
+                    && $summary['completion_date_time'] === 'August 15, 2026, 10:00 PM';
+            })
+            ->assertSee('Audit Month:')
+            ->assertSee('Completion Date and Time')
+            ->assertSee('id="summaryOverallAuditDate"', false)
+            ->assertSee('name="audit_date"', false)
+            ->assertDontSee('Audit Scope');
+
+        // Draft submission displays In Progress for completion month
+        ChecklistResponse::create([
+            'checklist_submission_id' => $aftersalesSub->id,
+            'item_key' => 'dos_test_item',
+            'status' => 'yes',
+            'item_snapshot' => [
+                'key' => 'dos_test_item',
+                'prompt' => 'Test Item',
+                'section' => ['title' => 'General', 'sort_order' => 1],
+            ],
+        ]);
+        $aftersalesSub->update(['status' => 'draft', 'submitted_at' => null]);
+        $draftRes = $this->actingAs($administrator)->get(route('dashboard', [
+            'form' => 'aftersales',
+            'score_view' => 'user',
+            'branch' => 'Pasong Tamo',
+            'user_id' => $aftersalesUser->id,
+            'submission_id' => $aftersalesSub->id,
+        ]));
+
+        $draftRes->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['completion_date_time'] === 'In Progress';
+            })
+            ->assertSee('Completion Date and Time')
+            ->assertSee('In Progress');
+    }
+
+    public function test_five_s_checklists_sales_and_service_use_month_and_day_selectors_and_display_completion_time(): void
+    {
+        $administrator = User::factory()->create([
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_ADMINISTRATOR,
+            'account_status' => 'active',
+        ]);
+        $fiveSUser = User::factory()->create([
+            'name' => '5S Checker',
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_5S_SALES,
+            'account_status' => 'active',
+        ]);
+        $sales5STemplate = ChecklistTemplate::where('slug', 'sales')->firstOrFail();
+
+        $submission = ChecklistSubmission::create([
+            'checklist_template_id' => $sales5STemplate->id,
+            'user_id' => $fiveSUser->id,
+            'submitted_by_user_id' => $fiveSUser->id,
+            'submitted_by_name' => $fiveSUser->name,
+            'submitted_by_email' => $fiveSUser->email,
+            'submitted_by_user_type' => $fiveSUser->roleCode(),
+            'status' => 'submitted',
+            'branch' => 'Pasong Tamo',
+            'scope_key' => hash('sha256', 'pasong tamo'),
+            'audit_date' => '2026-08-20',
+            'template_version' => $sales5STemplate->version,
+            'context' => ['auditor' => $fiveSUser->name, 'branch' => 'Pasong Tamo'],
+            'template_snapshot' => [
+                'slug' => $sales5STemplate->slug,
+                'name' => $sales5STemplate->name,
+                'settings' => $sales5STemplate->settings,
+            ],
+            'scores' => [
+                'total' => 44,
+                'answered' => 44,
+                'yes' => 44,
+                'no' => 0,
+                'na' => 0,
+                'applicable' => 44,
+                'percentage' => 100,
+            ],
+            'submitted_at' => now(),
+        ]);
+        $julySubmission = $submission->replicate();
+        $julySubmission->audit_date = '2026-07-18';
+        $julySubmission->submitted_at = Carbon::parse('2026-07-18 09:30:00');
+        $julySubmission->save();
+
+        $response = $this->actingAs($administrator)->get(route('dashboard', [
+            'form' => 'five_s',
+            'five_s_area' => 'sales',
+            'branch' => 'Pasong Tamo',
+            'audit_date' => '2026-08-20',
+        ]));
+
+        $response->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['isFiveSDailyChecklist'] === true
+                    && $summary['selectedFiveSMonth'] === '2026-08'
+                    && $summary['selectedFiveSDate'] === '2026-08-20'
+                    && $summary['fiveSAuditMonths']->pluck('value')->all() === ['2026-08', '2026-07']
+                    && $summary['fiveSAuditDays']->pluck('value')->all() === ['2026-08-20']
+                    && $summary['date'] === 'August 20, 2026'
+                    && $summary['isFiveSSunday'] === false
+                    && $summary['completion_date_time'] !== '—';
+            })
+            ->assertSee('Month and Year:')
+            ->assertSee('Day:')
+            ->assertSee('id="summaryFiveSMonth"', false)
+            ->assertSee('name="five_s_month"', false)
+            ->assertSee('id="summaryFiveSDay"', false)
+            ->assertSee('value="2026-08-20"', false)
+            ->assertSee('Completion Date and Time')
+            ->assertDontSee('id="summaryUtilityTime"', false)
+            ->assertDontSee('id="summarySubSelect"', false)
+            ->assertDontSee('name="submission_id"', false);
+
+        $julyResponse = $this->actingAs($administrator)->get(route('dashboard', [
+            'form' => 'five_s',
+            'five_s_area' => 'sales',
+            'branch' => 'Pasong Tamo',
+            'five_s_month' => '2026-07',
+        ]));
+
+        $julyResponse
+            ->assertOk()
+            ->assertViewHas('summarySheet', fn (array $summary): bool => $summary['selectedSubmissionId'] === $julySubmission->id
+                && $summary['selectedFiveSMonth'] === '2026-07'
+                && $summary['selectedFiveSDate'] === '2026-07-18'
+                && $summary['fiveSAuditDays']->pluck('value')->all() === ['2026-07-18']);
+
+        // Service 5S also uses the month-and-day selectors.
+        $serviceRes = $this->actingAs($administrator)->get(route('dashboard', [
+            'form' => 'five_s',
+            'five_s_area' => 'service',
+            'branch' => 'Pasong Tamo',
+            'audit_date' => '2026-08-20',
+        ]));
+
+        $serviceRes->assertOk()
+            ->assertViewHas('summarySheet', fn (array $summary): bool => $summary['isFiveSDailyChecklist'] === true
+                && $summary['selectedFiveSDate'] === null)
+            ->assertSee('Month and Year:')
+            ->assertSee('Day:')
+            ->assertSee('id="summaryFiveSMonth"', false)
+            ->assertSee('id="summaryFiveSDay"', false)
+            ->assertDontSee('id="summarySubSelect"', false);
     }
 }

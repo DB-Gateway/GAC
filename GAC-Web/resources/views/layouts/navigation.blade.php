@@ -1,11 +1,23 @@
-@if (request()->routeIs(['dashboard', 'checklists.*', 'reports.*', 'users.*', 'profile.*']))
+@if (request()->routeIs(['dashboard', 'checklists.*', 'reports.*', 'users.*', 'admin.*', 'profile.*']))
     @php
-        $hasManagerNavigation = auth()->user()?->hasAdministrativeAccess() === true
-            || auth()->user()?->roleCode() === \App\Models\User::ROLE_BRANCH_OPERATIONS_MANAGER;
+        $viewerRole = auth()->user()?->roleCode();
+        $canEditChecklists = auth()->user()?->hasAdministrativeAccess() === true;
+        $hasManagerNavigation = $canEditChecklists
+            || in_array($viewerRole, [
+                \App\Models\User::ROLE_GENERAL_MANAGER,
+                \App\Models\User::ROLE_BRANCH_OPERATIONS_MANAGER,
+            ], true);
         $dashboardSection = null;
 
         if (request()->routeIs('dashboard')) {
-            $requestedDashboardSection = mb_strtolower(trim((string) request()->query('tab', 'overview')));
+            $administratorDefaultSection = $canEditChecklists
+                && ! request()->hasAny(['form', 'submission_id', 'audit_date', 'five_s_area', 'summary_mode'])
+                    ? 'users'
+                    : 'overview';
+            $requestedDashboardSection = mb_strtolower(trim((string) request()->query(
+                'tab',
+                $administratorDefaultSection
+            )));
             $dashboardSection = in_array($requestedDashboardSection, ['overview', 'follow-up', 'reports', 'users', 'override'], true)
                 ? $requestedDashboardSection
                 : 'overview';
@@ -42,17 +54,16 @@
             ],
         ];
 
-        if ($hasManagerNavigation) {
-            $appNavigationItems[] = [
-                'route' => 'dashboard',
-                'active' => ['dashboard'],
-                'is_active' => $followUpIsActive,
-                'parameters' => ['tab' => 'follow-up'],
-                'icon' => 'images/sidebar-icons/website  icon_task assigment.png',
-                'label' => 'Follow-up',
-                'data_view' => 'follow-up',
-            ];
-        }
+        $followUpContext = array_filter(
+            request()->only(['branch', 'month', 'status']),
+            static fn ($value): bool => $value !== null && $value !== ''
+        );
+        $currentFollowUpTemplate = $followUpIsActive
+            ? (string) request()->query('template', '')
+            : null;
+        $currentFollowUpView = $followUpIsActive
+            ? (string) request()->query('view', 'findings')
+            : 'findings';
 
         if (! $hasManagerNavigation) {
             $appNavigationItems[] = [
@@ -63,7 +74,18 @@
             ];
         }
 
-        $checklistEditorGroups = config('checklists.navigation_groups');
+        $checklistEditorGroups = collect(config('checklists.navigation_groups'))
+            ->map(function (array $group): array {
+                $group['items'] = collect($group['items'])
+                    ->filter(fn (array $item): bool => auth()->user()?->canAccessChecklist($item['slug']) === true)
+                    ->values()
+                    ->all();
+
+                return $group;
+            })
+            ->filter(fn (array $group): bool => ! empty($group['items']))
+            ->values()
+            ->all();
 
         $currentChecklist = request()->routeIs('checklists.*')
             ? (string) request()->query('checklist', 'dealer-operations-standards')
@@ -128,6 +150,66 @@
                 @endforeach
 
                 @if ($hasManagerNavigation)
+                    <li class="sidebar-editor-item sidebar-findings-item">
+                        <details class="sidebar-editor sidebar-findings" id="findingsDropdown"{{ $followUpIsActive ? ' open' : '' }}>
+                            <summary class="sidebar-editor-toggle{{ $followUpIsActive ? ' active' : '' }}"
+                                     aria-controls="findingsMenu">
+                                <span class="menu-icon nav-icon" aria-hidden="true">
+                                    <img src="{{ asset('images/sidebar-icons/website  icon_task assigment.png') }}" alt="" width="22" height="22">
+                                </span>
+                                <span>Checklist Findings</span>
+                                <i class="fas fa-chevron-down sidebar-editor-chevron" aria-hidden="true"></i>
+                            </summary>
+
+                            <div class="sidebar-editor-menu" id="findingsMenu" aria-label="Checklist findings">
+                                <section class="sidebar-editor-group" aria-labelledby="findingsGroupViews">
+                                    <div class="sidebar-editor-group-title" id="findingsGroupViews">
+                                        Views
+                                    </div>
+                                    <div class="sidebar-editor-links">
+                                        @php($allFindingsActive = $followUpIsActive && $currentFollowUpView === 'findings' && empty($currentFollowUpTemplate))
+                                        <a href="{{ route('dashboard', ['tab' => 'follow-up']) }}"
+                                           class="sidebar-editor-link{{ $allFindingsActive ? ' active' : '' }}"
+                                           data-navigation-view="follow-up"
+                                           @if ($allFindingsActive) aria-current="page" @endif>
+                                            <span class="sidebar-editor-dot" aria-hidden="true"></span>
+                                            <span>All Findings</span>
+                                        </a>
+                                        @php($historyActive = $followUpIsActive && $currentFollowUpView === 'history')
+                                        <a href="{{ route('dashboard', [...$followUpContext, 'tab' => 'follow-up', 'view' => 'history']) }}"
+                                           class="sidebar-editor-link{{ $historyActive ? ' active' : '' }}"
+                                           @if ($historyActive) aria-current="page" @endif>
+                                            <span class="sidebar-editor-dot" aria-hidden="true"></span>
+                                            <span>Activity History</span>
+                                        </a>
+                                    </div>
+                                </section>
+
+                                @foreach ($checklistEditorGroups as $groupIndex => $group)
+                                    <section class="sidebar-editor-group" aria-labelledby="findingsGroup{{ $groupIndex }}">
+                                        <div class="sidebar-editor-group-title" id="findingsGroup{{ $groupIndex }}">
+                                            {{ $group['label'] }}
+                                        </div>
+                                        <div class="sidebar-editor-links">
+                                            @foreach ($group['items'] as $findingsItem)
+                                                @php($findingsItemActive = $followUpIsActive && $currentFollowUpTemplate === $findingsItem['slug'])
+                                                <a href="{{ route('dashboard', [...$followUpContext, 'tab' => 'follow-up', 'view' => 'findings', 'template' => $findingsItem['slug']]) }}"
+                                                   class="sidebar-editor-link{{ $findingsItemActive ? ' active' : '' }}"
+                                                   data-findings-checklist="{{ $findingsItem['slug'] }}"
+                                                   @if ($findingsItemActive) aria-current="page" @endif>
+                                                    <span class="sidebar-editor-dot" aria-hidden="true"></span>
+                                                    <span>{{ $findingsItem['label'] }}</span>
+                                                </a>
+                                            @endforeach
+                                        </div>
+                                    </section>
+                                @endforeach
+                            </div>
+                        </details>
+                    </li>
+                @endif
+
+                @if ($canEditChecklists)
                     <li class="sidebar-editor-item">
                         <details class="sidebar-editor" id="editorDropdown"{{ $editorIsActive ? ' open' : '' }}>
                             <summary class="sidebar-editor-toggle{{ $editorIsActive ? ' active' : '' }}"
@@ -233,7 +315,7 @@
                                        data-report-view="user-usages"
                                        @if ($userUsagesIsActive) aria-current="{{ $userUsagesIsCurrentPage ? 'page' : 'location' }}" @endif>
                                         <span class="sidebar-editor-dot" aria-hidden="true"></span>
-                                        <span>User Usages</span>
+                                        <span>User Usage</span>
                                     </a>
                                 </li>
                             @endif
@@ -241,6 +323,7 @@
                     </details>
                 </li>
 
+                @if ($canEditChecklists)
                 <li class="sidebar-debug-item">
                     <details class="sidebar-editor sidebar-debug" id="debugDropdown">
                         <summary class="sidebar-editor-toggle sidebar-debug-toggle" aria-controls="debugMenu">
@@ -252,6 +335,15 @@
                         </summary>
 
                         <ul class="sidebar-editor-menu sidebar-debug-menu" id="debugMenu" aria-label="Debug Tools">
+                            <li>
+                                <button type="button"
+                                        class="sidebar-editor-link sidebar-debug-link"
+                                        id="sidebarDebugResetDatabaseBtn"
+                                        title="Reset database activity and checklist data">
+                                    <span class="sidebar-editor-dot" style="background: #DC2626;" aria-hidden="true"></span>
+                                    <span>Reset Database Data</span>
+                                </button>
+                            </li>
                             <li>
                                 <button type="button"
                                         class="sidebar-editor-link sidebar-debug-link"
@@ -300,6 +392,18 @@
                         </ul>
                     </details>
                 </li>
+                @endif
+
+                @if ($canEditChecklists)
+                    <li>
+                        <a class="nav-link {{ request()->routeIs('admin.checklist-access.*') ? 'active' : '' }}"
+                           href="{{ route('admin.checklist-access.index') }}"
+                           @if (request()->routeIs('admin.checklist-access.*')) aria-current="page" @endif>
+                            <span class="menu-icon nav-icon" aria-hidden="true"><i class="fas fa-toggle-on"></i></span>
+                            <span>Checklist Availability</span>
+                        </a>
+                    </li>
+                @endif
             </ul>
 
 
@@ -415,6 +519,13 @@
 
                 <!-- Debug: Reset Checklist -->
                 <button type="button"
+                        id="fallbackDebugResetDatabaseBtn"
+                        class="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-gray-100 flex items-center gap-2 font-medium">
+                    <i class="fas fa-database" aria-hidden="true"></i>
+                    <span>Debug: Reset Database Data</span>
+                </button>
+
+                <button type="button"
                         id="fallbackDebugResetBtn"
                         class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100 flex items-center gap-2 font-medium">
                     <i class="fas fa-bug" aria-hidden="true"></i>
@@ -493,17 +604,17 @@
                 </div>
                 <div class="debug-safety-copy">
                     <strong>Safety Guarantee</strong>
-                    <p>Only checklist answers (user responses, drafts, submissions, subforms, documentation) and notification history will be reset. Master checklist templates, sections, questions, rating rules, and user accounts will <strong>NEVER</strong> be deleted or altered.</p>
+                    <p id="debugResetSafetyCopy">Only checklist answers (user responses, drafts, submissions, subforms, documentation) and notification history will be reset. Master checklist templates, sections, questions, rating rules, and user accounts will <strong>NEVER</strong> be deleted or altered.</p>
                 </div>
             </div>
 
-            <div class="debug-modal-field">
+            <div class="debug-modal-field" id="debugTemplateField">
                 <label for="debugTemplateSelect">Select Checklist to Reset</label>
                 <select id="debugTemplateSelect" class="debug-select-control">
+                    <option value="all" selected>All Checklists (All Types)</option>
                     @if (isset($currentChecklist) && $currentChecklist)
-                        <option value="{{ $currentChecklist }}" selected>Current Checklist ({{ ucwords(str_replace('-', ' ', $currentChecklist)) }})</option>
+                        <option value="{{ $currentChecklist }}">Current Checklist ({{ ucwords(str_replace('-', ' ', $currentChecklist)) }})</option>
                     @endif
-                    <option value="all" @if (!isset($currentChecklist) || !$currentChecklist) selected @endif>All Checklists (All Types)</option>
                     <option value="dealer-operations-standards">Dealer Operations Standards (Aftersales)</option>
                     <option value="dealer-operations-standards-subform">Dealer Operations Standards (Subform - 39 Items)</option>
                     <option value="dealer-operations-standards-documentation">Dealer Operations Standards (Documentation - 17 Standards)</option>
@@ -517,6 +628,13 @@
             <div class="debug-modal-field">
                 <label>Target Entries</label>
                 <div class="debug-scope-options">
+                    <label class="debug-radio-label">
+                        <input type="radio" name="debugResetTarget" value="database">
+                        <span>
+                            <strong>All database activity and checklist data</strong>
+                            <small>Clears all checklist records, reports, notifications, usage history, and database queue/cache data.</small>
+                        </span>
+                    </label>
                     <label class="debug-radio-label">
                         <input type="radio" name="debugResetTarget" value="all" checked>
                         <span>
@@ -572,7 +690,7 @@
                 </label>
             </div>
 
-            <div class="debug-modal-field">
+            <div class="debug-modal-field" id="debugScopeField">
                 <label>Reset Scope</label>
                 <div class="debug-scope-options">
                     <label class="debug-radio-label">
@@ -613,11 +731,13 @@
         const modal = document.getElementById('debugResetModalOverlay');
         if (!modal) return;
 
+        const openBtnSidebarDatabase = document.getElementById('sidebarDebugResetDatabaseBtn');
         const openBtnSidebar = document.getElementById('sidebarDebugResetBtn');
         const openBtnSidebarDrafts = document.getElementById('sidebarDebugResetDraftsBtn');
         const openBtnSidebarSubforms = document.getElementById('sidebarDebugResetSubformsBtn');
         const openBtnSidebarDoc = document.getElementById('sidebarDebugResetDocumentationBtn');
         const openBtnSidebarNotifications = document.getElementById('sidebarDebugResetNotificationsBtn');
+        const openBtnFallbackDatabase = document.getElementById('fallbackDebugResetDatabaseBtn');
         const openBtnFallback = document.getElementById('fallbackDebugResetBtn');
         const openBtnFallbackDrafts = document.getElementById('fallbackDebugResetDraftsBtn');
         const openBtnFallbackSubforms = document.getElementById('fallbackDebugResetSubformsBtn');
@@ -631,12 +751,24 @@
         const modalTitle = document.getElementById('debugResetModalTitle');
         const modalSubtitle = document.getElementById('debugResetModalSubtitle');
         const modalIcon = document.getElementById('debugResetModalIcon');
+        const safetyCopy = document.getElementById('debugResetSafetyCopy');
+        const templateField = document.getElementById('debugTemplateField');
+        const scopeField = document.getElementById('debugScopeField');
         const includeNotificationsField = document.getElementById('debugIncludeNotificationsField');
         const includeNotificationsCheckbox = document.getElementById('debugResetIncludeNotifications');
 
         function updateModalStateForTarget(target) {
+            if (templateField) templateField.style.display = target === 'database' ? 'none' : 'block';
+            if (scopeField) scopeField.style.display = target === 'database' ? 'none' : 'block';
+            if (safetyCopy) {
+                safetyCopy.textContent = target === 'database'
+                    ? 'This clears all checklist records, reports, notifications, usage history, and database queue/cache data. Users, login and device settings, checklist definitions, restroom dropdowns, and dealer checklist settings are preserved.'
+                    : 'Only checklist answers (user responses, drafts, submissions, subforms, documentation) and notification history will be reset. Master checklist templates, sections, questions, rating rules, and user accounts will never be deleted or altered.';
+            }
             if (modalTitle) {
-                modalTitle.textContent = target === 'drafts'
+                modalTitle.textContent = target === 'database'
+                    ? 'Debug: Reset Database Data'
+                    : target === 'drafts'
                     ? 'Debug: Reset Checklist Drafts'
                     : (target === 'submitted'
                         ? 'Debug: Reset Submitted Answers'
@@ -647,7 +779,9 @@
                                 : (target === 'notifications' ? 'Debug: Reset Notification History' : 'Debug: Reset Checklist Answers'))));
             }
             if (modalSubtitle) {
-                modalSubtitle.textContent = target === 'drafts'
+                modalSubtitle.textContent = target === 'database'
+                    ? 'Clear all operational records while preserving users and settings needed by other functions.'
+                    : target === 'drafts'
                     ? 'Clear unfinished draft entries while preserving submitted history & master items.'
                     : (target === 'submitted'
                         ? 'Clear submitted inspection records while preserving in-progress drafts.'
@@ -660,7 +794,9 @@
                                     : 'Clear answers, subforms, documentation, and notification history while preserving master items & accounts.'))));
             }
             if (modalIcon) {
-                modalIcon.className = target === 'drafts'
+                modalIcon.className = target === 'database'
+                    ? 'fas fa-database'
+                    : target === 'drafts'
                     ? 'fas fa-eraser'
                     : (target === 'subforms'
                         ? 'fas fa-table-list'
@@ -669,17 +805,21 @@
                             : (target === 'notifications' ? 'fas fa-bell-slash' : 'fas fa-bug')));
             }
             if (includeNotificationsField) {
-                includeNotificationsField.style.display = (target === 'notifications' || target === 'subforms' || target === 'documentation') ? 'none' : 'block';
+                includeNotificationsField.style.display = (target === 'database' || target === 'notifications' || target === 'subforms' || target === 'documentation') ? 'none' : 'block';
             }
             if (executeBtn) {
-                const icon = target === 'drafts'
+                const icon = target === 'database'
+                    ? 'fa-database'
+                    : target === 'drafts'
                     ? 'fa-eraser'
                     : (target === 'subforms'
                         ? 'fa-table-list'
                         : (target === 'documentation'
                             ? 'fa-file-lines'
                             : (target === 'notifications' ? 'fa-bell-slash' : 'fa-trash-can')));
-                const label = target === 'drafts'
+                const label = target === 'database'
+                    ? 'Reset Database Data'
+                    : target === 'drafts'
                     ? 'Reset Drafts'
                     : (target === 'submitted'
                         ? 'Reset Submissions'
@@ -695,6 +835,10 @@
         function openModal(initialTarget = 'all') {
             modal.classList.add('is-open');
             modal.setAttribute('aria-hidden', 'false');
+
+            if (templateSelect) templateSelect.value = 'all';
+            const allScopeRadio = document.querySelector('input[name="debugResetScope"][value="all"]');
+            if (allScopeRadio) allScopeRadio.checked = true;
 
             const targetRadio = document.querySelector(`input[name="debugResetTarget"][value="${initialTarget}"]`);
             if (targetRadio) {
@@ -734,11 +878,13 @@
             });
         });
 
+        if (openBtnSidebarDatabase) openBtnSidebarDatabase.addEventListener('click', () => openModal('database'));
         if (openBtnSidebar) openBtnSidebar.addEventListener('click', () => openModal('all'));
         if (openBtnSidebarDrafts) openBtnSidebarDrafts.addEventListener('click', () => openModal('drafts'));
         if (openBtnSidebarSubforms) openBtnSidebarSubforms.addEventListener('click', () => openModal('subforms'));
         if (openBtnSidebarDoc) openBtnSidebarDoc.addEventListener('click', () => openModal('documentation'));
         if (openBtnSidebarNotifications) openBtnSidebarNotifications.addEventListener('click', () => openModal('notifications'));
+        if (openBtnFallbackDatabase) openBtnFallbackDatabase.addEventListener('click', () => openModal('database'));
         if (openBtnFallback) openBtnFallback.addEventListener('click', () => openModal('all'));
         if (openBtnFallbackDrafts) openBtnFallbackDrafts.addEventListener('click', () => openModal('drafts'));
         if (openBtnFallbackSubforms) openBtnFallbackSubforms.addEventListener('click', () => openModal('subforms'));
@@ -768,10 +914,12 @@
 
                 const auditDateEl = document.getElementById('auditDate') || document.querySelector('input[name="date"]');
                 const branchEl = document.getElementById('branchSelect') || document.querySelector('select[name="branch"]');
-                const date = auditDateEl ? auditDateEl.value : '';
-                const branch = branchEl ? branchEl.value : '';
+                const date = scope === 'current' && auditDateEl ? auditDateEl.value : '';
+                const branch = scope === 'current' && branchEl ? branchEl.value : '';
 
-                const confirmMsg = target === 'drafts'
+                const confirmMsg = target === 'database'
+                    ? 'Reset all database activity and checklist data across every branch and date? Users, login and device settings, checklist definitions, restroom dropdowns, and dealer checklist settings will be preserved.'
+                    : target === 'drafts'
                     ? 'Are you sure you want to reset the checklist drafts? Submitted history, master templates, and questions will be preserved.'
                     : (target === 'submitted'
                         ? 'Are you sure you want to reset submitted checklist answers? Master templates, questions, and accounts will be preserved.'
@@ -788,7 +936,9 @@
                 }
 
                 executeBtn.disabled = true;
-                const spinnerLabel = target === 'drafts'
+                const spinnerLabel = target === 'database'
+                    ? 'Resetting database data...'
+                    : target === 'drafts'
                     ? 'Resetting drafts…'
                     : (target === 'subforms'
                         ? 'Resetting subforms…'
@@ -829,7 +979,9 @@
                         alertBox.style.display = 'block';
                     }
 
-                    const successLabel = target === 'drafts'
+                    const successLabel = target === 'database'
+                        ? 'Database Data Reset!'
+                        : target === 'drafts'
                         ? 'Drafts Reset!'
                         : (target === 'subforms'
                             ? 'Subforms Reset!'

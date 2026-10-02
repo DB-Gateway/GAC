@@ -13,52 +13,59 @@ class DosOperationalUserSeeder extends Seeder
      * Stable operational identities requested for the DOS mobile workspace.
      * Passwords are intentionally absent and come from environment config only.
      *
-     * @var list<array{name: string, email: string, role: string}>
+     * @var list<array{name: string, legacy_email: string, role: string}>
      */
     private const ACCOUNTS = [
         [
             'name' => 'Sales Manager',
-            'email' => 'sm@gateway.com',
+            'legacy_email' => 'sm@gateway.com',
             'role' => User::ROLE_SALES_MANAGER,
         ],
         [
             'name' => 'Aftersales Manager',
-            'email' => 'asm@gateway.com',
+            'legacy_email' => 'asm@gateway.com',
             'role' => User::ROLE_AFTERSALES_MANAGER,
         ],
         [
             'name' => 'Customer Experience Service',
-            'email' => 'ce@gateway.com',
+            'legacy_email' => 'ce@gateway.com',
             'role' => User::ROLE_CE_SERVICE,
         ],
         [
             'name' => 'Job Controller',
-            'email' => 'jc@gateway.com',
+            'legacy_email' => 'jc@gateway.com',
             'role' => User::ROLE_JOB_CONTROLLER,
         ],
         [
             'name' => 'Parts Supervisor',
-            'email' => 'parts@gateway.com',
+            'legacy_email' => 'parts@gateway.com',
             'role' => User::ROLE_PARTS_SUPERVISOR,
         ],
         [
             'name' => 'Workshop Supervisor',
-            'email' => 'ws.sup@gateway.com',
+            'legacy_email' => 'ws.sup@gateway.com',
             'role' => User::ROLE_WORKSHOP_SUPERVISOR,
         ],
     ];
 
     public function run(): void
     {
-        $existingByEmail = User::query()
-            ->whereIn('email', array_column(self::ACCOUNTS, 'email'))
-            ->get()
-            ->keyBy(fn (User $user): string => strtolower(trim($user->email)));
-        $missingAccounts = collect(self::ACCOUNTS)
-            ->reject(fn (array $account): bool => $existingByEmail->has($account['email']));
-
         $branch = trim((string) config('gac.seeded_dos_accounts.branch'));
         $initialPassword = (string) config('gac.seeded_dos_accounts.initial_password');
+        $accounts = collect(self::ACCOUNTS)->map(fn (array $account): array => [
+            ...$account,
+            'username' => User::usernameFor($account['role'], $branch, name: $account['name']),
+        ]);
+        $existingUsers = User::query()->get()->filter(
+            fn (User $user): bool => $accounts->contains(
+                fn (array $account): bool => $user->roleCode() === $account['role']
+            )
+        );
+        $missingAccounts = $accounts->reject(
+            fn (array $account): bool => $existingUsers->contains(
+                fn (User $user): bool => $user->roleCode() === $account['role']
+            )
+        );
 
         if ($missingAccounts->isNotEmpty()) {
             if (! in_array($branch, config('gac.branches', []), true)) {
@@ -77,13 +84,19 @@ class DosOperationalUserSeeder extends Seeder
         $created = 0;
         $reused = 0;
 
-        foreach (self::ACCOUNTS as $account) {
-            /** @var User|null $user */
-            $user = $existingByEmail->get($account['email']);
+        foreach ($accounts as $account) {
+            $user = $existingUsers->first(
+                fn (User $candidate): bool => $candidate->roleCode() === $account['role']
+            );
 
             if ($user !== null) {
                 // Keep the operator's name, branch, status, and password intact.
                 $user->forceFill([
+                    'email' => User::usernameFor(
+                        $account['role'],
+                        $user->branch ?: $branch,
+                        name: $user->name
+                    ),
                     'user_type' => $account['role'],
                     'pic_assignment_type' => null,
                 ])->save();
@@ -95,7 +108,7 @@ class DosOperationalUserSeeder extends Seeder
             $user = new User;
             $user->forceFill([
                 'name' => $account['name'],
-                'email' => $account['email'],
+                'email' => $account['username'],
                 'email_verified_at' => now(),
                 'branch' => $branch,
                 'user_type' => $account['role'],

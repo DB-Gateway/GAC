@@ -86,36 +86,36 @@ class HourlySubmissionNotificationIntegrationTest extends TestCase
         $draftService = app(DraftFollowUpService::class)->pendingDrafts($gm);
         $this->assertTrue($draftService->isEmpty());
 
-        // 2. Submit 09:00 inspection on the same day
-        $responses09 = $items->map(function ($item, int $index): array {
+        // 2. Submit 11:00 inspection on the same day
+        $responses11 = $items->map(function ($item, int $index): array {
             return [
                 'item_id' => $item->id,
                 'status' => 'yes',
                 'details' => [
                     'slots' => [
                         '08:00' => 'good',
-                        '09:00' => 'good',
+                        '11:00' => 'good',
                     ],
-                    'submitted_slots' => ['08:00', '09:00'],
+                    'submitted_slots' => ['08:00', '11:00'],
                 ],
             ];
         })->all();
 
-        $res09 = $this->actingAs($utilitiesPic)
-            ->withHeader('X-Client-Time', '2026-09-11 09:15:00')
+        $res11 = $this->actingAs($utilitiesPic)
+            ->withHeader('X-Client-Time', '2026-09-11 11:15:00')
             ->postJson(route('checklists.submit', $template), [
                 'date' => $auditDate,
                 'branch' => $branch,
-                'responses' => $responses09,
+                'responses' => $responses11,
             ]);
 
-        $res09->assertStatus(201);
+        $res11->assertStatus(201);
 
         // Still only 1 submission row (continuous daily sheet) and 1 report
         $this->assertDatabaseCount('checklist_submissions', 1);
         $this->assertSame(1, Report::where('checklist_submission_id', $submission->id)->count());
 
-        // GM and BOM received the 09:00 notification (total 2 notifications each)
+        // GM and BOM received the 11:00 notification (total 2 notifications each)
         $this->assertCount(2, $gm->notifications()->where('type', PicTaskCompleted::class)->get());
         $this->assertCount(2, $bom->notifications()->where('type', PicTaskCompleted::class)->get());
     }

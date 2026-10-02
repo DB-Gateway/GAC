@@ -8,6 +8,8 @@ use App\Models\ChecklistTemplate;
 use App\Models\User;
 use Database\Seeders\ChecklistTemplateSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class OverrideWorkspaceTest extends TestCase
@@ -96,8 +98,7 @@ class OverrideWorkspaceTest extends TestCase
 
         $bom->update(['branch' => null]);
         $this->get(route('dashboard', ['tab' => 'override', 'checklist' => 'sales']))
-            ->assertOk()
-            ->assertViewHas('reportFindings', fn ($findings) => $findings->isEmpty());
+            ->assertForbidden();
     }
 
     public function test_override_tab_requires_manager_access(): void
@@ -164,6 +165,80 @@ class OverrideWorkspaceTest extends TestCase
             ->assertOk()
             ->assertViewHas('reportFindings', fn ($findings) => $findings->pluck('response_id')->all() === [$finding->id])
             ->assertSee('Action plan updated');
+    }
+
+    public function test_manager_can_override_finding_with_proof_attachment_and_timestamp_tracked(): void
+    {
+        Storage::fake('public');
+        $finding = $this->finding('sales');
+        $manager = $this->manager();
+
+        $proofFile = UploadedFile::fake()->createWithContent('rectification_proof.png', base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDa8AAAAASUVORK5CYII='
+        ));
+
+        $response = $this->actingAs($manager)->post(route('reports.responses.override', $finding), [
+            '_method' => 'PATCH',
+            'status' => 'yes',
+            'override_reason' => 'Rectified and verified with attached proof on-site.',
+            'action_plan' => 'Completed immediate fix.',
+            'proof' => $proofFile,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('response.status', 'yes')
+            ->assertJsonPath('response.override_details.overridden_by_name', $manager->name)
+            ->assertJsonPath('response.override_details.overridden_at_formatted', '10 Sep 2026, 06:00 PM');
+
+        $storedPath = $response->json('response.override_details.attachment_path');
+        $storedUrl = $response->json('response.override_details.attachment_url');
+        $this->assertNotNull($storedPath);
+        $this->assertNotNull($storedUrl);
+        Storage::disk('public')->assertExists($storedPath);
+
+        // Reports view shows the override timestamp and proof attached
+        $this->get(route('reports.index', ['template' => 'sales']))
+            ->assertOk()
+            ->assertSee('10 Sep 2026, 06:00 PM')
+            ->assertSee('Rectified and verified with attached proof on-site.')
+            ->assertSee('Proof Attached')
+            ->assertSee($storedUrl);
+
+        // Export findings CSV contains the override date and proof attachment link
+        $csvResponse = $this->get(route('reports.export.findings', [
+            'template' => 'sales',
+        ]));
+        $csvResponse->assertOk();
+        $this->assertStringContainsString('Override Proof Attachment', $csvResponse->streamedContent());
+        $this->assertStringContainsString('10 Sep 2026, 06:00 PM', $csvResponse->streamedContent());
+        $this->assertStringContainsString($storedUrl, $csvResponse->streamedContent());
+
+        // Report audit record includes override timestamp and attachment info
+        $this->assertDatabaseHas('reports', [
+            'type' => 'checklist_response_override',
+            'checklist_submission_id' => $finding->checklist_submission_id,
+            'generated_by_user_id' => $manager->id,
+        ]);
+    }
+
+    public function test_override_workspace_renders_escalation_helpers_for_administrator_and_bom(): void
+    {
+        $this->finding('sales');
+
+        foreach ([User::ROLE_ADMINISTRATOR, User::ROLE_BRANCH_OPERATIONS_MANAGER] as $role) {
+            $user = $this->manager($role);
+            $response = $this->actingAs($user)->get(route('dashboard', [
+                'tab' => 'override',
+                'checklist' => 'sales',
+                'month' => '2026-09',
+            ]));
+
+            $response->assertOk()
+                ->assertSee('function resolveEscalationOptions', false)
+                ->assertSee('function populateEscalationSelect', false)
+                ->assertSee('function openOverrideModal', false);
+        }
     }
 
     private function manager(string $role = User::ROLE_ADMINISTRATOR): User

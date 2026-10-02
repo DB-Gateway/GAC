@@ -15,7 +15,7 @@ class TaskCompletionNotifier
      * Notify the existing PIC audience, or route a DOS audit to management and its
      * explicitly selected escalation teams.
      */
-    public function send(ChecklistSubmission $submission, User $completedBy): int
+    public function send(ChecklistSubmission $submission, User $completedBy, array $missedSlots = []): int
     {
         if (in_array($completedBy->roleCode(), [
             User::ROLE_5S_UTILITIES,
@@ -34,41 +34,36 @@ class TaskCompletionNotifier
             return 0;
         }
 
-        Notification::send($recipients, new PicTaskCompleted($submission, $completedBy));
+        Notification::send($recipients, new PicTaskCompleted($submission, $completedBy, $missedSlots));
 
         return $recipients->count();
     }
 
     private function picRecipients(ChecklistSubmission $submission, User $completedBy)
     {
-        $branch = mb_strtolower(trim((string) ($submission->branch ?: $completedBy->branch)));
+        $branch = mb_strtolower(trim((string) $submission->branch));
+
+        if ($branch === '') {
+            return collect();
+        }
 
         return User::query()
             ->where('account_status', 'active')
             ->whereKeyNot($completedBy->getKey())
-            ->where(function (Builder $query) use ($branch): void {
+            ->whereRaw('LOWER(TRIM(branch)) = ?', [$branch])
+            ->where(function (Builder $query): void {
                 $this->whereRoleIs($query, [
                     User::ROLE_ADMINISTRATOR,
+                    User::ROLE_GENERAL_MANAGER,
+                    User::ROLE_BRANCH_OPERATIONS_MANAGER,
                     'Administrator',
                     'Compliance Administrator',
                     'GAC Administrator',
                     'Gateway Administrator',
                     'GM',
                     'General Manager',
+                    'Branch Operations Manager',
                 ]);
-
-                if ($branch !== '') {
-                    $query->orWhere(function (Builder $branchManagers) use ($branch): void {
-                        $this->whereRoleIs($branchManagers, [
-                            User::ROLE_BRANCH_OPERATIONS_MANAGER,
-                            'Branch Operations Manager',
-                        ]);
-                        $branchManagers->whereRaw(
-                            'LOWER(TRIM(branch)) = ?',
-                            [$branch]
-                        );
-                    });
-                }
             })
             ->get();
     }
@@ -76,7 +71,11 @@ class TaskCompletionNotifier
     private function dosRecipients(ChecklistSubmission $submission, User $completedBy)
     {
         $submission->loadMissing('responses');
-        $branch = mb_strtolower(trim((string) ($submission->branch ?: $completedBy->branch)));
+        $branch = mb_strtolower(trim((string) $submission->branch));
+
+        if ($branch === '') {
+            return collect();
+        }
         $targets = $submission->responses
             ->filter(fn ($response): bool => in_array($response->status, ['no', 'na'], true))
             ->map(fn ($response): ?string => $this->responseEscalationTarget($response))
@@ -85,6 +84,7 @@ class TaskCompletionNotifier
             ->values();
         $roles = [
             User::ROLE_ADMINISTRATOR,
+            User::ROLE_GENERAL_MANAGER,
             'Administrator',
             'Compliance Administrator',
             'GAC Administrator',
@@ -117,24 +117,14 @@ class TaskCompletionNotifier
             $roles = [...$roles, User::ROLE_INVENTORY, 'Inventory Team'];
         }
 
+        $roles = [...$roles, User::ROLE_BRANCH_OPERATIONS_MANAGER, 'Branch Operations Manager'];
+
         return User::query()
             ->where('account_status', 'active')
             ->whereKeyNot($completedBy->getKey())
-            ->where(function (Builder $query) use ($roles, $branch): void {
+            ->whereRaw('LOWER(TRIM(branch)) = ?', [$branch])
+            ->where(function (Builder $query) use ($roles): void {
                 $this->whereRoleIs($query, $roles);
-
-                if ($branch !== '') {
-                    $query->orWhere(function (Builder $branchManagers) use ($branch): void {
-                        $this->whereRoleIs($branchManagers, [
-                            User::ROLE_BRANCH_OPERATIONS_MANAGER,
-                            'Branch Operations Manager',
-                        ]);
-                        $branchManagers->whereRaw(
-                            'LOWER(TRIM(branch)) = ?',
-                            [$branch]
-                        );
-                    });
-                }
             })
             ->get();
     }

@@ -13,7 +13,7 @@ void main() {
   );
 
   test(
-    'current NO and N/A answers count, regardless of historical metadata',
+    'current NO answers count, while N/A and historical metadata are excluded',
     () {
       final record = _record([
         _response(
@@ -32,7 +32,7 @@ void main() {
         _response(' NO '),
       ]);
       final targets = checklistAttentionTargets(record, admin);
-      expect(targets.map((t) => t.itemKey), ['q1', 'q3']);
+      expect(targets.map((t) => t.itemKey), ['q3']);
     },
   );
 

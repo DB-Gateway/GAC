@@ -608,20 +608,15 @@ class ChecklistTemplateSeeder extends Seeder
         return [
             'slug' => 'restroom',
             'name' => 'Restroom Checklist',
-            'description' => 'Hourly restroom condition and orderliness inspection.',
+            'description' => 'Restroom condition and orderliness inspection at 8 AM, 11 AM, 1 PM, and 4 PM.',
             'settings' => [
                 'validation_mode' => 'time_slots',
-                'instructions' => 'Mark each hourly inspection as Good (/) or Not Good (X), and add a row remark when needed.',
+                'instructions' => 'Mark each scheduled inspection as Good (/) or Not Good (X), and add a row remark when needed.',
                 'time_slots' => [
                     ['key' => '08:00', 'label' => '8 AM'],
-                    ['key' => '09:00', 'label' => '9 AM'],
-                    ['key' => '10:00', 'label' => '10 AM'],
                     ['key' => '11:00', 'label' => '11 AM'],
                     ['key' => '13:00', 'label' => '1 PM'],
-                    ['key' => '14:00', 'label' => '2 PM'],
-                    ['key' => '15:00', 'label' => '3 PM'],
                     ['key' => '16:00', 'label' => '4 PM'],
-                    ['key' => '17:00', 'label' => '5 PM'],
                 ],
                 'legend' => ['good' => '/', 'not_good' => 'X'],
                 'remark_per_item' => true,

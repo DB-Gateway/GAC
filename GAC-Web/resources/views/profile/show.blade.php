@@ -69,7 +69,7 @@
 
                 <div class="detail-grid">
                     <div class="detail-item">
-                        <span class="detail-label">Email / login</span>
+                        <span class="detail-label">Username</span>
                         <span class="detail-value">{{ $user->email }}</span>
                     </div>
                     <div class="detail-item">

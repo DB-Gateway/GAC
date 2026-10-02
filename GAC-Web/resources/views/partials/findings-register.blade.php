@@ -24,20 +24,20 @@
                 @if ($isFollowUpWorkspace)
                     <span class="authority-badge {{ $canViewFindings ? 'gm-review' : 'bom-escalation' }}">
                         <i class="fas {{ $canViewFindings ? 'fa-eye' : 'fa-arrow-up-right-dots' }}" aria-hidden="true"></i>
-                        {{ $canViewFindings ? 'GM Finding Review' : 'BOM Escalation Access' }}
+                        {{ $canViewFindings ? 'Finding Review' : 'Escalation Access' }}
                     </span>
                 @elseif ($showOverrideActions)
                     <span class="authority-badge" title="You are authorized to override and edit checklist responses">
-                        <i class="fas fa-shield-check" aria-hidden="true"></i> BOM / GM Override Active
+                        <i class="fas fa-shield-check" aria-hidden="true"></i> Override Active
                     </span>
                 @else
-                    <span class="authority-badge locked" title="Only BOM and GM users may override NO responses">
+                    <span class="authority-badge locked" title="Only authorized users may override NO responses">
                         <i class="fas fa-lock" aria-hidden="true"></i> View Only
                     </span>
                 @endif
             </div>
             <h3>{{ $registerTitle ?? 'Checklist NO Answers & Escalations' }}</h3>
-            <p>{{ $registerDescription ?? 'Comprehensive register of non-compliant checklist responses. Review BOM tasks, action plans, photo evidence, and department escalations.' }}</p>
+            <p>{{ $registerDescription ?? 'Comprehensive register of non-compliant checklist responses. Review tasks, action plans, photo evidence, and department escalations.' }}</p>
         </div>
 
         <div class="register-actions">
@@ -60,7 +60,7 @@
                     <th>Date &amp; Branch</th>
                     <th>Checklist &amp; Item</th>
                     <th>Deficiency &amp; Action Plan</th>
-                    <th>BOM Suggested Escalation</th>
+                    <th>Suggested Escalation</th>
                     <th>Commitment Date &amp; Time</th>
                     <th>Status / Resolution</th>
                     <th class="actions-col">Action</th>
@@ -132,6 +132,21 @@
                                 @if ($finding['item_key'])
                                     <code class="item-code">{{ $finding['item_key'] }}</code>
                                 @endif
+                                @if (!empty($finding['is_compiled']) && !empty($finding['compiled_questions']))
+                                    <details class="compiled-checklist-items-toggle" style="margin-top: 8px; font-size: 11px; background: rgba(15, 38, 66, 0.45); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 6px 10px;">
+                                        <summary style="cursor: pointer; font-weight: 700; color: #38bdf8;">
+                                            <i class="fas fa-list-check" aria-hidden="true"></i> View all {{ $finding['compiled_count'] }} checklist questions
+                                        </summary>
+                                        <ol style="margin: 8px 0 4px 18px; padding: 0; line-height: 1.5; color: #cbd5e1; max-height: 160px; overflow-y: auto;">
+                                            @foreach ($finding['compiled_questions'] as $cq)
+                                                <li>
+                                                    <strong>{{ $cq['area'] ?? '' }}:</strong> {{ $cq['question'] }}
+                                                    <span style="display: inline-block; padding: 1px 5px; font-size: 9px; font-weight: 800; border-radius: 4px; background: rgba(217, 45, 32, 0.2); color: #f87171; margin-left: 4px;">{{ $cq['result'] ?? 'X' }}</span>
+                                                </li>
+                                            @endforeach
+                                        </ol>
+                                    </details>
+                                @endif
                             </div>
                         </td>
 
@@ -143,7 +158,7 @@
                             </div>
                             @if (!empty($finding['bom_task']))
                                 <div class="finding-bom-task">
-                                    <span class="detail-label"><i class="fas fa-list-check" aria-hidden="true"></i> BOM Task:</span>
+                                    <span class="detail-label"><i class="fas fa-list-check" aria-hidden="true"></i> Task:</span>
                                     <p>{{ $finding['bom_task'] }}</p>
                                 </div>
                             @endif
@@ -166,9 +181,28 @@
                             @else
                                 <span class="summary-no-photo"><i class="fas fa-image" aria-hidden="true"></i> No photo attached</span>
                             @endif
+                            @if (!empty($finding['override_details']['attachment_url']))
+                                <div class="finding-override-proof-box">
+                                    <span class="detail-label"><i class="fas fa-shield-check text-success" aria-hidden="true"></i> Override Proof:</span>
+                                    <a href="{{ $finding['override_details']['attachment_url'] }}"
+                                       target="_blank"
+                                       rel="noopener noreferrer"
+                                       class="summary-photo-link summary-proof-link"
+                                       title="View override proof attachment">
+                                        @if ($finding['override_details']['is_image'] ?? true)
+                                            <img src="{{ $finding['override_details']['attachment_url'] }}"
+                                                 alt="Override proof for {{ $finding['item_key'] }}"
+                                                 loading="lazy">
+                                        @else
+                                            <span class="proof-pdf-icon"><i class="fas fa-file-pdf text-danger" aria-hidden="true"></i> PDF Proof</span>
+                                        @endif
+                                        <span><i class="fas fa-up-right-from-square" aria-hidden="true"></i> View proof</span>
+                                    </a>
+                                </div>
+                            @endif
                         </td>
 
-                        <!-- BOM Suggested Escalation -->
+                        <!-- Suggested Escalation -->
                         <td class="escalation-cell">
                             @if (!empty($finding['recommended_escalation']))
                                 <div class="workbook-target-label" title="Workbook recommended recipient">
@@ -198,7 +232,7 @@
                                         } }}" aria-hidden="true"></i>
                                         <span>{{ $finding['escalation_target_label'] }}</span>
                                     </div>
-                                    <small class="bom-escalated-note">BOM Target</small>
+                                    <small class="bom-escalated-note">Target</small>
                                 @else
                                     <span class="no-escalation-text"><i class="fas fa-minus" aria-hidden="true"></i> None specified</span>
                                 @endif
@@ -233,9 +267,23 @@
                                         <i class="fas fa-check-double" aria-hidden="true"></i> {{ $finding['result'] }}
                                     </span>
                                     <div class="override-meta-note">
-                                        <span>By {{ $finding['override_details']['overridden_by_name'] ?? 'Manager' }} ({{ $finding['override_details']['overridden_by_role'] ?? 'BOM' }})</span>
+                                        <span class="override-meta-actor">By {{ $finding['override_details']['overridden_by_name'] ?? 'Manager' }} ({{ $finding['override_details']['overridden_by_role'] ?? 'BOM' }})</span>
+                                        @if (!empty($finding['override_details']['overridden_at_formatted']))
+                                            <span class="override-meta-timestamp" title="Date and time when override was submitted">
+                                                <i class="fas fa-clock" aria-hidden="true"></i> {{ $finding['override_details']['overridden_at_formatted'] }}
+                                            </span>
+                                        @endif
                                         @if (!empty($finding['override_details']['reason']))
                                             <small title="{{ $finding['override_details']['reason'] }}">“{{ Str::limit($finding['override_details']['reason'], 35) }}”</small>
+                                        @endif
+                                        @if (!empty($finding['override_details']['attachment_url']))
+                                            <a href="{{ $finding['override_details']['attachment_url'] }}"
+                                               target="_blank"
+                                               rel="noopener noreferrer"
+                                               class="override-proof-chip"
+                                               title="View attached proof document">
+                                                <i class="fas fa-paperclip" aria-hidden="true"></i> Proof Attached
+                                            </a>
                                         @endif
                                     </div>
                                 @else
@@ -247,16 +295,23 @@
                             </div>
                         </td>
 
-                        <!-- BOM / GM Actions -->
+                        <!-- Follow-up & Override Actions -->
                         <td class="actions-cell">
                             <div class="actions-stack">
+                                <button type="button" class="button button-sm button-view-finding"
+                                        data-view-finding
+                                        data-finding="{{ json_encode($finding, JSON_HEX_APOS | JSON_HEX_QUOT) }}"
+                                        title="View and print official corporate finding document">
+                                    <i class="fas fa-eye" aria-hidden="true"></i> View
+                                </button>
+
                                 @if ($canViewFindings && $isNo)
                                     <div class="follow-up-action-wrap">
                                         <button type="button"
                                                 class="button button-sm summary-follow-up-btn"
                                                 data-request-finding-follow-up
                                                 data-endpoint="{{ route('reports.responses.follow-up', $finding['response_id']) }}"
-                                                title="Request follow-up from the assigned BOM">
+                                                title="Request follow-up on this finding">
                                             <i class="fas fa-bell" aria-hidden="true"></i>
                                             <span>Follow-up</span>
                                         </button>
@@ -269,6 +324,10 @@
                                             data-action="open-escalate"
                                             data-response-id="{{ $finding['response_id'] }}"
                                             data-template="{{ $finding['template_name'] }}"
+                                            data-template-slug="{{ $finding['template_slug'] ?? '' }}"
+                                            data-auditor-role="{{ $finding['auditor_role'] ?? '' }}"
+                                            data-checker-role="{{ $finding['checker_role'] ?? '' }}"
+                                            data-is-restroom="{{ !empty($finding['is_restroom']) ? '1' : '0' }}"
                                             data-branch="{{ $finding['branch'] }}"
                                             data-item-key="{{ $finding['item_key'] }}"
                                             data-item-prompt="{{ $finding['item'] }}"
@@ -288,6 +347,10 @@
                                             data-endpoint="{{ route('reports.responses.override', $finding['response_id']) }}"
                                             data-response-id="{{ $finding['response_id'] }}"
                                             data-template="{{ $finding['template_name'] }}"
+                                            data-template-slug="{{ $finding['template_slug'] ?? '' }}"
+                                            data-auditor-role="{{ $finding['auditor_role'] ?? '' }}"
+                                            data-checker-role="{{ $finding['checker_role'] ?? '' }}"
+                                            data-is-restroom="{{ !empty($finding['is_restroom']) ? '1' : '0' }}"
                                             data-branch="{{ $finding['branch'] }}"
                                             data-item-key="{{ $finding['item_key'] }}"
                                             data-item-prompt="{{ $finding['item'] }}"
@@ -296,11 +359,19 @@
                                             data-commitment="{{ $finding['commitment_date_local'] }}"
                                             data-action-plan="{{ $finding['action_plan'] }}"
                                             data-finding="{{ $finding['detail'] }}"
+                                            data-is-overridden="{{ $finding['is_overridden'] ? '1' : '0' }}"
+                                            data-overridden-at="{{ $finding['override_details']['overridden_at'] ?? '' }}"
+                                            data-overridden-at-formatted="{{ $finding['override_details']['overridden_at_formatted'] ?? '' }}"
+                                            data-overridden-by="{{ $finding['override_details']['overridden_by_name'] ?? '' }}"
+                                            data-overridden-role="{{ $finding['override_details']['overridden_by_role'] ?? '' }}"
+                                            data-override-reason="{{ $finding['override_details']['reason'] ?? '' }}"
+                                            data-override-attachment-url="{{ $finding['override_details']['attachment_url'] ?? '' }}"
+                                            data-override-attachment-name="{{ $finding['override_details']['attachment_name'] ?? '' }}"
                                             title="Override checklist finding status with justification">
                                         <i class="fas fa-pen-to-square" aria-hidden="true"></i> Override / Edit
                                     </button>
                                 @elseif (! $canViewFindings && ! $canManageEscalations)
-                                    <span class="locked-badge" title="Only BOM &amp; GM users are authorized to manage or override NO answers in the checklist">
+                                    <span class="locked-badge" title="Only authorized users may manage or override NO answers in the checklist">
                                         <i class="fas fa-lock" aria-hidden="true"></i> View Only
                                     </span>
                                 @endif

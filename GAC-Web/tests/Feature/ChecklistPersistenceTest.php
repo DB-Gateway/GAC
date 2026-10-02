@@ -88,6 +88,80 @@ class ChecklistPersistenceTest extends TestCase
             ->assertJsonPath("submission.responses.{$item->key}.status", 'yes');
     }
 
+    public function test_mitsubishi_sucat_and_honda_fairview_keep_separate_checklist_records(): void
+    {
+        $template = ChecklistTemplate::where('slug', 'sales')->firstOrFail();
+        $item = $template->items()->firstOrFail();
+        $date = '2026-09-25';
+        $sucat = User::factory()->create([
+            'branch' => 'Mitsubishi Sucat',
+            'user_type' => User::ROLE_5S_SALES,
+        ]);
+        $fairview = User::factory()->create([
+            'branch' => 'Honda Fairview',
+            'user_type' => User::ROLE_5S_SALES,
+        ]);
+
+        $this->actingAs($sucat)->postJson(route('api.checklists.save-draft', $template), [
+            'date' => $date,
+            'responses' => [['item_id' => $item->id, 'status' => 'yes']],
+        ])->assertCreated();
+
+        $this->actingAs($fairview)
+            ->getJson(route('api.checklists.show', ['template' => $template, 'date' => $date]))
+            ->assertOk()
+            ->assertJsonPath('submission', null);
+        $this->getJson(route('api.checklists.index', ['date' => $date]))
+            ->assertOk()
+            ->assertJsonPath('branch', 'Honda Fairview');
+        $this->postJson(route('api.checklists.save-draft', $template), [
+            'date' => $date,
+            'branch' => 'Mitsubishi Sucat',
+            'responses' => [['item_id' => $item->id, 'status' => 'no']],
+        ])->assertForbidden();
+        $this->postJson(route('api.checklists.save-draft', $template), [
+            'date' => $date,
+            'responses' => [['item_id' => $item->id, 'status' => 'no']],
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('checklist_submissions', [
+            'user_id' => $sucat->id, 'branch' => 'Mitsubishi Sucat',
+        ]);
+        $this->assertDatabaseHas('checklist_submissions', [
+            'user_id' => $fairview->id, 'branch' => 'Honda Fairview',
+        ]);
+        $this->assertDatabaseCount('checklist_submissions', 2);
+    }
+
+    public function test_reassigning_an_account_to_another_branch_does_not_carry_its_draft(): void
+    {
+        $template = ChecklistTemplate::where('slug', 'sales')->firstOrFail();
+        $item = $template->items()->firstOrFail();
+        $date = '2026-09-25';
+        $inspector = User::factory()->create([
+            'branch' => 'Mitsubishi Sucat',
+            'user_type' => User::ROLE_5S_SALES,
+        ]);
+
+        $this->actingAs($inspector)->postJson(route('api.checklists.save-draft', $template), [
+            'date' => $date,
+            'responses' => [['item_id' => $item->id, 'status' => 'yes']],
+        ])->assertCreated();
+
+        $inspector->update(['branch' => 'Honda Fairview']);
+        $this->getJson(route('api.checklists.show', [
+            'template' => $template, 'date' => $date,
+        ]))->assertOk()->assertJsonPath('submission', null);
+        $this->getJson(route('api.checklists.show', [
+            'template' => $template, 'date' => $date, 'branch' => 'Mitsubishi Sucat',
+        ]))->assertForbidden();
+
+        $inspector->update(['branch' => 'Mitsubishi Sucat']);
+        $this->getJson(route('api.checklists.show', [
+            'template' => $template, 'date' => $date,
+        ]))->assertOk()->assertJsonPath("submission.responses.{$item->key}.status", 'yes');
+    }
+
     public function test_partial_dos_category_drafts_merge_without_deleting_other_category_responses(): void
     {
         $user = $this->administrator();
@@ -199,9 +273,10 @@ class ChecklistPersistenceTest extends TestCase
         $response
             ->assertCreated()
             ->assertJsonPath('submission.status', 'submitted')
-            ->assertJsonPath('submission.scores.slot_total', 270)
-            ->assertJsonPath('submission.scores.slots_answered', 270)
-            ->assertJsonPath('submission.scores.good', 269)
+            ->assertJsonPath('submission.scores.slot_total', 120)
+            ->assertJsonPath('submission.scores.slots_answered', 120)
+            ->assertJsonPath('submission.scores.completed_slots', 4)
+            ->assertJsonPath('submission.scores.good', 119)
             ->assertJsonPath('submission.scores.bad', 1);
 
         $submission = ChecklistSubmission::firstOrFail();

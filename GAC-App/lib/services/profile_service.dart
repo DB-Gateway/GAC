@@ -70,7 +70,7 @@ class ProfileApiService implements ProfileRepository {
     final data = await _jsonRequest(
       'PATCH',
       '/profile',
-      body: {'name': name.trim(), 'email': email.trim().toLowerCase()},
+      body: {'name': name.trim(), 'username': email.trim()},
     );
     return _profileFromResponse(data);
   }

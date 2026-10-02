@@ -11,12 +11,14 @@ class UtilitiesChecklistSyncResult {
     required this.missedSlots,
     this.activeDueSlot,
     this.submission,
+    this.missedSlotsByChecklist = const {},
   });
 
   final bool autoSubmitted;
   final List<String> missedSlots;
   final String? activeDueSlot;
   final ChecklistSubmissionData? submission;
+  final Map<String, List<String>> missedSlotsByChecklist;
 
   String get formattedMissedSlots {
     if (missedSlots.isEmpty) return '';
@@ -35,21 +37,16 @@ class UtilitiesChecklistSyncResult {
   }
 }
 
-/// Service to handle 5S Utilities hourly inspection missed-submission auto-recording
-/// and 8:00 AM (and subsequent hourly) due submission prompts.
+/// Service to handle scheduled 5S Utilities inspection missed-submission recording
+/// and due submission prompts.
 class UtilitiesMissedChecklistService {
   const UtilitiesMissedChecklistService._();
 
   static const List<String> defaultUtilitiesSlots = [
     '08:00',
-    '09:00',
-    '10:00',
     '11:00',
-    '13:00',
     '14:00',
-    '15:00',
     '16:00',
-    '17:00',
   ];
 
   static bool isUtilitiesUser(AuthenticatedUser? user) {
@@ -57,7 +54,7 @@ class UtilitiesMissedChecklistService {
     return user.is5sUtilities || user.isUtilities;
   }
 
-  /// Checks for any missed inspection slots starting from 8:00 AM.
+  /// Checks every assigned Utilities/restroom checklist for missed slots.
   /// If current time has passed an inspection slot window without submission,
   /// automatically marks the active items for that slot as 'not_good' ("NO")
   /// and submits the checklist to the server.
@@ -67,24 +64,70 @@ class UtilitiesMissedChecklistService {
     required AuthenticatedUser user,
     DateTime? now,
     String? date,
+    List<ChecklistCatalogItem>? catalog,
   }) async {
     if (!isUtilitiesUser(user)) return null;
 
     final currentTime = now ?? DateTime.now();
     final dateStr = date ?? _formatDate(currentTime);
 
-    ChecklistLoadResult record;
-    try {
-      record = await repository.fetchChecklist('restroom', date: dateStr);
-    } catch (_) {
+    if (catalog == null) {
       try {
-        record = await repository.fetchChecklist('utilities', date: dateStr);
+        catalog = await repository.fetchCatalog(date: dateStr);
       } catch (e) {
         debugPrint(
-          'UtilitiesMissedChecklistService: could not load checklist: $e',
+          'UtilitiesMissedChecklistService: could not load catalog: $e',
         );
         return null;
       }
+    }
+
+    final checklists = catalog.where(
+      (item) => item.slug == 'utilities' || item.slug.startsWith('restroom'),
+    );
+    final missedByChecklist = <String, List<String>>{};
+    String? activeDueSlot;
+    ChecklistSubmissionData? latestSubmission;
+    var autoSubmitted = false;
+    for (final checklist in checklists) {
+      final result = await _syncChecklist(
+        repository: repository,
+        slug: checklist.slug,
+        currentTime: currentTime,
+        dateStr: dateStr,
+      );
+      if (result == null) continue;
+      if (result.missedSlots.isNotEmpty) {
+        missedByChecklist[checklist.slug] = result.missedSlots;
+      }
+      autoSubmitted |= result.autoSubmitted;
+      activeDueSlot ??= result.activeDueSlot;
+      latestSubmission = result.submission ?? latestSubmission;
+    }
+    return UtilitiesChecklistSyncResult(
+      autoSubmitted: autoSubmitted,
+      missedSlots: missedByChecklist.values
+          .expand((slots) => slots)
+          .toSet()
+          .toList(),
+      missedSlotsByChecklist: missedByChecklist,
+      activeDueSlot: activeDueSlot,
+      submission: latestSubmission,
+    );
+  }
+
+  static Future<UtilitiesChecklistSyncResult?> _syncChecklist({
+    required ChecklistRepository repository,
+    required String slug,
+    required DateTime currentTime,
+    required String dateStr,
+  }) async {
+    ChecklistLoadResult record;
+    try {
+      record = await repository.fetchChecklist(slug, date: dateStr);
+    } catch (e) {
+      debugPrint('UtilitiesMissedChecklistService: could not load $slug: $e');
+      return null;
     }
 
     final template = record.template;
@@ -93,8 +136,8 @@ class UtilitiesMissedChecklistService {
     final rawSlots = template.timeSlots.isNotEmpty
         ? template.timeSlots
         : defaultUtilitiesSlots
-            .map((k) => ChecklistTimeSlot(key: k, label: k))
-            .toList(growable: false);
+              .map((k) => ChecklistTimeSlot(key: k, label: k))
+              .toList(growable: false);
 
     final auditDateTime =
         _parseDate(dateStr) ??
@@ -106,6 +149,11 @@ class UtilitiesMissedChecklistService {
     for (final slot in rawSlots) {
       final slotStart = _slotStart(slot.key, auditDateTime);
       if (slotStart == null) continue;
+      if (!template.sections
+          .expand((section) => section.items)
+          .any((item) => item.isSlotActive(slot.key))) {
+        continue;
+      }
       final slotEnd = slotStart.add(const Duration(hours: 1));
 
       final isExpired = !currentTime.isBefore(slotEnd);
@@ -151,23 +199,22 @@ class UtilitiesMissedChecklistService {
       final submittedSet = <String>{
         if (rawSubmittedSlots is Iterable)
           for (final slotKey in rawSubmittedSlots)
-            if (slotKey is String && slotKey.trim().isNotEmpty)
-              slotKey.trim(),
+            if (slotKey is String && slotKey.trim().isNotEmpty) slotKey.trim(),
       };
+      var markedMissed = false;
 
       for (final missedSlot in missedSlots) {
         if (item.isSlotActive(missedSlot.key)) {
-          final existing = slotsMap[missedSlot.key]?.trim().toLowerCase();
-          if (existing == null ||
-              existing.isEmpty ||
-              existing == 'unanswered') {
+          if (!submittedSet.contains(missedSlot.key)) {
             slotsMap[missedSlot.key] = 'not_good';
+            markedMissed = true;
           }
           submittedSet.add(missedSlot.key);
         }
       }
 
       final details = <String, dynamic>{
+        ...?existingResponse?.details,
         if (slotsMap.isNotEmpty) 'slots': slotsMap,
         if (submittedSet.isNotEmpty)
           'submitted_slots': (submittedSet.toList()..sort()),
@@ -178,7 +225,11 @@ class UtilitiesMissedChecklistService {
         'item_id': item.id,
         'item_key': item.key,
         'status': null,
-        'remark': existingResponse?.remark,
+        'remark': existingResponse?.remark?.trim().isNotEmpty == true
+            ? existingResponse!.remark
+            : (markedMissed
+                  ? 'Failed to conduct the checklist on time.'
+                  : existingResponse?.remark),
         'finding': existingResponse?.finding,
         'action_plan': null,
         'commitment_date': null,
@@ -220,15 +271,9 @@ class UtilitiesMissedChecklistService {
     final responses = submission.responses;
     if (responses.isEmpty) return false;
 
-    // Check if slotKey is in submitted_slots of any response
-    for (final response in responses.values) {
-      final rawSubmitted = response.details['submitted_slots'];
-      if (rawSubmitted is Iterable && rawSubmitted.contains(slotKey)) {
-        return true;
-      }
-    }
-
-    // Check if all active items for this slot have a valid answer
+    // A saved draft is not a submitted inspection. Every active item must
+    // carry the slot's submission marker, unless this is a legacy submitted
+    // record that only stores the answers.
     final items = template.sections
         .expand((s) => s.items)
         .where((i) => i.isSlotActive(slotKey))
@@ -237,6 +282,11 @@ class UtilitiesMissedChecklistService {
 
     for (final item in items) {
       final resp = responses[item.key];
+      final rawSubmitted = resp?.details['submitted_slots'];
+      if (rawSubmitted is Iterable && rawSubmitted.contains(slotKey)) {
+        continue;
+      }
+      if (!submission.isSubmitted) return false;
       final mark = resp?.details['slots']?[slotKey]
           ?.toString()
           .trim()

@@ -10,54 +10,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   group('TaskReminderPlanner', () {
-    test('plans each utilities slot five minutes before it is due', () {
-      final reminders = TaskReminderPlanner.forUser(
-        user: _user(assignment: 'utilities'),
-        checklists: [
-          _catalog(
-            slug: 'restroom',
-            settings: const {
-              'validation_mode': 'time_slots',
-              'time_slots': [
-                {'key': '08:00', 'label': '8 AM'},
-                {'key': '09:00', 'label': '9 AM'},
-                {'key': '13:00', 'label': '1 PM'},
-              ],
-            },
-          ),
-        ],
-      );
-
+    test('uses server-checked notices instead of daily Utilities alarms', () {
       expect(
-        reminders
-            .map((reminder) => '${reminder.hour}:${reminder.minute}')
-            .toList(),
-        ['7:55', '8:55', '12:55'],
+        TaskReminderPlanner.forUser(
+          user: _user(assignment: 'utilities'),
+          checklists: [
+            _catalog(
+              slug: 'restroom',
+              settings: const {
+                'validation_mode': 'time_slots',
+                'time_slots': ['08:00', '11:00', '14:00', '16:00'],
+              },
+            ),
+          ],
+        ),
+        isEmpty,
       );
-      expect(reminders.first.title, 'Utilities check in 5 minutes');
-      expect(reminders.first.body, contains('8:00 AM'));
-      expect(reminders.first.payload.templateSlug, 'restroom');
-      expect(reminders.first.payload.slotKey, '08:00');
     });
-
-    test('handles a utilities slot just after midnight', () {
-      final reminders = TaskReminderPlanner.forUser(
-        user: _user(assignment: 'restroom'),
-        checklists: [
-          _catalog(
-            slug: 'utilities',
-            settings: const {
-              'validation_mode': 'time_slots',
-              'time_slots': ['00:03'],
-            },
-          ),
-        ],
-      );
-
-      expect(reminders.single.hour, 23);
-      expect(reminders.single.minute, 58);
-    });
-
     test('groups the Sales and Service window into one reminder', () {
       final reminders = TaskReminderPlanner.forUser(
         user: _user(assignment: 'sales_service'),
@@ -320,6 +289,47 @@ void main() {
       },
     );
 
+    test('keeps cached checklist catalogs separate after a branch change', () async {
+      SharedPreferences.setMockInitialValues({});
+      final service = LocalNotificationService.instance;
+      const sucatUser = AuthenticatedUser(
+        id: 72,
+        name: 'Branch Inspector',
+        email: 'inspector@gateway.test',
+        userType: '5S_SALES',
+        branch: 'Mitsubishi Sucat',
+        accountStatus: 'active',
+      );
+      const fairviewUser = AuthenticatedUser(
+        id: 72,
+        name: 'Branch Inspector',
+        email: 'inspector@gateway.test',
+        userType: '5S_SALES',
+        branch: 'Honda Fairview',
+        accountStatus: 'active',
+      );
+
+      await service.syncForUser(
+        user: sucatUser,
+        checklists: [_catalog(slug: 'sales', settings: const {})],
+      );
+      await service.syncForUser(
+        user: fairviewUser,
+        checklists: [_catalog(slug: 'service', settings: const {})],
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getString('${gacCachedChecklistCatalogKey}:72:mitsubishi%20sucat'),
+        contains('sales'),
+      );
+      expect(
+        prefs.getString('${gacCachedChecklistCatalogKey}:72:honda%20fairview'),
+        contains('service'),
+      );
+      expect(prefs.getString(gacCachedChecklistCatalogKey), isNull);
+    });
+
     test(
       'saves and consumes pending notification payload for manual login',
       () async {
@@ -345,72 +355,21 @@ void main() {
   });
 
   group('Lead Time Preferences and Planning', () {
-    test('plans utilities reminders according to custom leadTimeMinutes', () {
-      final catalog = [
-        _catalog(
-          slug: 'restroom',
-          settings: const {
-            'validation_mode': 'time_slots',
-            'time_slots': [
-              {'key': '09:00', 'label': '9 AM'},
-            ],
-          },
-        ),
-      ];
-
-      // 5 minutes (default preset)
-      final reminders5 = TaskReminderPlanner.forUser(
-        user: _user(assignment: 'utilities'),
-        checklists: catalog,
-        leadTimeMinutes: 5,
-      );
-      expect(reminders5.single.hour, 8);
-      expect(reminders5.single.minute, 55);
-      expect(reminders5.single.title, 'Utilities check in 5 minutes');
-      expect(reminders5.single.body, contains('is due in 5 minutes'));
-
-      // 10 minutes
-      final reminders10 = TaskReminderPlanner.forUser(
-        user: _user(assignment: 'utilities'),
-        checklists: catalog,
-        leadTimeMinutes: 10,
-      );
-      expect(reminders10.single.hour, 8);
-      expect(reminders10.single.minute, 50);
-      expect(reminders10.single.title, 'Utilities check in 10 minutes');
-
-      // 15 minutes
-      final reminders15 = TaskReminderPlanner.forUser(
-        user: _user(assignment: 'utilities'),
-        checklists: catalog,
-        leadTimeMinutes: 15,
-      );
-      expect(reminders15.single.hour, 8);
-      expect(reminders15.single.minute, 45);
-      expect(reminders15.single.title, 'Utilities check in 15 minutes');
-
-      // 30 minutes
-      final reminders30 = TaskReminderPlanner.forUser(
-        user: _user(assignment: 'utilities'),
-        checklists: catalog,
-        leadTimeMinutes: 30,
-      );
-      expect(reminders30.single.hour, 8);
-      expect(reminders30.single.minute, 30);
-      expect(reminders30.single.title, 'Utilities check in 30 minutes');
-
-      // 1 hour (60 minutes)
-      final reminders60 = TaskReminderPlanner.forUser(
-        user: _user(assignment: 'utilities'),
-        checklists: catalog,
-        leadTimeMinutes: 60,
-      );
-      expect(reminders60.single.hour, 8);
-      expect(reminders60.single.minute, 0);
-      expect(reminders60.single.title, 'Utilities check in 1 hour');
-      expect(reminders60.single.body, contains('is due in 1 hour'));
-    });
-
+    test(
+      'local lead-time settings do not override server Utilities deadlines',
+      () {
+        for (final minutes in [5, 10, 15, 30, 60]) {
+          expect(
+            TaskReminderPlanner.forUser(
+              user: _user(assignment: 'utilities'),
+              checklists: const [],
+              leadTimeMinutes: minutes,
+            ),
+            isEmpty,
+          );
+        }
+      },
+    );
     test('formatLeadTime formats minutes and hours cleanly', () {
       expect(TaskReminderPlanner.formatLeadTime(5), '5 minutes');
       expect(TaskReminderPlanner.formatLeadTime(10), '10 minutes');
@@ -666,22 +625,16 @@ void main() {
       expect(adminPlan[2].title, contains('Daily'));
     });
 
-    test('plans fallback 9 utilities slots for 5S Utilities when checklists is empty (offline/timed-out)', () {
-      final plan = TaskReminderPlanner.forRole(
-        userType: '5S_UTILITIES',
-        assignment: 'utilities',
-        checklists: const [],
-        leadTimeMinutes: 5,
+    test('does not create unconditional Utilities alarms when offline', () {
+      expect(
+        TaskReminderPlanner.forRole(
+          userType: '5S_UTILITIES',
+          assignment: 'utilities',
+          checklists: const [],
+        ),
+        isEmpty,
       );
-
-      expect(plan, hasLength(9));
-      expect(plan.first.hour, 7);
-      expect(plan.first.minute, 55);
-      expect(plan.first.payload.templateSlug, 'restroom');
-      expect(plan.last.hour, 16);
-      expect(plan.last.minute, 55);
     });
-
     test('plans fallback shift reminder for 5S Sales when checklists is empty (offline/timed-out)', () {
       final plan = TaskReminderPlanner.forRole(
         userType: '5S_SALES',

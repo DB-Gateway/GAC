@@ -2,10 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BranchRestroom;
 use App\Models\ChecklistResponse;
 use App\Models\ChecklistSubmission;
 use App\Models\ChecklistTemplate;
+use App\Models\DealerChecklistSetting;
+use App\Models\Report;
 use App\Models\User;
+use App\Models\UserUsageEvent;
 use App\Services\AftersalesSubformDocService;
 use App\Services\NotificationService;
 use Carbon\CarbonImmutable;
@@ -77,11 +81,20 @@ class DashboardController extends Controller
 
         $userRole = $request->user()?->roleCode();
         $isAdministrator = $request->user()?->hasAdministrativeAccess() === true;
-        $canViewFindings = $userRole === User::ROLE_ADMINISTRATOR;
+        $canViewFindings = in_array($userRole, [
+            User::ROLE_ADMINISTRATOR,
+            User::ROLE_GENERAL_MANAGER,
+        ], true);
         $canManageEscalations = $userRole === User::ROLE_BRANCH_OPERATIONS_MANAGER;
         $canAccessFollowUp = $canViewFindings || $canManageEscalations;
-        $canViewUserUsages = $isAdministrator || $canManageEscalations;
-        $requestedTab = mb_strtolower(trim((string) $request->query('tab', 'overview')));
+        $canViewUserUsages = $isAdministrator
+            || $userRole === User::ROLE_GENERAL_MANAGER
+            || $canManageEscalations;
+        $administratorDefaultTab = $isAdministrator
+            && ! $request->hasAny(['form', 'submission_id', 'audit_date', 'five_s_area', 'summary_mode'])
+                ? 'users'
+                : 'overview';
+        $requestedTab = mb_strtolower(trim((string) $request->query('tab', $administratorDefaultTab)));
         $activeTab = in_array($requestedTab, ['overview', 'follow-up', 'reports', 'users', 'override'], true)
             ? $requestedTab
             : 'overview';
@@ -94,14 +107,24 @@ class DashboardController extends Controller
             $activeTab = 'overview';
         }
 
-        $overrideChecklists = collect(config('checklists.navigation_groups'))->pluck('items')->flatten(1);
+        $allOverrideChecklists = collect(config('checklists.navigation_groups'))->pluck('items')->flatten(1);
+        $overrideChecklists = collect(config('checklists.navigation_groups'))
+            ->pluck('items')
+            ->flatten(1)
+            ->filter(fn (array $item): bool => $request->user()?->canAccessChecklist($item['slug']) === true)
+            ->values();
         $selectedOverrideChecklist = null;
         if ($activeTab === 'override') {
             abort_unless($request->user()?->canOverrideChecklistResponses(), 403);
             $validated = $request->validate([
-                'checklist' => ['nullable', 'string', Rule::in($overrideChecklists->pluck('slug')->all())],
+                'checklist' => ['nullable', 'string', Rule::in($allOverrideChecklists->pluck('slug')->all())],
             ]);
             $selectedOverrideChecklist = $validated['checklist'] ?? 'dealer-operations-standards';
+            abort_unless(
+                $request->user()?->canAccessChecklist($selectedOverrideChecklist) === true,
+                403,
+                'This checklist is unavailable for your assigned dealer / brand.'
+            );
         }
 
         $summarySheet = $this->summarySheetData($request);
@@ -178,6 +201,96 @@ class DashboardController extends Controller
         $followUpResponseId = (int) $request->query('follow_up_response_id', 0);
         $canOverrideAny = $request->user()?->canOverrideChecklistResponses() ?? false;
 
+        $followUpHistory = collect();
+        if ($activeTab === 'follow-up' && $canAccessFollowUp) {
+            $reportTimezone = config('gac.report_timezone', 'Asia/Manila');
+            $followUpHistory = Report::query()
+                ->whereIn('type', [
+                    'checklist_response_escalation',
+                    'finding_follow_up_request',
+                    'escalation_follow_up',
+                ])
+                ->with('generatedBy')
+                ->latest('generated_at')
+                ->limit(100)
+                ->get()
+                ->map(function (Report $report) use ($reportTimezone): array {
+                    $snapshot = is_array($report->data_snapshot) ? $report->data_snapshot : [];
+                    $user = $report->generatedBy;
+
+                    $actionType = match ($report->type) {
+                        'finding_follow_up_request' => 'Follow-up Request',
+                        'checklist_response_escalation' => 'Escalation Update',
+                        'escalation_follow_up' => 'Escalation Follow-up',
+                        default => ucwords(str_replace('_', ' ', $report->type)),
+                    };
+
+                    $actionIcon = match ($report->type) {
+                        'finding_follow_up_request' => 'fa-bell',
+                        'checklist_response_escalation' => 'fa-arrow-up-right-dots',
+                        'escalation_follow_up' => 'fa-clipboard-check',
+                        default => 'fa-circle-info',
+                    };
+
+                    $branch = data_get($snapshot, 'branch', '—');
+                    $itemKey = data_get($snapshot, 'item_key', '—');
+                    $templateName = data_get($snapshot, 'template_name', '—');
+                    $escalationTarget = data_get($snapshot, 'escalation_target');
+                    $escalationLabel = $escalationTarget
+                        ? (ChecklistResponse::escalationTargetOptions()[$escalationTarget]
+                            ?? ucwords(str_replace('_', ' ', (string) $escalationTarget)))
+                        : '—';
+
+                    $actionPlan = data_get($snapshot, 'action_plan', '');
+                    $commitmentDate = data_get($snapshot, 'commitment_date');
+                    $finding = data_get($snapshot, 'finding', '');
+                    $question = data_get($snapshot, 'question', '');
+                    $remarks = data_get($snapshot, 'remarks', '');
+                    $remarkOption = data_get($snapshot, 'remark_option', '');
+                    $photos = data_get($snapshot, 'photos', []);
+                    $auditDate = data_get($snapshot, 'audit_date', '');
+
+                    $generatedAt = $report->generated_at
+                        ? $report->generated_at->copy()->timezone($reportTimezone)
+                        : null;
+
+                    return [
+                        'id' => $report->getKey(),
+                        'type' => $report->type,
+                        'action_type' => $actionType,
+                        'action_icon' => $actionIcon,
+                        'title' => $report->title,
+                        'generated_at' => $generatedAt?->format('d M Y, h:i A'),
+                        'generated_at_diff' => $generatedAt?->diffForHumans(),
+                        'performed_by' => $user?->name ?? data_get($snapshot, 'sender_name', '—'),
+                        'performed_by_role' => $user
+                            ? $user->roleLabel()
+                            : (filled(data_get($snapshot, 'sender_role'))
+                                ? User::roleLabelFor(data_get($snapshot, 'sender_role'))
+                                : '—'),
+                        'branch' => $branch,
+                        'template_name' => $templateName,
+                        'item_key' => $itemKey,
+                        'escalation_target' => $escalationTarget,
+                        'escalation_label' => $escalationLabel,
+                        'action_plan' => $actionPlan,
+                        'commitment_date' => $commitmentDate,
+                        'finding' => $finding,
+                        'question' => $question,
+                        'audit_date' => $auditDate,
+                        'remarks' => $remarks,
+                        'remark_option' => $remarkOption,
+                        'photos' => is_array($photos) ? $photos : [],
+                        'response_id' => data_get($snapshot, 'response_id'),
+                        'submission_id' => data_get($snapshot, 'submission_id'),
+                        'previous_escalation_target' => data_get($snapshot, 'previous_escalation_target'),
+                        'previous_action_plan' => data_get($snapshot, 'previous_action_plan'),
+                        'previous_commitment_date' => data_get($snapshot, 'previous_commitment_date'),
+                    ];
+                })
+                ->values();
+        }
+
         $viewData = [
             'summarySheet' => $summarySheet,
             'dashboardSummary' => $summary,
@@ -200,6 +313,7 @@ class DashboardController extends Controller
             'canManageEscalations' => $canManageEscalations,
             'canAccessFollowUp' => $canAccessFollowUp,
             'followUpResponseId' => $followUpResponseId,
+            'followUpHistory' => $followUpHistory,
             'canOverrideAny' => $canOverrideAny,
             'canViewUserUsages' => $canViewUserUsages,
             'reportFilters' => $reportFilters,
@@ -214,7 +328,8 @@ class DashboardController extends Controller
                 ->orderBy('branch')
                 ->pluck('branch'),
             'reportTemplateOptions' => $this->reportTemplateOptions($request),
-            'escalationOptions' => ChecklistResponse::escalationTargetOptions(),
+            'escalationOptions' => ChecklistResponse::managerEscalationOptions(),
+            'escalationOptionsMap' => ChecklistResponse::contextualEscalationOptionsMap(),
             ...$reportData,
         ];
 
@@ -306,6 +421,8 @@ class DashboardController extends Controller
                 fn (Builder $query): Builder => $query->whereIn('slug', $allowedSlugs)
             )
             ->get(['slug', 'name'])
+            ->filter(fn (ChecklistTemplate $template): bool => $request->user()?->hasAdministrativeAccess() === true
+                || DealerChecklistSetting::isChecklistEnabled($request->user()?->branch, $template->slug))
             ->map(fn (ChecklistTemplate $template): array => [
                 'slug' => $template->slug,
                 'name' => $template->name,
@@ -367,6 +484,22 @@ class DashboardController extends Controller
         }
 
         $query->whereRaw('LOWER(TRIM(branch)) = ?', [$branch]);
+
+        $availableSlugs = ChecklistTemplate::query()->pluck('slug')
+            ->merge(collect(DealerChecklistSetting::CATEGORIES)->flatMap(fn (array $category): array => $category['slugs']))
+            ->filter(fn (string $slug): bool => DealerChecklistSetting::isChecklistEnabled($user?->branch, $slug))
+            ->unique()
+            ->values()
+            ->all();
+        $query->where(function (Builder $templateQuery) use ($availableSlugs): void {
+            $templateQuery
+                ->whereHas('template', fn (Builder $template): Builder => $template->whereIn('slug', $availableSlugs))
+                ->orWhere(function (Builder $archivedQuery) use ($availableSlugs): void {
+                    $archivedQuery
+                        ->whereNull('checklist_template_id')
+                        ->whereIn('template_snapshot->slug', $availableSlugs);
+                });
+        });
 
         if ($user?->isDosOperationalRole() === true) {
             $allowedSlugs = $user->allowedChecklistSlugs() ?? [];
@@ -645,22 +778,75 @@ class DashboardController extends Controller
         $findings = collect();
 
         foreach ($submissions as $submission) {
-            foreach ($submission->responses as $response) {
-                if ($this->isHourlyRestroom($submission)) {
-                    $badSlots = collect(data_get($response->details, 'slots', []))
-                        ->filter(fn (mixed $value): bool => $this->isBadSlotMark($value));
+            if ($this->isHourlyRestroom($submission)) {
+                $badResponsesBySlot = [];
+                $nonSlotResponses = [];
 
-                    foreach ($badSlots as $slot => $value) {
-                        $findings->push($this->reportFindingRow($submission, $response, 'x', (string) $slot, $viewer));
+                foreach ($submission->responses as $response) {
+                    $slots = data_get($response->details, 'slots', []);
+                    $hasBadSlot = false;
+
+                    if (is_array($slots)) {
+                        foreach ($slots as $slot => $val) {
+                            if ($this->isBadSlotMark($val)) {
+                                $badResponsesBySlot[(string) $slot][] = $response;
+                                $hasBadSlot = true;
+                            }
+                        }
                     }
 
-                    if ($badSlots->isEmpty() && (in_array($this->normalizedStatus($response->status), ['no', 'na'], true) || $response->isOverridden())) {
-                        $findings->push($this->reportFindingRow($submission, $response, $this->normalizedStatus($response->status), null, $viewer));
+                    if (! $hasBadSlot && (in_array($this->normalizedStatus($response->status), ['no', 'na'], true) || $response->isOverridden())) {
+                        $nonSlotResponses[] = $response;
                     }
-
-                    continue;
                 }
 
+                foreach ($badResponsesBySlot as $slot => $slotResponses) {
+                    $slotResponsesCol = collect($slotResponses);
+                    $primaryResponse = $slotResponsesCol->first();
+                    $compiledRow = $this->reportFindingRow($submission, $primaryResponse, 'x', (string) $slot, $viewer);
+
+                    $compiledQuestions = $slotResponsesCol->map(function (ChecklistResponse $resp, int $idx) use ($slot): array {
+                        $itemSnapshot = is_array($resp->item_snapshot) ? $resp->item_snapshot : [];
+                        $metadata = data_get($itemSnapshot, 'metadata')
+                            ?: (is_array($resp->item?->metadata) ? $resp->item->metadata : []);
+                        $prompt = data_get($itemSnapshot, 'prompt')
+                            ?: ($resp->item?->prompt ?: $resp->item_key);
+                        $area = data_get($itemSnapshot, 'section.title')
+                            ?: ($resp->item?->section?->title ?: 'General');
+
+                        return [
+                            'number' => data_get($metadata, 'number', $idx + 1),
+                            'item_key' => $resp->item_key,
+                            'question' => $prompt,
+                            'area' => $area,
+                            'status' => 'x',
+                            'result' => 'X',
+                            'response_id' => $resp->getKey(),
+                            'slot' => $slot,
+                        ];
+                    })->values()->all();
+
+                    $questionCount = count($compiledQuestions);
+                    $compiledRow['is_compiled'] = true;
+                    $compiledRow['compiled_count'] = $questionCount;
+                    $compiledRow['compiled_questions'] = $compiledQuestions;
+                    $compiledRow['response_ids'] = $slotResponsesCol->pluck('id')->all();
+                    $compiledRow['item'] = 'Missed Utilities Inspection (' . $slot . ') — ' . $questionCount . ' Questions Compiled';
+                    $compiledRow['item_key'] = 'utilities_slot_' . str_replace(':', '', $slot);
+                    $compiledRow['detail'] = 'Full checklist of ' . $questionCount . ' inspection questions failed for the ' . $slot . ' inspection. Automatically compiled for GM and BOM review.';
+                    $compiledRow['result'] = 'FAILED (' . $questionCount . ' ITEMS)';
+
+                    $findings->push($compiledRow);
+                }
+
+                foreach ($nonSlotResponses as $response) {
+                    $findings->push($this->reportFindingRow($submission, $response, $this->normalizedStatus($response->status), null, $viewer));
+                }
+
+                continue;
+            }
+
+            foreach ($submission->responses as $response) {
                 $status = $this->normalizedStatus($response->status);
 
                 if (in_array($status, ['no', 'na'], true) || $response->isOverridden()) {
@@ -764,6 +950,34 @@ class DashboardController extends Controller
 
         $override = data_get($response->details, 'override');
         $isOverridden = is_array($override);
+        $overrideDetails = null;
+        if ($isOverridden) {
+            $overrideAt = data_get($override, 'overridden_at');
+            $overrideAtFormatted = null;
+            if ($overrideAt) {
+                try {
+                    $overrideAtFormatted = Carbon::parse($overrideAt)->timezone($reportTimezone)->format('d M Y, h:i A');
+                } catch (\Throwable) {
+                    $overrideAtFormatted = (string) $overrideAt;
+                }
+            }
+            $overrideAttachmentPath = data_get($override, 'attachment_path');
+            $overrideAttachmentUrl = data_get($override, 'attachment_url')
+                ?: ($overrideAttachmentPath ? Storage::disk('public')->url($overrideAttachmentPath) : null);
+
+            $overrideDetails = [
+                'reason' => data_get($override, 'reason'),
+                'override_reason' => data_get($override, 'override_reason') ?? data_get($override, 'reason'),
+                'overridden_by_name' => data_get($override, 'overridden_by_name'),
+                'overridden_by_role' => data_get($override, 'overridden_by_role'),
+                'overridden_at' => $overrideAt,
+                'overridden_at_formatted' => $overrideAtFormatted,
+                'attachment_path' => $overrideAttachmentPath,
+                'attachment_url' => $overrideAttachmentUrl,
+                'attachment_name' => $overrideAttachmentPath ? basename($overrideAttachmentPath) : null,
+                'is_image' => $overrideAttachmentPath ? ! str_ends_with(strtolower($overrideAttachmentPath), '.pdf') : false,
+            ];
+        }
 
         $submitter = $submission->submittedBy ?? $submission->user;
         $submitterName = $submission->submitted_by_name
@@ -809,12 +1023,7 @@ class DashboardController extends Controller
             'is_overdue' => $isOverdue,
             'due_status' => $dueStatus,
             'is_overridden' => $isOverridden,
-            'override_details' => $isOverridden ? [
-                'reason' => data_get($override, 'reason'),
-                'overridden_by_name' => data_get($override, 'overridden_by_name'),
-                'overridden_by_role' => data_get($override, 'overridden_by_role'),
-                'overridden_at' => data_get($override, 'overridden_at'),
-            ] : null,
+            'override_details' => $overrideDetails,
             'can_override' => $canOverride,
         ];
     }
@@ -951,6 +1160,13 @@ class DashboardController extends Controller
         }
 
         $users = $query->get(['id', 'name', 'email', 'branch', 'user_type', 'account_status', 'created_at']);
+        $usageEvents = UserUsageEvent::query()
+            ->whereIn('user_id', $users->modelKeys())
+            ->where('event', 'login')
+            ->orderByDesc('occurred_at')
+            ->get();
+        $recentUsage = $usageEvents->where('occurred_at', '>=', now()->subDays(30));
+        $usageByUser = $usageEvents->groupBy('user_id');
         $total = $users->count();
         $normalizedStatus = fn (User $user): string => mb_strtolower(trim((string) $user->account_status)) === 'active'
             ? 'active'
@@ -1005,8 +1221,8 @@ class DashboardController extends Controller
             ->values();
 
         $recentUsers = $users
-            ->sortByDesc(fn (User $user) => $user->created_at)
-            ->take(10)
+            ->sortByDesc(fn (User $user) => $usageByUser->get($user->getKey())?->first()?->occurred_at ?? $user->created_at)
+            ->take(20)
             ->map(fn (User $user): array => [
                 'id' => $user->getKey(),
                 'name' => $user->name,
@@ -1015,6 +1231,12 @@ class DashboardController extends Controller
                 'role' => $user->roleLabel(),
                 'status' => $normalizedStatus($user),
                 'created_at' => $user->created_at?->format('M j, Y') ?? 'Date unavailable',
+                'web_logins' => $usageByUser->get($user->getKey(), collect())->where('channel', UserUsageEvent::CHANNEL_WEB)->count(),
+                'app_logins' => $usageByUser->get($user->getKey(), collect())->where('channel', UserUsageEvent::CHANNEL_APP)->count(),
+                'last_web_login' => $usageByUser->get($user->getKey(), collect())
+                    ->firstWhere('channel', UserUsageEvent::CHANNEL_WEB)?->occurred_at?->diffForHumans() ?? 'Never',
+                'last_app_login' => $usageByUser->get($user->getKey(), collect())
+                    ->firstWhere('channel', UserUsageEvent::CHANNEL_APP)?->occurred_at?->diffForHumans() ?? 'Never',
             ])
             ->values();
 
@@ -1026,6 +1248,10 @@ class DashboardController extends Controller
                 'pic' => $roleSummaries->firstWhere('code', User::ROLE_PERSON_IN_CHARGE)['count'] ?? 0,
                 'bom' => $roleSummaries->firstWhere('code', User::ROLE_BRANCH_OPERATIONS_MANAGER)['count'] ?? 0,
                 'admin' => $roleSummaries->firstWhere('code', User::ROLE_ADMINISTRATOR)['count'] ?? 0,
+                'web_logins_30d' => $recentUsage->where('channel', UserUsageEvent::CHANNEL_WEB)->count(),
+                'app_logins_30d' => $recentUsage->where('channel', UserUsageEvent::CHANNEL_APP)->count(),
+                'active_users_30d' => $recentUsage->pluck('user_id')->unique()->count(),
+                'never_logged_in' => $users->whereNotIn('id', $usageEvents->pluck('user_id')->unique())->count(),
             ],
             'userRoleSummaries' => $roleSummaries,
             'userStatusSummaries' => $statusSummaries,
@@ -1180,6 +1406,36 @@ class DashboardController extends Controller
         ];
     }
 
+    /**
+     * Count the same slot marks across every restroom type in the current filter.
+     * The possible total comes from checklist-access, including types with no audit yet.
+     *
+     * @param  Collection<int, ChecklistSubmission>  $submissions
+     * @param  list<string>  $timeSlotKeys
+     * @return array{yes: int, no: int, answered: int, total: int}
+     */
+    private function restroomSlotMetrics(Collection $items, Collection $submissions, array $timeSlotKeys, int $typeCount): array
+    {
+        $yes = 0;
+        $no = 0;
+
+        foreach ($submissions as $submission) {
+            $responsesByKey = $submission->responses->keyBy(
+                fn (ChecklistResponse $response): string => $response->item_key ?: ($response->item?->key ?? '')
+            );
+            $metrics = $this->timeSlotMetrics($items, $responsesByKey, $timeSlotKeys);
+            $yes += $metrics['yes'];
+            $no += $metrics['no'];
+        }
+
+        return [
+            'yes' => $yes,
+            'no' => $no,
+            'answered' => $yes + $no,
+            'total' => $items->count() * count($timeSlotKeys) * $typeCount,
+        ];
+    }
+
     private function templateSlug(ChecklistSubmission $submission): string
     {
         return $submission->template?->slug
@@ -1189,12 +1445,19 @@ class DashboardController extends Controller
 
     private function isRestroom(ChecklistSubmission $submission): bool
     {
-        return $this->templateSlug($submission) === 'restroom';
+        $slug = $this->templateSlug($submission);
+
+        return in_array($slug, ['restroom', 'utilities'], true)
+            || str_starts_with($slug, 'restroom-')
+            || $submission->branch_restroom_id !== null
+            || filled($submission->restroom_area)
+            || filled($submission->restroom_gender)
+            || ($submission->submitted_by_user_type ?? $submission->submittedBy?->user_type) === User::ROLE_5S_UTILITIES;
     }
 
     private function isHourlyRestroom(ChecklistSubmission $submission): bool
     {
-        if ($this->templateSlug($submission) !== 'restroom') {
+        if (! $this->isRestroom($submission)) {
             return false;
         }
 
@@ -1274,31 +1537,62 @@ class DashboardController extends Controller
 
         $activeForm = match (true) {
             in_array($requestedForm, ['aftersales', 'service', 'dos', 'dealer-operations-standards'], true) => 'aftersales',
-            in_array($requestedForm, ['5s', 'five-s', 'five_s', 'gateway-5s'], true) => 'five_s',
+            in_array($requestedForm, ['5s', 'five-s', 'five_s', 'gateway-5s', 'restroom', 'utilities', 'utility'], true) => 'five_s',
             default => 'sales',
         };
+
+        $summaryAccessIsAdministrator = $request->user()?->hasAdministrativeAccess() === true;
+        $summaryAccessBranch = trim((string) $request->user()?->branch);
+        $summaryFormOptions = collect([
+            'sales' => 'Sales Standards (DOS)',
+            'aftersales' => 'Aftersales Standards (DOS)',
+            'five_s' => '5S Checklist',
+        ])->filter(function (string $label, string $form) use (
+            $summaryAccessIsAdministrator,
+            $summaryAccessBranch,
+            $salesSlug,
+            $aftersalesSlug,
+            $fiveSSlugs
+        ): bool {
+            if ($summaryAccessIsAdministrator) {
+                return true;
+            }
+
+            return match ($form) {
+                'sales' => DealerChecklistSetting::isChecklistEnabled($summaryAccessBranch, $salesSlug),
+                'aftersales' => DealerChecklistSetting::isChecklistEnabled($summaryAccessBranch, $aftersalesSlug),
+                'five_s' => collect($fiveSSlugs)->contains(
+                    fn (string $slug): bool => DealerChecklistSetting::isChecklistEnabled($summaryAccessBranch, $slug)
+                ),
+                default => false,
+            };
+        });
+
+        if (! $summaryFormOptions->has($activeForm) && $summaryFormOptions->isNotEmpty()) {
+            $activeForm = (string) $summaryFormOptions->keys()->first();
+        } elseif ($summaryFormOptions->isEmpty()) {
+            $activeForm = 'sales';
+        }
 
         $viewerAllowedSlugs = $request->user()?->allowedChecklistSlugs();
         $fiveSAreaOptions = collect([
             'sales' => 'Sales',
             'service' => 'Service',
             'restroom' => 'Restroom / Utility',
-        ])->when(
-            is_array($viewerAllowedSlugs),
-            fn (Collection $areas): Collection => $areas->filter(
-                fn (string $label, string $slug): bool => in_array($slug, $viewerAllowedSlugs, true)
+        ])
+            ->when(
+                is_array($viewerAllowedSlugs),
+                fn (Collection $areas): Collection => $areas->filter(
+                    fn (string $label, string $slug): bool => in_array($slug, $viewerAllowedSlugs, true)
+                )
             )
-        );
-
-        if ($fiveSAreaOptions->isEmpty()) {
-            $fiveSAreaOptions = collect([
-                'sales' => 'Sales',
-                'service' => 'Service',
-                'restroom' => 'Restroom / Utility',
-            ]);
-        }
+            ->filter(fn (string $label, string $slug): bool => $summaryAccessIsAdministrator
+                || DealerChecklistSetting::isChecklistEnabled($summaryAccessBranch, $slug));
 
         $requestedFiveSArea = mb_strtolower(trim((string) $request->query('five_s_area', '')));
+        if ($requestedFiveSArea === '' && in_array($requestedForm, ['restroom', 'utilities', 'utility'], true)) {
+            $requestedFiveSArea = 'restroom';
+        }
         $fiveSArea = $fiveSAreaOptions->has($requestedFiveSArea)
             ? $requestedFiveSArea
             : (string) $fiveSAreaOptions->keys()->first();
@@ -1328,9 +1622,15 @@ class DashboardController extends Controller
             ->where('slug', $activeSlug)
             ->first();
 
+        $template?->sections->each(function ($section): void {
+            $section->items->each->setRelation('section', $section);
+        });
+
         $allItems = $template?->sections->flatMap->items ?? collect();
         $isFiveS = $activeForm === 'five_s';
+        $isStandardsChecklist = in_array($activeForm, ['sales', 'aftersales'], true);
         $isUtilityChecklist = $isFiveS && $activeSlug === 'restroom';
+        $isFiveSDailyChecklist = $isFiveS && ! $isUtilityChecklist;
         $isTimeSlotChecklist = $isFiveS
             && $activeSlug === 'restroom'
             && data_get($template?->settings, 'validation_mode') === 'time_slots';
@@ -1403,18 +1703,207 @@ class DashboardController extends Controller
         $submissionsQuery = (clone $this->reportableSubmissionQuery($request))
             ->where(function (Builder $q) use ($activeSlug): void {
                 $q->whereHas('template', fn (Builder $t) => $t->where('slug', $activeSlug))
-                    ->orWhere('template_snapshot->slug', $activeSlug);
+                    ->orWhere('template_snapshot->slug', $activeSlug)
+                    ->when(
+                        $activeSlug === 'restroom',
+                        fn (Builder $subQ) => $subQ->orWhere('template_snapshot->slug', 'like', 'restroom-%')
+                            ->orWhereNotNull('branch_restroom_id')
+                    );
             });
 
         if ($selectedBranch !== '') {
             $submissionsQuery->whereRaw('LOWER(TRIM(branch)) = ?', [mb_strtolower($selectedBranch)]);
         }
 
+        $branchRestrooms = collect();
+        $availableRestroomAreas = collect();
+        $selectedRestroomArea = null;
+        $selectedRestroomId = null;
+        $selectedRestroomGender = null;
+        $availableGenders = collect();
+        $hasPwdOption = false;
+        $restroomTargets = collect();
+        $hasConfiguredBranchRestrooms = false;
+        $selectedRestroomScopeLabel = 'All Restrooms · All Genders';
+        $branchUtilitySubmissionsQuery = clone $submissionsQuery;
+
+        if ($isUtilityChecklist) {
+            $hasConfiguredBranchRestrooms = BranchRestroom::query()
+                ->whereRaw('LOWER(TRIM(branch)) = ?', [mb_strtolower(trim($selectedBranch))])
+                ->exists();
+            $utilityEnabled = DealerChecklistSetting::isChecklistEnabled($selectedBranch, 'restroom');
+            $branchRestrooms = $utilityEnabled
+                ? BranchRestroom::forBranch($selectedBranch, onlyActive: true)
+                    ->filter(fn (BranchRestroom $restroom): bool => $restroom->enabledGenders() !== [])
+                    ->values()
+                : collect();
+
+            $allEnabledRestroomTargets = $branchRestrooms
+                ->flatMap(fn (BranchRestroom $restroom): array => collect($restroom->enabledGenders())
+                    ->map(fn (string $gender): array => [
+                        'id' => $restroom->id,
+                        'area_type' => $restroom->area_type,
+                        'gender' => $gender,
+                        'name' => $restroom->name,
+                    ])
+                    ->all())
+                ->values();
+
+            $branchUtilitySubmissionsQuery->where(function (Builder $query) use ($allEnabledRestroomTargets, $utilityEnabled): void {
+                foreach ($allEnabledRestroomTargets as $target) {
+                    $query->orWhere(function (Builder $typeQuery) use ($target): void {
+                        $typeQuery->where('branch_restroom_id', $target['id'])
+                            ->where('restroom_gender', $target['gender']);
+                    });
+                    $query->orWhere(function (Builder $fallbackQuery) use ($target): void {
+                        $fallbackQuery->whereNull('branch_restroom_id')
+                            ->where('restroom_area', $target['area_type'])
+                            ->where('restroom_gender', $target['gender']);
+                    });
+                }
+
+                // Always include unsplit legacy submissions (no branch_restroom_id,
+                // no restroom_area, no restroom_gender) so old data still appears
+                // even when BranchRestroom rows exist from the migration.
+                if ($utilityEnabled) {
+                    $query->orWhere(function (Builder $legacyQuery): void {
+                        $legacyQuery->whereNull('branch_restroom_id')
+                            ->whereNull('restroom_area')
+                            ->whereNull('restroom_gender');
+                    });
+                }
+
+                if ($allEnabledRestroomTargets->isEmpty() && ! $utilityEnabled) {
+                    $query->whereRaw('0 = 1');
+                }
+            });
+
+            $requestedRestroomArea = strtolower(trim((string) $request->query('restroom_area', '')));
+            $requestedRestroomId = (int) $request->query('restroom_id', 0);
+            $requestedRestroomGender = strtolower(trim((string) $request->query('restroom_gender', '')));
+
+            $availableRestroomAreas = collect(['' => 'All Restrooms']);
+            if ($branchRestrooms->contains('area_type', 'customer')) {
+                $availableRestroomAreas->put('customer', 'Customer Area Restroom');
+            }
+            if ($branchRestrooms->contains('area_type', 'office')) {
+                $availableRestroomAreas->put('office', 'Office Restroom');
+            }
+
+            $selectedRestroomArea = $availableRestroomAreas->has($requestedRestroomArea) && $requestedRestroomArea !== ''
+                ? $requestedRestroomArea
+                : null;
+
+            if ($requestedRestroomId > 0 && $branchRestrooms->contains('id', $requestedRestroomId)) {
+                $matchingRestroom = $branchRestrooms->firstWhere('id', $requestedRestroomId);
+                if ($matchingRestroom && ($selectedRestroomArea === null || $selectedRestroomArea === $matchingRestroom->area_type)) {
+                    $selectedRestroomId = $requestedRestroomId;
+                    $selectedRestroomArea = $matchingRestroom->area_type;
+                }
+            }
+
+            $matchingRestrooms = $branchRestrooms
+                ->filter(fn (BranchRestroom $restroom): bool =>
+                    ($selectedRestroomArea === null || $restroom->area_type === $selectedRestroomArea)
+                    && ($selectedRestroomId === null || $restroom->id === $selectedRestroomId)
+                );
+            $enabledGenders = $matchingRestrooms
+                ->flatMap(fn (BranchRestroom $restroom): array => $restroom->enabledGenders())
+                ->unique()
+                ->values();
+            $hasPwdOption = $enabledGenders->contains('pwd');
+            $availableGenders = collect(['' => 'All Genders']);
+            foreach (['male' => 'Male', 'female' => 'Female', 'pwd' => 'PWD'] as $gender => $label) {
+                if ($enabledGenders->contains($gender)) {
+                    $availableGenders->put($gender, $label);
+                }
+            }
+
+            if ($requestedRestroomGender !== '' && $availableGenders->has($requestedRestroomGender)) {
+                $selectedRestroomGender = $requestedRestroomGender;
+            }
+
+            $hasUnavailableRestroomFilter = ($requestedRestroomArea !== '' && ! $availableRestroomAreas->has($requestedRestroomArea))
+                || ($requestedRestroomId > 0 && $selectedRestroomId === null && $requestedRestroomArea === '')
+                || ($requestedRestroomGender !== '' && $selectedRestroomGender === null && $selectedRestroomArea === null && $selectedRestroomId === null);
+
+            $restroomTargets = ($hasUnavailableRestroomFilter ? collect() : $matchingRestrooms)
+                ->flatMap(fn (BranchRestroom $restroom): array => collect($restroom->enabledGenders())
+                    ->filter(fn (string $gender): bool => $selectedRestroomGender === null || $gender === $selectedRestroomGender)
+                    ->map(fn (string $gender): array => [
+                        'id' => $restroom->id,
+                        'area_type' => $restroom->area_type,
+                        'gender' => $gender,
+                        'name' => $restroom->name,
+                    ])
+                    ->all())
+                ->values();
+
+            $areaDisplay = $selectedRestroomId
+                ? ($branchRestrooms->firstWhere('id', $selectedRestroomId)?->name ?? 'Selected Restroom')
+                : ($selectedRestroomArea ? ($availableRestroomAreas->get($selectedRestroomArea) ?? 'All Restrooms') : 'All Restrooms');
+            $genderDisplay = $selectedRestroomGender
+                ? ($availableGenders->get($selectedRestroomGender) ?? 'All Genders')
+                : 'All Genders';
+            $selectedRestroomScopeLabel = $areaDisplay.' · '.$genderDisplay;
+
+            $submissionsQuery->where(function (Builder $query) use (
+                $restroomTargets,
+                $utilityEnabled,
+                $selectedRestroomArea,
+                $selectedRestroomId,
+                $selectedRestroomGender,
+                $hasUnavailableRestroomFilter
+            ): void {
+                foreach ($restroomTargets as $target) {
+                    $query->orWhere(function (Builder $typeQuery) use ($target): void {
+                        $typeQuery->where('branch_restroom_id', $target['id'])
+                            ->where('restroom_gender', $target['gender']);
+                    });
+                    $query->orWhere(function (Builder $fallbackQuery) use ($target): void {
+                        $fallbackQuery->whereNull('branch_restroom_id')
+                            ->where('restroom_area', $target['area_type'])
+                            ->where('restroom_gender', $target['gender']);
+                    });
+                }
+
+                // Always include unsplit legacy submissions when no restroom
+                // filters are active, so old data appears alongside new split data.
+                if (
+                    $utilityEnabled
+                    && ! $hasUnavailableRestroomFilter
+                    && $selectedRestroomArea === null
+                    && $selectedRestroomId === null
+                    && $selectedRestroomGender === null
+                ) {
+                    $query->orWhere(function (Builder $legacyQuery): void {
+                        $legacyQuery->whereNull('branch_restroom_id')
+                            ->whereNull('restroom_area')
+                            ->whereNull('restroom_gender');
+                    });
+                }
+
+                if (
+                    $restroomTargets->isEmpty()
+                    && ! (
+                        $utilityEnabled
+                        && ! $hasUnavailableRestroomFilter
+                        && $selectedRestroomArea === null
+                        && $selectedRestroomId === null
+                        && $selectedRestroomGender === null
+                    )
+                ) {
+                    $query->whereRaw('0 = 1');
+                }
+            });
+        }
+
         $availableUsers = collect();
         $selectedUser = null;
 
         if ($canSelectSummaryUser) {
-            $availableUserIds = (clone $submissionsQuery)
+            $userSourceQuery = $isUtilityChecklist ? $branchUtilitySubmissionsQuery : $submissionsQuery;
+            $availableUserIds = (clone $userSourceQuery)
                 ->get(['user_id', 'submitted_by_user_id'])
                 ->flatMap(fn (ChecklistSubmission $submission): array => [
                     $submission->submitted_by_user_id,
@@ -1442,11 +1931,15 @@ class DashboardController extends Controller
 
                 if ($selectedUser) {
                     $selectedUserId = $selectedUser->getKey();
-                    $submissionsQuery->where(function (Builder $userQuery) use ($selectedUserId): void {
+                    $userFilterClosure = function (Builder $userQuery) use ($selectedUserId): void {
                         $userQuery
                             ->where('user_id', $selectedUserId)
                             ->orWhere('submitted_by_user_id', $selectedUserId);
-                    });
+                    };
+                    $submissionsQuery->where($userFilterClosure);
+                    if ($isUtilityChecklist) {
+                        $branchUtilitySubmissionsQuery->where($userFilterClosure);
+                    }
                 }
             }
         }
@@ -1459,24 +1952,52 @@ class DashboardController extends Controller
                 'user_id',
                 'submitted_by_user_id',
                 'branch',
+                'branch_restroom_id',
+                'restroom_area',
+                'restroom_gender',
                 'audit_date',
                 'status',
                 'checklist_template_id',
                 'created_at',
             ])
-            ->map(function ($sub) {
+            ->map(function ($sub) use ($isStandardsChecklist) {
                 $submissionDate = $sub->audit_date ?? $sub->created_at;
-                $sub->period_label = $this->formatAuditMonthPeriod($submissionDate, false);
-                $sub->period_with_year = $this->formatAuditMonthPeriod($submissionDate, true);
+                $monthName = $this->formatAuditMonth($submissionDate, false);
+                $sub->audit_month = $monthName;
+                $sub->period_label = $isStandardsChecklist
+                    ? $monthName
+                    : $this->formatAuditMonthPeriod($submissionDate, false);
+                $sub->period_with_year = $isStandardsChecklist
+                    ? $this->formatAuditMonth($submissionDate, true)
+                    : $this->formatAuditMonthPeriod($submissionDate, true);
                 $sub->audit_year = $submissionDate?->format('Y');
 
                 return $sub;
             });
 
+        $branchUtilitySubmissions = $isUtilityChecklist
+            ? (clone $branchUtilitySubmissionsQuery)
+                ->orderByDesc('audit_date')
+                ->orderByDesc('id')
+                ->get([
+                    'id',
+                    'branch_restroom_id',
+                    'restroom_area',
+                    'restroom_gender',
+                    'audit_date',
+                    'created_at',
+                ])
+            : collect();
+
         // The Restroom / Utility checklist is completed daily. Month-and-day
-        // navigation resolves the latest saved audit for the selected date.
+        // navigation resolves the latest saved audit for the selected date,
+        // keeping month/day options consistent across all restroom Area/Type filters.
+        $utilityDateSourceSubmissions = $branchUtilitySubmissions->isNotEmpty()
+            ? $branchUtilitySubmissions
+            : $availableSubmissions;
+
         $utilityAuditMonths = $isUtilityChecklist
-            ? $availableSubmissions
+            ? $utilityDateSourceSubmissions
                 ->map(function (ChecklistSubmission $submission): ?array {
                     $submissionDate = $submission->audit_date ?? $submission->created_at;
 
@@ -1496,7 +2017,7 @@ class DashboardController extends Controller
         $requestedUtilityDay = trim((string) $request->query('utility_day', ''));
         $requestedUtilityDay = $isUtilityChecklist
             && preg_match('/^\d{4}-\d{2}-\d{2}$/', $requestedUtilityDay) === 1
-            && $availableSubmissions->contains(function (ChecklistSubmission $submission) use ($requestedUtilityDay): bool {
+            && $utilityDateSourceSubmissions->contains(function (ChecklistSubmission $submission) use ($requestedUtilityDay): bool {
                 $submissionDate = $submission->audit_date ?? $submission->created_at;
 
                 return $submissionDate?->toDateString() === $requestedUtilityDay;
@@ -1545,6 +2066,76 @@ class DashboardController extends Controller
                 ? $requestedOverallAuditDate
                 : null;
 
+        // Sales and Service 5S checklists use the same month-and-day navigation
+        // pattern as Utilities, without the Utilities-only time-slot selector.
+        $fiveSAuditMonths = $isFiveSDailyChecklist
+            ? $availableSubmissions
+                ->map(function (ChecklistSubmission $submission): ?array {
+                    $submissionDate = $submission->audit_date ?? $submission->created_at;
+
+                    return $submissionDate ? [
+                        'value' => $submissionDate->format('Y-m'),
+                        'label' => $submissionDate->format('F Y'),
+                    ] : null;
+                })
+                ->filter()
+                ->unique('value')
+                ->values()
+            : collect();
+        $requestedFiveSMonth = trim((string) $request->query('five_s_month', ''));
+        $requestedFiveSMonth = $fiveSAuditMonths->contains(
+            fn (array $option): bool => $option['value'] === $requestedFiveSMonth
+        ) ? $requestedFiveSMonth : null;
+        $requestedFiveSDay = trim((string) $request->query('audit_date', ''));
+        $requestedFiveSDay = $isFiveSDailyChecklist
+            && preg_match('/^\d{4}-\d{2}-\d{2}$/', $requestedFiveSDay) === 1
+            && $availableSubmissions->contains(function (ChecklistSubmission $submission) use ($requestedFiveSDay): bool {
+                $submissionDate = $submission->audit_date ?? $submission->created_at;
+
+                return $submissionDate?->toDateString() === $requestedFiveSDay;
+            })
+                ? $requestedFiveSDay
+                : null;
+
+        if ($requestedFiveSDay) {
+            $requestedFiveSMonth = substr($requestedFiveSDay, 0, 7);
+        }
+
+        $selectedFiveSMonth = $requestedFiveSMonth
+            ?? data_get($fiveSAuditMonths->first(), 'value');
+        $fiveSAuditDays = $isFiveSDailyChecklist && $selectedFiveSMonth
+            ? $availableSubmissions
+                ->filter(function (ChecklistSubmission $submission) use ($selectedFiveSMonth): bool {
+                    $submissionDate = $submission->audit_date ?? $submission->created_at;
+
+                    return $submissionDate?->format('Y-m') === $selectedFiveSMonth;
+                })
+                ->map(function (ChecklistSubmission $submission): ?array {
+                    $submissionDate = $submission->audit_date ?? $submission->created_at;
+
+                    return $submissionDate ? [
+                        'value' => $submissionDate->toDateString(),
+                        'label' => $submissionDate->format('l, F j'),
+                    ] : null;
+                })
+                ->filter()
+                ->unique('value')
+                ->values()
+            : collect();
+        $selectedFiveSDate = $requestedFiveSDay
+            ?? data_get($fiveSAuditDays->first(), 'value');
+        $isFiveSSunday = $isFiveSDailyChecklist && $selectedFiveSDate
+            ? Carbon::parse($selectedFiveSDate)->isSunday()
+            : false;
+        $availableFiveSDates = $isFiveSDailyChecklist
+            ? $availableSubmissions
+                ->map(fn (ChecklistSubmission $s) => ($s->audit_date ?? $s->created_at)?->toDateString())
+                ->filter()
+                ->unique()
+                ->values()
+                ->all()
+            : [];
+
         // Find selected submission
         $requestedSubId = (int) $request->query('submission_id', 0);
         $selectedSubmission = null;
@@ -1553,27 +2144,26 @@ class DashboardController extends Controller
                 ->with(['responses.item.section', 'submittedBy', 'user'])
                 ->where('id', $requestedSubId)
                 ->first();
+
+            if ($selectedSubmission && $isFiveSDailyChecklist) {
+                $subDate = $selectedSubmission->audit_date ?? $selectedSubmission->created_at;
+                if ($subDate) {
+                    $selectedFiveSDate = $subDate->toDateString();
+                    $isFiveSSunday = Carbon::parse($selectedFiveSDate)->isSunday();
+                }
+            }
         }
 
-        if ($summaryMode === 'user' && ! $selectedSubmission && $requestedUtilityDay) {
+        if ($summaryMode === 'user' && ! $selectedSubmission && $isFiveSDailyChecklist && $selectedFiveSDate) {
             $selectedSubmission = (clone $submissionsQuery)
                 ->with(['responses.item.section', 'submittedBy', 'user'])
-                ->whereDate('audit_date', $requestedUtilityDay)
+                ->whereDate('audit_date', $selectedFiveSDate)
+                ->orderByRaw("CASE WHEN status = 'submitted' THEN 1 ELSE 2 END")
                 ->orderByDesc('id')
                 ->first();
         }
 
-        if ($summaryMode === 'user' && ! $selectedSubmission && $requestedUtilityMonth) {
-            $selectedSubmission = (clone $submissionsQuery)
-                ->with(['responses.item.section', 'submittedBy', 'user'])
-                ->whereYear('audit_date', (int) substr($requestedUtilityMonth, 0, 4))
-                ->whereMonth('audit_date', (int) substr($requestedUtilityMonth, 5, 2))
-                ->orderByDesc('audit_date')
-                ->orderByDesc('id')
-                ->first();
-        }
-
-        if ($summaryMode === 'user' && ! $selectedSubmission && $availableSubmissions->isNotEmpty()) {
+        if ($summaryMode === 'user' && ! $selectedSubmission && ! $isUtilityChecklist && ! $isFiveSDailyChecklist && $availableSubmissions->isNotEmpty()) {
             $latestId = $availableSubmissions->first()->id;
             $selectedSubmission = (clone $submissionsQuery)
                 ->with(['responses.item.section', 'submittedBy', 'user'])
@@ -1581,14 +2171,14 @@ class DashboardController extends Controller
                 ->first();
         }
 
-        $selectedUtilityDate = $isUtilityChecklist
-            ? ($selectedSubmission?->audit_date ?? $selectedSubmission?->created_at)
+        $selectedUtilityDate = $isUtilityChecklist && $selectedSubmission
+            ? ($selectedSubmission->audit_date ?? $selectedSubmission->created_at)
             : null;
         $selectedUtilityMonth = $selectedUtilityDate?->format('Y-m')
             ?? $requestedUtilityMonth
             ?? data_get($utilityAuditMonths->first(), 'value');
         $utilityAuditDays = $isUtilityChecklist && $selectedUtilityMonth
-            ? $availableSubmissions
+            ? $utilityDateSourceSubmissions
                 ->filter(function (ChecklistSubmission $submission) use ($selectedUtilityMonth): bool {
                     $submissionDate = $submission->audit_date ?? $submission->created_at;
 
@@ -1607,7 +2197,77 @@ class DashboardController extends Controller
                 ->values()
             : collect();
         $selectedUtilityDay = $selectedUtilityDate?->toDateString()
+            ?? $requestedUtilityDay
             ?? data_get($utilityAuditDays->first(), 'value');
+
+        $restroomTypeCount = $restroomTargets->count();
+        $restroomSubmissions = collect();
+        if ($isTimeSlotChecklist && $selectedUtilityDay) {
+            $daySubmissions = (clone $submissionsQuery)
+                ->with(['responses.item.section', 'submittedBy', 'user'])
+                ->whereDate('audit_date', $selectedUtilityDay)
+                ->orderByRaw("CASE WHEN status = 'submitted' THEN 1 ELSE 2 END")
+                ->orderByDesc('updated_at')
+                ->orderByDesc('id')
+                ->get();
+
+            $hasSplitSubmissionInBranch = $daySubmissions->contains(
+                    fn (ChecklistSubmission $s): bool => $s->branch_restroom_id !== null
+                        || $s->restroom_area !== null
+                        || $s->restroom_gender !== null
+                )
+                || $utilityDateSourceSubmissions->contains(
+                    fn (ChecklistSubmission $s): bool => $s->branch_restroom_id !== null
+                        || $s->restroom_area !== null
+                        || $s->restroom_gender !== null
+                );
+
+            if (
+                ! $hasSplitSubmissionInBranch
+                && $selectedRestroomArea === null
+                && $selectedRestroomId === null
+                && $selectedRestroomGender === null
+                && $daySubmissions->isNotEmpty()
+            ) {
+                // Strictly legacy unsplit Utilities sheet (no BranchRestroom configured in DB).
+                $restroomTypeCount = 1;
+                $restroomSubmissions = collect([$daySubmissions->first()]);
+            } else {
+                $restroomTypeCount = $restroomTargets->count();
+                $usedSubmissionIds = [];
+                foreach ($restroomTargets as $target) {
+                    $match = $daySubmissions->first(function (ChecklistSubmission $s) use ($target, &$usedSubmissionIds): bool {
+                        if (in_array($s->id, $usedSubmissionIds, true)) {
+                            return false;
+                        }
+                        if ((int) $s->branch_restroom_id === (int) $target['id'] && strtolower((string) $s->restroom_gender) === $target['gender']) {
+                            return true;
+                        }
+                        if ($s->branch_restroom_id === null && strtolower((string) $s->restroom_area) === $target['area_type'] && strtolower((string) $s->restroom_gender) === $target['gender']) {
+                            return true;
+                        }
+
+                        return false;
+                    });
+
+                    if ($match) {
+                        $usedSubmissionIds[] = $match->id;
+                        $restroomSubmissions->push($match);
+                    }
+                }
+            }
+
+            if (! $selectedSubmission || ! $restroomSubmissions->contains('id', $selectedSubmission->id)) {
+                $selectedSubmission = $restroomSubmissions->firstWhere('status', 'submitted')
+                    ?? $restroomSubmissions->first();
+            }
+        } elseif ($isUtilityChecklist && ! $selectedSubmission && $selectedUtilityDay) {
+            $selectedSubmission = (clone $submissionsQuery)
+                ->with(['responses.item.section', 'submittedBy', 'user'])
+                ->whereDate('audit_date', $selectedUtilityDay)
+                ->orderByDesc('id')
+                ->first();
+        }
 
         // Per-user mode scores only the workbook items assigned to that user's
         // checker role. Overall Aftersales mode combines one visible audit from
@@ -1676,7 +2336,7 @@ class DashboardController extends Controller
         $countNa = 0;
 
         if ($isTimeSlotChecklist) {
-            $slotMetrics = $this->timeSlotMetrics($scoredItems, $responsesByKey, $activeTimeSlotKeys);
+            $slotMetrics = $this->restroomSlotMetrics($scoredItems, $restroomSubmissions, $activeTimeSlotKeys, $restroomTypeCount);
             $countYes = $slotMetrics['yes'];
             $countNo = $slotMetrics['no'];
         } else {
@@ -1731,13 +2391,13 @@ class DashboardController extends Controller
 
         $fiveSCoverageBaselines = $template?->sections
             ->mapWithKeys(fn ($section): array => [
-                $section->title => $section->items->count() * ($isTimeSlotChecklist ? count($activeTimeSlotKeys) : 1),
+                $section->title => $section->items->count() * ($isTimeSlotChecklist ? count($activeTimeSlotKeys) * $restroomTypeCount : 1),
             ])
             ->all() ?? [];
         $activeCategoryBaselines = match ($activeForm) {
             'aftersales' => $aftersalesCategoryBaselines,
             'five_s' => [
-                '5S Checklist' => $scoredItems->count() * ($isTimeSlotChecklist ? count($activeTimeSlotKeys) : 1),
+                '5S Checklist' => $scoredItems->count() * ($isTimeSlotChecklist ? count($activeTimeSlotKeys) * $restroomTypeCount : 1),
             ],
             default => $salesCategoryBaselines,
         };
@@ -1747,7 +2407,7 @@ class DashboardController extends Controller
             default => $salesCoverageBaselines,
         };
         $totalQuestions = $isTimeSlotChecklist
-            ? $scoredItems->count() * count($activeTimeSlotKeys)
+            ? $scoredItems->count() * count($activeTimeSlotKeys) * $restroomTypeCount
             : ($summaryMode === 'overall'
                 ? array_sum($activeCategoryBaselines)
                 : $scoredItems->count());
@@ -1768,10 +2428,12 @@ class DashboardController extends Controller
         $overallScores = [];
         $tierNumber = 1;
         $usesBeyondBonus = $summaryMode === 'overall' && $activeForm === 'aftersales';
-        $baseTotalApplicable = 0;
+        $baseTotalQuestions = 0;
         $baseTotalScore = 0;
-        $beyondApplicable = 0;
+        $baseTotalNa = 0;
+        $beyondTotal = 0;
         $beyondScore = 0;
+        $beyondNa = 0;
 
         foreach ($tiersDefinition as $tierName => $def) {
             $tierItems = $isFiveS
@@ -1784,7 +2446,7 @@ class DashboardController extends Controller
             $tierYes = 0;
 
             if ($isTimeSlotChecklist) {
-                $tierSlotMetrics = $this->timeSlotMetrics($tierItems, $responsesByKey, $activeTimeSlotKeys);
+                $tierSlotMetrics = $this->restroomSlotMetrics($tierItems, $restroomSubmissions, $activeTimeSlotKeys, $restroomTypeCount);
                 $tierYes = $tierSlotMetrics['yes'];
             } else {
                 foreach ($tierItems as $ti) {
@@ -1803,12 +2465,11 @@ class DashboardController extends Controller
                 : ($summaryMode === 'overall'
                     ? ($activeCategoryBaselines[$tierName] ?? $tierItems->count())
                     : $tierItems->count());
-            $tierApplicable = max(0, $baselineCount - $tierNa);
-            $tierPct = $tierApplicable > 0 ? round(($tierYes / $tierApplicable) * 100, 1) : 0.0;
+            $tierPct = $baselineCount > 0 ? round(($tierYes / $baselineCount) * 100, 1) : 0.0;
 
             $rating = '—';
             if ($def['target'] !== null && $baselineCount > 0) {
-                $passes = ($tierApplicable > 0 || $baselineCount > 0) && ($tierPct >= $def['target']);
+                $passes = ($tierPct >= $def['target']);
                 $rating = $passes ? 'PASS' : 'FAIL';
             }
 
@@ -1816,44 +2477,47 @@ class DashboardController extends Controller
                 'no' => $tierNumber++,
                 'category' => $def['label'],
                 'target' => $def['target'],
-                'total' => $tierApplicable,
+                'total' => $baselineCount,
                 'score' => $tierYes,
+                'na' => $tierNa,
                 'percent' => $tierPct,
                 'rating' => $rating,
             ];
 
             if ($usesBeyondBonus && $tierName === 'Beyond') {
-                $beyondApplicable = $tierApplicable;
+                $beyondTotal = $baselineCount;
                 $beyondScore = $tierYes;
+                $beyondNa = $tierNa;
             } else {
-                $baseTotalApplicable += $tierApplicable;
+                $baseTotalQuestions += $baselineCount;
                 $baseTotalScore += $tierYes;
+                $baseTotalNa += $tierNa;
             }
         }
 
-        $baseTotalPct = $baseTotalApplicable > 0
-            ? round(($baseTotalScore / $baseTotalApplicable) * 100, 1)
+        $baseTotalPct = $baseTotalQuestions > 0
+            ? round(($baseTotalScore / $baseTotalQuestions) * 100, 1)
             : 0.0;
         $beyondBonusApplied = $usesBeyondBonus
-            && ($baseTotalScore * 100) < ($baseTotalApplicable * 80)
-            ? min($beyondScore, max(0, $baseTotalApplicable - $baseTotalScore))
+            && ($baseTotalScore * 100) < ($baseTotalQuestions * 80)
+            ? min($beyondScore, max(0, $baseTotalQuestions - $baseTotalScore))
             : 0;
-        $overallTotalApplicable = $baseTotalApplicable;
+        $overallTotalQuestions = $baseTotalQuestions;
         $overallTotalScore = min(
-            $overallTotalApplicable,
+            $overallTotalQuestions,
             $baseTotalScore + $beyondBonusApplied
         );
-        $beyondBonusPercentagePoints = $usesBeyondBonus && $overallTotalApplicable > 0
-            ? round(($beyondBonusApplied / $overallTotalApplicable) * 100, 1)
+        $beyondBonusPercentagePoints = $usesBeyondBonus && $overallTotalQuestions > 0
+            ? round(($beyondBonusApplied / $overallTotalQuestions) * 100, 1)
             : 0.0;
-        $overallTotalPct = $overallTotalApplicable > 0
-            ? round(($overallTotalScore / $overallTotalApplicable) * 100, 1)
+        $overallTotalPct = $overallTotalQuestions > 0
+            ? round(($overallTotalScore / $overallTotalQuestions) * 100, 1)
             : 0.0;
 
         $requiredTierRows = collect($overallScores)
             ->filter(fn (array $row): bool => $row['target'] !== null
                 && in_array($row['rating'], ['PASS', 'FAIL'], true));
-        $overallPasses = $overallTotalApplicable > 0
+        $overallPasses = $overallTotalQuestions > 0
             && $overallTotalPct >= 80.0
             && ($usesBeyondBonus
                 || $requiredTierRows->every(fn (array $row): bool => $row['rating'] === 'PASS'));
@@ -1861,15 +2525,17 @@ class DashboardController extends Controller
 
         $overallSummaryRow = [
             'category' => 'TOTAL',
-            'total' => $overallTotalApplicable,
+            'total' => $overallTotalQuestions,
             'score' => $overallTotalScore,
+            'na' => $baseTotalNa,
             'percent' => $overallTotalPct,
             'rating' => $overallRating,
             'uses_beyond_bonus' => $usesBeyondBonus,
             'base_score' => $baseTotalScore,
             'base_percent' => $baseTotalPct,
-            'beyond_total' => $beyondApplicable,
+            'beyond_total' => $beyondTotal,
             'beyond_score' => $beyondScore,
+            'beyond_na' => $beyondNa,
             'beyond_bonus_applied' => $beyondBonusApplied,
             'beyond_bonus_percentage_points' => $beyondBonusPercentagePoints,
         ];
@@ -1877,8 +2543,10 @@ class DashboardController extends Controller
         // Table 2: Compliance Per Category (Coverage breakdown)
         $orderedCoverageList = array_keys($activeCoverageBaselines);
 
-        $itemsByCoverage = $scoredItems->groupBy(function ($item) {
-            $cov = trim((string) data_get($item->metadata, 'coverage', $item->section?->title ?? 'General'));
+        $itemsByCoverage = $scoredItems->groupBy(function ($item) use ($isFiveS) {
+            $cov = $isFiveS
+                ? trim((string) ($item->section?->title ?: data_get($item->metadata, 'coverage', 'General')))
+                : trim((string) data_get($item->metadata, 'coverage', $item->section?->title ?? 'General'));
 
             return $cov !== '' ? $cov : 'General';
         });
@@ -1896,6 +2564,7 @@ class DashboardController extends Controller
         $coverageNo = 1;
         $covTotalSum = 0;
         $covScoreSum = 0;
+        $covNaSum = 0;
 
         foreach ($orderedCoverageList as $covName) {
             $covItems = $itemsByCoverage->get($covName, collect());
@@ -1909,7 +2578,7 @@ class DashboardController extends Controller
             $cYes = 0;
 
             if ($isTimeSlotChecklist) {
-                $coverageSlotMetrics = $this->timeSlotMetrics($covItems, $responsesByKey, $activeTimeSlotKeys);
+                $coverageSlotMetrics = $this->restroomSlotMetrics($covItems, $restroomSubmissions, $activeTimeSlotKeys, $restroomTypeCount);
                 $cYes = $coverageSlotMetrics['yes'];
             } else {
                 foreach ($covItems as $ci) {
@@ -1928,31 +2597,35 @@ class DashboardController extends Controller
                 : ($summaryMode === 'overall'
                     ? ($activeCoverageBaselines[$covName] ?? $covItems->count())
                     : $covItems->count());
-            $cApplicable = max(0, $cBaseline - $cNa);
-            $cPct = $cApplicable > 0 ? round(($cYes / $cApplicable) * 100, 1) : 0.0;
+            $cPct = $cBaseline > 0 ? round(($cYes / $cBaseline) * 100, 1) : 0.0;
 
             $coverageRows[] = [
                 'no' => $coverageNo++,
                 'coverage' => $covName,
-                'total' => $cApplicable,
+                'total' => $cBaseline,
                 'score' => $cYes,
+                'na' => $cNa,
                 'percent' => $cPct,
             ];
 
-            $covTotalSum += $cApplicable;
+            $covTotalSum += $cBaseline;
             $covScoreSum += $cYes;
+            $covNaSum += $cNa;
         }
 
         $covOverallPct = $covTotalSum > 0 ? round(($covScoreSum / $covTotalSum) * 100, 1) : 0.0;
         $coverageSummaryRow = [
             'total' => $covTotalSum,
             'score' => $covScoreSum,
+            'na' => $covNaSum,
             'percent' => $covOverallPct,
         ];
 
         // Metadata block
         $auditDateRaw = $selectedSubmission?->audit_date
             ?? ($selectedOverallAuditDate ? Carbon::parse($selectedOverallAuditDate) : null)
+            ?? ($selectedFiveSDate ? Carbon::parse($selectedFiveSDate) : null)
+            ?? ($selectedUtilityDay ? Carbon::parse($selectedUtilityDay) : null)
             ?? $aggregateSubmissions->max('audit_date')
             ?? now();
         $selectedOverallAuditDateLabel = $selectedOverallAuditDate
@@ -1961,11 +2634,15 @@ class DashboardController extends Controller
         $auditDateFormatted = $summaryMode === 'overall'
             ? ($selectedOverallAuditDateLabel
                 ?? ($aggregateSubmissions->isNotEmpty() ? 'Latest audit per user' : 'No recorded audits'))
-            : $this->formatAuditMonthPeriod($auditDateRaw, false);
+            : ($isStandardsChecklist
+                ? $this->formatAuditMonth($auditDateRaw, false)
+                : $auditDateRaw->format('F j, Y'));
         $auditDateWithYear = $summaryMode === 'overall'
             ? ($selectedOverallAuditDateLabel
                 ?? ($aggregateSubmissions->isNotEmpty() ? 'Latest visible user audits' : 'No recorded audits'))
-            : $this->formatAuditMonthPeriod($auditDateRaw, true);
+            : ($isStandardsChecklist
+                ? $this->formatAuditMonth($auditDateRaw, true)
+                : $auditDateRaw->format('F j, Y'));
         $auditorName = $summaryMode === 'overall'
             ? trans_choice(
                 ':count Aftersales user|:count Aftersales users',
@@ -1987,13 +2664,55 @@ class DashboardController extends Controller
             'aggregate' => 'Overall Aftersales Users',
             default => 'No Saved Audit',
         };
+
+        // Audit completion timestamp and month
+        $completionRaw = null;
+        if ($summaryMode === 'overall') {
+            $submittedAggregates = $aggregateSubmissions->filter(
+                fn (ChecklistSubmission $s): bool => $s->status === 'submitted' || $s->submitted_at !== null
+            );
+            if ($submittedAggregates->isNotEmpty()) {
+                $completionRaw = $submittedAggregates->max('submitted_at')
+                    ?? $submittedAggregates->max('updated_at');
+            }
+        } elseif ($selectedSubmission && ($selectedSubmission->status === 'submitted' || $selectedSubmission->submitted_at !== null)) {
+            $completionRaw = $selectedSubmission->submitted_at
+                ?? $selectedSubmission->updated_at
+                ?? $selectedSubmission->audit_date;
+        }
+
+        $completionCarbon = null;
+        if ($completionRaw) {
+            $completionCarbon = $completionRaw instanceof \DateTimeInterface
+                ? Carbon::instance($completionRaw)
+                : Carbon::parse($completionRaw);
+        }
+
+        $completionMonth = $completionCarbon
+            ? $this->formatAuditMonth($completionCarbon, false)
+            : ($auditStatus === 'draft' ? 'In Progress' : '—');
+        $completionMonthWithYear = $completionCarbon
+            ? $this->formatAuditMonth($completionCarbon, true)
+            : ($auditStatus === 'draft' ? 'In Progress' : '—');
+        $completionDateFormatted = $completionCarbon
+            ? $completionCarbon->timezone(config('gac.report_timezone', 'Asia/Manila'))->format('M j, Y')
+            : null;
+        $completionDateTimeFormatted = $completionCarbon
+            ? $completionCarbon->timezone(config('gac.report_timezone', 'Asia/Manila'))->format('F j, Y, g:i A')
+            : ($auditStatus === 'draft' ? 'In Progress' : '—');
+        $completionTooltip = $completionCarbon
+            ? 'Completed on '.$completionCarbon->timezone(config('gac.report_timezone', 'Asia/Manila'))->format('F j, Y, g:i A')
+            : ($auditStatus === 'draft' ? 'Audit in progress / not yet finished' : 'No recorded completion');
         $viewerRole = $request->user()?->roleCode();
-        $canViewFindings = $viewerRole === User::ROLE_ADMINISTRATOR;
+        $canViewFindings = in_array($viewerRole, [
+            User::ROLE_ADMINISTRATOR,
+            User::ROLE_GENERAL_MANAGER,
+        ], true);
         $canManageEscalations = $viewerRole === User::ROLE_BRANCH_OPERATIONS_MANAGER;
         $canManageFindings = $canViewFindings || $canManageEscalations;
         $findingSubmissions = $summaryMode === 'overall'
             ? $aggregateSubmissions
-            : collect([$selectedSubmission])->filter();
+            : ($isTimeSlotChecklist ? $restroomSubmissions : collect([$selectedSubmission])->filter());
         $nonCompliantFindings = $canManageFindings
             ? $findingSubmissions
                 ->flatMap(
@@ -2007,15 +2726,20 @@ class DashboardController extends Controller
         $requestedFollowUpResponseId = $canManageEscalations
             ? (int) $request->query('follow_up_response_id', 0)
             : 0;
-        $followUpResponseId = $requestedFollowUpResponseId > 0
-            && $nonCompliantFindings->contains(
-                fn (array $finding): bool => (int) $finding['response_id'] === $requestedFollowUpResponseId
-            )
-                ? $requestedFollowUpResponseId
-                : null;
+        $followUpResponseId = null;
+        if ($requestedFollowUpResponseId > 0) {
+            $matchingFinding = $nonCompliantFindings->first(
+                fn (array $finding): bool => (int) ($finding['response_id'] ?? 0) === $requestedFollowUpResponseId
+                    || (is_array($finding['response_ids'] ?? null) && in_array($requestedFollowUpResponseId, $finding['response_ids'], true))
+            );
+            if ($matchingFinding) {
+                $followUpResponseId = (int) $matchingFinding['response_id'];
+            }
+        }
 
         return [
             'activeForm' => $activeForm,
+            'summaryFormOptions' => $summaryFormOptions,
             'activeSlug' => $activeSlug,
             'activeFormTitle' => $activeFormTitle,
             'activeFormLabel' => $activeFormLabel,
@@ -2023,6 +2747,14 @@ class DashboardController extends Controller
             'fiveSAreaLabel' => $fiveSAreaLabel,
             'fiveSAreaOptions' => $fiveSAreaOptions,
             'isUtilityChecklist' => $isUtilityChecklist,
+            'branchRestrooms' => $branchRestrooms,
+            'availableRestroomAreas' => $availableRestroomAreas,
+            'selectedRestroomArea' => $selectedRestroomArea,
+            'selectedRestroomId' => $selectedRestroomId,
+            'availableGenders' => $availableGenders,
+            'selectedRestroomGender' => $selectedRestroomGender,
+            'selectedRestroomScopeLabel' => $selectedRestroomScopeLabel,
+            'hasPwdOption' => $hasPwdOption,
             'isTimeSlotChecklist' => $isTimeSlotChecklist,
             'timeSlotCount' => count($timeSlotKeys),
             'activeTimeSlotCount' => count($activeTimeSlotKeys),
@@ -2051,7 +2783,12 @@ class DashboardController extends Controller
             'canManageEscalations' => $canManageEscalations,
             'followUpResponseId' => $followUpResponseId,
             'nonCompliantFindings' => $nonCompliantFindings,
-            'escalationOptions' => ChecklistResponse::escalationTargetOptionsFor($activeSlug),
+            'escalationOptions' => ChecklistResponse::escalationTargetOptionsFor(
+                templateSlug: $activeSlug,
+                userOrRole: $selectedUser,
+                isRestroom: $isUtilityChecklist
+            ),
+            'escalationOptionsMap' => ChecklistResponse::contextualEscalationOptionsMap(),
             'cards' => [
                 'total_questions' => $totalQuestions,
                 'answered' => $answeredCount,
@@ -2060,7 +2797,8 @@ class DashboardController extends Controller
                 'count_yes' => $countYes,
                 'count_no' => $countNo,
                 'count_na' => $countNa,
-                'item_total' => $scoredItems->count(),
+                'item_total' => $scoredItems->count() * ($isTimeSlotChecklist ? $restroomTypeCount : 1),
+                'restroom_type_count' => $restroomTypeCount,
                 'coverage_count' => count($activeCoverageBaselines),
             ],
             'overallScores' => $overallScores,
@@ -2075,6 +2813,14 @@ class DashboardController extends Controller
             'selectedUser' => $selectedUser,
             'selectedUserId' => $selectedUser?->getKey(),
             'selectedUserType' => $selectedUser?->roleCode(),
+            'isStandardsChecklist' => $isStandardsChecklist,
+            'isFiveSDailyChecklist' => $isFiveSDailyChecklist,
+            'fiveSAuditMonths' => $fiveSAuditMonths,
+            'selectedFiveSMonth' => $selectedFiveSMonth,
+            'fiveSAuditDays' => $fiveSAuditDays,
+            'selectedFiveSDate' => $selectedFiveSDate,
+            'isFiveSSunday' => $isFiveSSunday,
+            'availableFiveSDates' => $availableFiveSDates,
             'availableSubmissions' => $availableSubmissions,
             'selectedSubmissionId' => $selectedSubmission?->id,
             'utilityAuditMonths' => $utilityAuditMonths,
@@ -2083,10 +2829,16 @@ class DashboardController extends Controller
             'selectedUtilityDay' => $selectedUtilityDay,
             'availableOverallAuditDates' => $availableOverallAuditDates,
             'selectedOverallAuditDate' => $selectedOverallAuditDate,
-            'checklistRoute' => route('checklists.index', [
+            'completion_month' => $completionMonth,
+            'completion_month_with_year' => $completionMonthWithYear,
+            'completion_date' => $completionDateFormatted,
+            'completion_date_time' => $completionDateTimeFormatted,
+            'completion_tooltip' => $completionTooltip,
+            'checklistRoute' => route('checklists.index', array_filter([
                 'checklist' => $activeSlug,
                 'branch' => $selectedBranch,
-            ]),
+                'date' => $isFiveSDailyChecklist ? $selectedFiveSDate : null,
+            ])),
             'subformDocData' => $activeForm === 'aftersales'
                 ? app(AftersalesSubformDocService::class)->getSubformAndDocumentationResults(
                     $selectedBranch,
@@ -2140,6 +2892,145 @@ class DashboardController extends Controller
             ? $checkedTimestamp->copy()->timezone(config('gac.report_timezone', 'Asia/Manila'))->format('d M Y, h:i A')
             : null;
 
+        if ($this->isHourlyRestroom($submission)) {
+            $badResponsesBySlot = [];
+            $nonSlotResponses = [];
+
+            foreach ($submission->responses as $response) {
+                $slots = data_get($response->details, 'slots', []);
+                $hasBadSlot = false;
+
+                if (is_array($slots)) {
+                    foreach ($slots as $slot => $val) {
+                        if ($selectedTimeSlot !== null && (string) $slot !== (string) $selectedTimeSlot) {
+                            continue;
+                        }
+
+                        if ($this->isBadSlotMark($val)) {
+                            $badResponsesBySlot[(string) $slot][] = $response;
+                            $hasBadSlot = true;
+                        }
+                    }
+                }
+
+                if (! $hasBadSlot && $selectedTimeSlot === null && (in_array($this->normalizedStatus($response->status), ['no', 'na'], true) || $response->isOverridden())) {
+                    $nonSlotResponses[] = $response;
+                }
+            }
+
+            $compiledFindings = collect();
+            ksort($badResponsesBySlot);
+
+            foreach ($badResponsesBySlot as $slot => $slotResponses) {
+                $slotResponsesCol = collect($slotResponses)->sortBy(function (ChecklistResponse $response): array {
+                    return [
+                        (int) (data_get($response->item_snapshot, 'section.sort_order')
+                            ?? $response->item?->section?->sort_order
+                            ?? PHP_INT_MAX),
+                        (int) (data_get($response->item_snapshot, 'sort_order')
+                            ?? $response->item?->sort_order
+                            ?? PHP_INT_MAX),
+                        $response->getKey(),
+                    ];
+                })->values();
+
+                $primaryResponse = $slotResponsesCol->first();
+                if (! $primaryResponse) {
+                    continue;
+                }
+
+                $compiledQuestions = $slotResponsesCol->map(function (ChecklistResponse $resp, int $idx) use ($slot): array {
+                    $itemSnapshot = is_array($resp->item_snapshot) ? $resp->item_snapshot : [];
+                    $metadata = data_get($itemSnapshot, 'metadata')
+                        ?: (is_array($resp->item?->metadata) ? $resp->item->metadata : []);
+                    $prompt = data_get($itemSnapshot, 'prompt')
+                        ?: ($resp->item?->prompt ?: $resp->item_key);
+                    $area = data_get($itemSnapshot, 'section.title')
+                        ?: ($resp->item?->section?->title ?: (data_get($metadata, 'coverage') ?: 'General'));
+
+                    return [
+                        'number' => data_get($metadata, 'number', $idx + 1),
+                        'item_key' => $resp->item_key,
+                        'question' => $prompt,
+                        'area' => $area,
+                        'status' => 'no',
+                        'result' => 'NO',
+                        'response_id' => $resp->getKey(),
+                        'slot' => $slot,
+                    ];
+                })->values()->all();
+
+                $questionCount = count($compiledQuestions);
+                $formattedSlot = (string) $slot;
+                try {
+                    $formattedSlot = CarbonImmutable::createFromFormat('H:i', (string) $slot, 'Asia/Manila')->format('h:i A');
+                } catch (\Throwable) {
+                    // keep slot string as is
+                }
+
+                $currentEscalation = ChecklistResponse::normalizeEscalationTarget(
+                    $primaryResponse->escalation_target
+                        ?? data_get($primaryResponse->details, 'escalation_target')
+                        ?? data_get($primaryResponse->details, 'escalation')
+                );
+                $actionPlan = $primaryResponse->action_plan
+                    ?: data_get($primaryResponse->details, 'action_plan')
+                    ?: data_get($primaryResponse->details, 'action');
+
+                $attachmentUrl = filled($primaryResponse->attachment_path)
+                    ? Storage::disk('public')->url($primaryResponse->attachment_path)
+                    : null;
+
+                $compiledFindings->push([
+                    'response_id' => $primaryResponse->getKey(),
+                    'response_ids' => $slotResponsesCol->pluck('id')->all(),
+                    'submission_id' => $submission->getKey(),
+                    'template_slug' => $this->templateSlug($submission),
+                    'is_restroom' => true,
+                    'is_compiled' => true,
+                    'compiled_count' => $questionCount,
+                    'compiled_questions' => $compiledQuestions,
+                    'slot' => $formattedSlot,
+                    'slot_raw' => (string) $slot,
+                    'item_key' => 'utilities_slot_' . str_replace([':', ' '], '', (string) $slot),
+                    'question_number' => null,
+                    'question' => 'Missed Utilities Inspection (' . $formattedSlot . ') — ' . $questionCount . ' Questions Compiled',
+                    'category' => 'Utilities Checklist',
+                    'area' => 'Restroom (' . $formattedSlot . ')',
+                    'subject' => $questionCount . ' inspection items failed for ' . $formattedSlot . ' slot',
+                    'person_accountable' => trim((string) (
+                        data_get($submission->context, 'pic')
+                        ?: $checkedByName
+                    )),
+                    'checker_role' => $checkedByRole,
+                    'checked_by_name' => $checkedByName,
+                    'checked_by_role' => $checkedByRole,
+                    'checked_at' => $checkedAt,
+                    'finding' => 'Full checklist of ' . $questionCount . ' inspection questions failed for the ' . $formattedSlot . ' inspection. Automatically compiled for GM and BOM review.',
+                    'bom_task' => 'Review and resolve missed ' . $formattedSlot . ' utilities inspection.',
+                    'action_plan' => $actionPlan,
+                    'attachment_url' => $attachmentUrl,
+                    'recommended_escalation' => 'Property Management (PM)',
+                    'escalation_target' => $currentEscalation,
+                    'escalation_target_label' => $primaryResponse->escalationTargetLabel(),
+                    'commitment_date' => $primaryResponse->commitment_date
+                        ?->copy()
+                        ->timezone(config('gac.report_timezone', 'Asia/Manila'))
+                        ->format('d M Y, h:i A'),
+                    'commitment_date_input' => $primaryResponse->commitment_date
+                        ?->copy()
+                        ->timezone(config('gac.report_timezone', 'Asia/Manila'))
+                        ->format('Y-m-d'),
+                ]);
+            }
+
+            foreach ($nonSlotResponses as $response) {
+                $compiledFindings->push($this->mapSingleFindingRow($response, $submission, $checkedByName, $checkedByRole, $checkedAt));
+            }
+
+            return $compiledFindings->values();
+        }
+
         return $submission->responses
             ->filter(function (ChecklistResponse $response) use ($selectedTimeSlot): bool {
                 if ($selectedTimeSlot === null) {
@@ -2159,79 +3050,100 @@ class DashboardController extends Controller
                     $response->getKey(),
                 ];
             })
-            ->map(function (ChecklistResponse $response) use ($submission, $checkedByName, $checkedByRole, $checkedAt): array {
-                $snapshot = is_array($response->item_snapshot) ? $response->item_snapshot : [];
-                $snapshotMetadata = data_get($snapshot, 'metadata');
-                $metadata = is_array($snapshotMetadata)
-                    ? $snapshotMetadata
-                    : (is_array($response->item?->metadata) ? $response->item->metadata : []);
-                $question = trim((string) (
-                    data_get($snapshot, 'prompt')
-                    ?? $response->item?->prompt
-                    ?? $response->item_key
-                ));
-                $area = trim((string) (
-                    data_get($metadata, 'coverage')
-                    ?? data_get($snapshot, 'section.title')
-                    ?? $response->item?->section?->title
-                    ?? 'General'
-                ));
-                $finding = $response->finding
-                    ?: data_get($response->details, 'finding')
-                    ?: $response->remark
-                    ?: data_get($response->details, 'remark')
-                    ?: data_get($response->details, 'note')
-                    ?: 'No finding or reason was recorded.';
-                $actionPlan = $response->action_plan
-                    ?: data_get($response->details, 'action_plan')
-                    ?: data_get($response->details, 'action');
-                $currentEscalation = ChecklistResponse::normalizeEscalationTarget(
-                    $response->escalation_target
-                        ?? data_get($response->details, 'escalation_target')
-                        ?? data_get($response->details, 'escalation')
-                );
-                $attachmentUrl = filled($response->attachment_path)
-                    ? Storage::disk('public')->url($response->attachment_path)
-                    : null;
-
-                return [
-                    'response_id' => $response->getKey(),
-                    'submission_id' => $submission->getKey(),
-                    'item_key' => $response->item_key,
-                    'question_number' => data_get($metadata, 'number'),
-                    'question' => $question !== '' ? $question : $response->item_key,
-                    'category' => trim((string) (
-                        data_get($metadata, 'level')
-                        ?? data_get($metadata, 'category')
-                    )),
-                    'area' => $area !== '' ? $area : 'General',
-                    'subject' => trim((string) data_get($metadata, 'subject')),
-                    'person_accountable' => trim((string) (
-                        data_get($metadata, 'person_accountable')
-                        ?? data_get($metadata, 'pic')
-                    )),
-                    'checker_role' => trim((string) data_get($metadata, 'checker')) ?: $checkedByRole,
-                    'checked_by_name' => $checkedByName,
-                    'checked_by_role' => $checkedByRole,
-                    'checked_at' => $checkedAt,
-                    'finding' => $finding,
-                    'bom_task' => trim((string) data_get($metadata, 'bom_task')),
-                    'action_plan' => $actionPlan,
-                    'attachment_url' => $attachmentUrl,
-                    'recommended_escalation' => trim((string) data_get($metadata, 'escalation')),
-                    'escalation_target' => $currentEscalation,
-                    'escalation_target_label' => $response->escalationTargetLabel(),
-                    'commitment_date' => $response->commitment_date
-                        ?->copy()
-                        ->timezone(config('gac.report_timezone', 'Asia/Manila'))
-                        ->format('d M Y, h:i A'),
-                    'commitment_date_input' => $response->commitment_date
-                        ?->copy()
-                        ->timezone(config('gac.report_timezone', 'Asia/Manila'))
-                        ->format('Y-m-d'),
-                ];
-            })
+            ->map(fn (ChecklistResponse $response): array => $this->mapSingleFindingRow(
+                $response,
+                $submission,
+                $checkedByName,
+                $checkedByRole,
+                $checkedAt
+            ))
             ->values();
+    }
+
+    /**
+     * Map a single checklist response to a finding row.
+     *
+     * @return array<string, mixed>
+     */
+    private function mapSingleFindingRow(
+        ChecklistResponse $response,
+        ChecklistSubmission $submission,
+        string $checkedByName,
+        string $checkedByRole,
+        ?string $checkedAt
+    ): array {
+        $snapshot = is_array($response->item_snapshot) ? $response->item_snapshot : [];
+        $snapshotMetadata = data_get($snapshot, 'metadata');
+        $metadata = is_array($snapshotMetadata)
+            ? $snapshotMetadata
+            : (is_array($response->item?->metadata) ? $response->item->metadata : []);
+        $question = trim((string) (
+            data_get($snapshot, 'prompt')
+            ?? $response->item?->prompt
+            ?? $response->item_key
+        ));
+        $area = trim((string) (
+            data_get($metadata, 'coverage')
+            ?? data_get($snapshot, 'section.title')
+            ?? $response->item?->section?->title
+            ?? 'General'
+        ));
+        $finding = $response->finding
+            ?: data_get($response->details, 'finding')
+            ?: $response->remark
+            ?: data_get($response->details, 'remark')
+            ?: data_get($response->details, 'note')
+            ?: 'No finding or reason was recorded.';
+        $actionPlan = $response->action_plan
+            ?: data_get($response->details, 'action_plan')
+            ?: data_get($response->details, 'action');
+        $currentEscalation = ChecklistResponse::normalizeEscalationTarget(
+            $response->escalation_target
+                ?? data_get($response->details, 'escalation_target')
+                ?? data_get($response->details, 'escalation')
+        );
+        $attachmentUrl = filled($response->attachment_path)
+            ? Storage::disk('public')->url($response->attachment_path)
+            : null;
+
+        return [
+            'response_id' => $response->getKey(),
+            'submission_id' => $submission->getKey(),
+            'template_slug' => $this->templateSlug($submission),
+            'is_restroom' => $this->isRestroom($submission),
+            'item_key' => $response->item_key,
+            'question_number' => data_get($metadata, 'number'),
+            'question' => $question !== '' ? $question : $response->item_key,
+            'category' => trim((string) (
+                data_get($metadata, 'level')
+                ?? data_get($metadata, 'category')
+            )),
+            'area' => $area !== '' ? $area : 'General',
+            'subject' => trim((string) data_get($metadata, 'subject')),
+            'person_accountable' => trim((string) (
+                data_get($metadata, 'person_accountable')
+                ?? data_get($metadata, 'pic')
+            )),
+            'checker_role' => trim((string) data_get($metadata, 'checker')) ?: $checkedByRole,
+            'checked_by_name' => $checkedByName,
+            'checked_by_role' => $checkedByRole,
+            'checked_at' => $checkedAt,
+            'finding' => $finding,
+            'bom_task' => trim((string) data_get($metadata, 'bom_task')),
+            'action_plan' => $actionPlan,
+            'attachment_url' => $attachmentUrl,
+            'recommended_escalation' => trim((string) data_get($metadata, 'escalation')),
+            'escalation_target' => $currentEscalation,
+            'escalation_target_label' => $response->escalationTargetLabel(),
+            'commitment_date' => $response->commitment_date
+                ?->copy()
+                ->timezone(config('gac.report_timezone', 'Asia/Manila'))
+                ->format('d M Y, h:i A'),
+            'commitment_date_input' => $response->commitment_date
+                ?->copy()
+                ->timezone(config('gac.report_timezone', 'Asia/Manila'))
+                ->format('Y-m-d'),
+        ];
     }
 
     /**
@@ -2259,5 +3171,19 @@ class DashboardController extends Controller
         $period = "{$startName} to {$endName}";
 
         return $withYear ? "{$period} {$year}" : $period;
+    }
+
+    /**
+     * Format a date to its month name (e.g. "September") or month with year (e.g. "September 2026").
+     */
+    public function formatAuditMonth(\DateTimeInterface|string|null $date, bool $withYear = false): string
+    {
+        if (! $date) {
+            $date = now();
+        } elseif (is_string($date)) {
+            $date = Carbon::parse($date);
+        }
+
+        return $withYear ? $date->format('F Y') : $date->format('F');
     }
 }

@@ -64,7 +64,7 @@ class UserChecklistDetailScreen extends StatefulWidget {
   final bool isCurrentTab;
   final DateTime Function()? nowProvider;
 
-  /// Opens a sequential review of saved No and N/A responses.
+  /// Opens a sequential review of saved No responses.
   final bool attentionOnly;
 
   @override
@@ -97,8 +97,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
   bool _topBarExpanded = true;
 
   String get _currentSlug => _localSlugOverride ?? widget.slug;
-  String? get _effectiveCategoryFilter =>
-      widget.attentionOnly ? null : _localCategoryFilter ?? widget.categoryFilter;
+  String? get _effectiveCategoryFilter => widget.attentionOnly
+      ? null
+      : _localCategoryFilter ?? widget.categoryFilter;
   DateTime get _now => widget.nowProvider?.call() ?? DateTime.now();
   String get _auditDate => widget.auditDate ?? _dateString(_now);
   ChecklistTemplateData? get _template => _record?.template;
@@ -106,11 +107,13 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
   bool get _isHourly =>
       _template?.validationMode == 'time_slots' ||
       _currentSlug == 'restroom' ||
+      _currentSlug.startsWith('restroom') ||
       _currentSlug == 'utilities';
 
   bool get _readOnly {
     final status = _submission?.status.trim().toLowerCase();
-    final isSub = (_submission?.isSubmitted == true) ||
+    final isSub =
+        (_submission?.isSubmitted == true) ||
         status == 'submitted' ||
         status == 'completed';
     if (!isSub) return false;
@@ -158,7 +161,8 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
   bool _isCustomerReadOnly(CustomerAuditSample customer) {
     if (!_isDocumentation) return _readOnly;
     final status = _submission?.status.trim().toLowerCase();
-    final isSub = (_submission?.isSubmitted == true) ||
+    final isSub =
+        (_submission?.isSubmitted == true) ||
         status == 'submitted' ||
         status == 'completed';
     if (!isSub) return false;
@@ -244,13 +248,14 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
               continue;
             }
           }
-          final itemCat = (item.metadata['level']?.toString() ??
-                  item.metadata['category']?.toString() ??
-                  item.level ??
-                  item.category ??
-                  '')
-              .trim()
-              .toLowerCase();
+          final itemCat =
+              (item.metadata['level']?.toString() ??
+                      item.metadata['category']?.toString() ??
+                      item.level ??
+                      item.category ??
+                      '')
+                  .trim()
+                  .toLowerCase();
           if (itemCat == cat && !_isQuestionAnswered(item, raw)) {
             return true;
           }
@@ -288,6 +293,58 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
       !_hasNextUnansweredCategory ||
       _areAllItemsAnswered;
 
+  /// Whether the current checklist view passes full validation
+  /// (all items answered with required findings/remarks).
+  bool get _isChecklistComplete {
+    final template = _template;
+    if (template == null) return false;
+    return _validateForSubmission(template) == null;
+  }
+
+  /// Navigates to the first incomplete/missed checklist item and shows
+  /// a snackbar with the validation message.
+  void _navigateToFirstMissedItem() {
+    final template = _template;
+    if (template == null) return;
+    final validation = _validateForSubmission(template);
+    if (validation == null) return;
+    setState(() {
+      _sectionIndex = validation.sectionIndex;
+      if (validation.customerIndex != null) {
+        _selectedCustomerIndex = validation.customerIndex!;
+      }
+      if (validation.questionIndex != null) {
+        _stepQuestionIndex = validation.questionIndex!;
+      }
+    });
+    if (_listScrollController.hasClients) {
+      _listScrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+      );
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFFD97706),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          content: Text(
+            validation.message,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   bool get _isDos =>
       _currentSlug == 'dealer-operations-standards' ||
       _currentSlug == 'dealer-operations-standards-sales' ||
@@ -296,6 +353,11 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
       _template?.validationMode == 'dos' ||
       _template?.validationMode == 'dos_subform' ||
       _template?.validationMode == 'dos_documentation';
+
+  bool get _isPrimaryDosAudit =>
+      _currentSlug == 'dealer-operations-standards' ||
+      _currentSlug == 'dealer-operations-standards-sales' ||
+      _template?.validationMode == 'dos';
 
   static const Set<String> _dosInspectorEmails = {
     'sm@gateway.com',
@@ -647,6 +709,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
     final isTimeSlots =
         template.validationMode == 'time_slots' ||
         template.slug == 'restroom' ||
+        template.slug.startsWith('restroom') ||
         template.slug == 'utilities';
     if (isTimeSlots) {
       final slotKey = _effectiveSlotKey(template);
@@ -702,18 +765,23 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
         }),
       );
     final submissionStatus = record.submission?.status.trim().toLowerCase();
-    final isSubmitted = (record.submission?.isSubmitted ?? false) ||
+    final isSubmitted =
+        (record.submission?.isSubmitted ?? false) ||
         submissionStatus == 'submitted' ||
         submissionStatus == 'completed';
     final questions = _getQuestionsForTemplate(effectiveTemplate);
-    final isHourly = effectiveTemplate.validationMode == 'time_slots' ||
+    final isHourly =
+        effectiveTemplate.validationMode == 'time_slots' ||
         effectiveTemplate.slug == 'restroom' ||
+        effectiveTemplate.slug.startsWith('restroom') ||
         effectiveTemplate.slug == 'utilities';
 
-    final allQuestionsAnswered = questions.isNotEmpty &&
+    final allQuestionsAnswered =
+        questions.isNotEmpty &&
         questions.every((q) => _isQuestionAnswered(q.item, effectiveTemplate));
 
-    final allHourlySlotsSubmitted = isHourly &&
+    final allHourlySlotsSubmitted =
+        isHourly &&
         effectiveTemplate.timeSlots.isNotEmpty &&
         effectiveTemplate.timeSlots.every(
           (slot) => questions.every(
@@ -723,7 +791,8 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
           ),
         );
 
-    final isAlreadyDone = isSubmitted ||
+    final isAlreadyDone =
+        isSubmitted ||
         _readOnly ||
         (isHourly ? allHourlySlotsSubmitted : allQuestionsAnswered);
 
@@ -773,8 +842,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
           final lastInSec = questions.lastIndexWhere(
             (q) => q.sectionIndex == _sectionIndex,
           );
-          _stepQuestionIndex =
-              lastInSec != -1 ? lastInSec : questions.length - 1;
+          _stepQuestionIndex = lastInSec != -1
+              ? lastInSec
+              : questions.length - 1;
         }
       }
     } else {
@@ -819,12 +889,15 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
       final documentationItems = effectiveTemplate.sections
           .expand((section) => section.items)
           .toList(growable: false);
-      final allDocAnswered = _customers.isNotEmpty &&
+      final allDocAnswered =
+          _customers.isNotEmpty &&
           documentationItems.isNotEmpty &&
-          _customers.every((customer) => documentationItems.every((item) {
-                final status = customer.answers[item.key]?.trim();
-                return status != null && status.isNotEmpty;
-              }));
+          _customers.every(
+            (customer) => documentationItems.every((item) {
+              final status = customer.answers[item.key]?.trim();
+              return status != null && status.isNotEmpty;
+            }),
+          );
       final isDocAlreadyDone = isAlreadyDone || allDocAnswered;
       if (isDocAlreadyDone) {
         _submittedCustomerCount = _customers.length;
@@ -845,8 +918,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
       )) {
         _selectedCustomerIndex = _customers.first.customerIndex;
       }
-      if (isDocAlreadyDone &&
-          reminderQuestionIndex < 0) {
+      if (isDocAlreadyDone && reminderQuestionIndex < 0) {
         if (documentationItems.isNotEmpty) {
           _stepQuestionIndex = documentationItems.length - 1;
         }
@@ -992,6 +1064,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
     final isHourlyChecklist =
         template.validationMode == 'time_slots' ||
         template.slug == 'restroom' ||
+        template.slug.startsWith('restroom') ||
         template.slug == 'utilities';
     if (isHourlyChecklist && _moveFromExpiredHourlySlot(template)) {
       setState(() {
@@ -1054,8 +1127,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
         : null;
     final isFinalHourlySlot =
         !isHourlyChecklist || activeHourlySlot?.key == finalHourlySlot?.key;
-    final shouldSubmit =
-        submit && _isReadyToSubmit;
+    final shouldSubmit = submit && _isReadyToSubmit;
 
     setState(() => _saving = true);
     try {
@@ -1204,15 +1276,13 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
             ),
           );
         } else {
-          final title = _isDocumentation ? 'Documentation audit submitted' : 'Checklist submitted';
+          final title = _isDocumentation
+              ? 'Documentation audit submitted'
+              : 'Checklist submitted';
           final message = _isDocumentation
               ? 'Your documentation audit was submitted to Server. The Branch Operations Manager (BOM) and General Manager (GM) have been notified.'
               : 'Responses saved and ready for review.';
-          await _showMessage(
-            title,
-            message,
-            isSuccess: true,
-          );
+          await _showMessage(title, message, isSuccess: true);
           if (mounted) {
             if (widget.onBack != null) {
               widget.onBack!();
@@ -1290,6 +1360,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
     final restroom =
         template.validationMode == 'time_slots' ||
         template.slug == 'restroom' ||
+        template.slug.startsWith('restroom') ||
         template.slug == 'utilities';
     if (restroom && template.timeSlots.isEmpty) {
       return const _ChecklistValidation(
@@ -1432,9 +1503,13 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
     if (_isDocumentation) {
       // In documentation, every question is a prerequisite: if even one is NO,
       // all check items for that customer are strictly NO.
-      final docItems = template.sections.expand((section) => section.items).toList(growable: false);
+      final docItems = template.sections
+          .expand((section) => section.items)
+          .toList(growable: false);
       for (final cust in _customers) {
-        final hasNo = cust.answers.values.any((v) => v.trim().toLowerCase() == 'no');
+        final hasNo = cust.answers.values.any(
+          (v) => v.trim().toLowerCase() == 'no',
+        );
         if (hasNo) {
           for (final item in docItems) {
             cust.answers[item.key] = 'no';
@@ -2044,6 +2119,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
     final isHourly =
         template.validationMode == 'time_slots' ||
         template.slug == 'restroom' ||
+        template.slug.startsWith('restroom') ||
         template.slug == 'utilities';
     if (!isHourly || _readOnly) return false;
 
@@ -2139,6 +2215,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
     final isHourly =
         template.validationMode == 'time_slots' ||
         template.slug == 'restroom' ||
+        template.slug.startsWith('restroom') ||
         template.slug == 'utilities';
     if (!isHourly || _readOnly) return false;
 
@@ -2176,6 +2253,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
         template == null ||
         (template.validationMode != 'time_slots' &&
             template.slug != 'restroom' &&
+            !template.slug.startsWith('restroom') &&
             template.slug != 'utilities')) {
       return;
     }
@@ -2513,7 +2591,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
               ),
               if (targets.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                const Text('All No and N/A responses have been reviewed.'),
+                const Text('All No responses have been reviewed.'),
               ],
               const SizedBox(height: 16),
               FilledButton(
@@ -2600,9 +2678,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                         Flexible(
                           child: Text(
                             'Attention needed',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleLarge
+                            style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
                                   fontWeight: FontWeight.w700,
                                   color: GacColors.white,
@@ -2625,11 +2701,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                         const SizedBox(width: 6),
                         Flexible(
                           child: Text(
-                            '${_attentionReviewIndex + 1} of ${targets.length} responses · No / N/A',
+                            '${_attentionReviewIndex + 1} of ${targets.length} responses · No',
                             key: const ValueKey('attention-review-position'),
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
+                            style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(
                                   color: GacColors.gray,
                                   fontWeight: FontWeight.w500,
@@ -2748,6 +2822,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
     final isUtilities =
         template.validationMode == 'time_slots' ||
         template.slug == 'restroom' ||
+        template.slug.startsWith('restroom') ||
         template.slug == 'utilities';
 
     if (isUtilities && _stepByStepMode) {
@@ -2777,7 +2852,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
         onPickPhoto: _pickPhotoForItem,
         onRemovePhoto: _removePhotoForItem,
         onShowHowToCheck: (item) => _showHowToCheckModal(context, item),
+        isChecklistComplete: _isChecklistComplete,
         onSubmit: () => _save(submit: true),
+        onNavigateToMissed: _navigateToFirstMissedItem,
         onChanged: () => setState(() => _isDirty = true),
       );
     }
@@ -2805,6 +2882,15 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
               _answers[item.key]?.submittedSlots.contains(selectedSlotKey) ??
               false,
         );
+    final selectedSlot = isUtilities && template.timeSlots.isNotEmpty
+        ? template.timeSlots.firstWhere(
+            (s) => s.key == selectedSlotKey,
+            orElse: () =>
+                ChecklistTimeSlot(key: selectedSlotKey, label: selectedSlotKey),
+          )
+        : null;
+    final isSelectedSlotLocked =
+        selectedSlot != null && _isSlotLocked(selectedSlot);
 
     return Column(
       children: [
@@ -2894,12 +2980,47 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                         ),
                       ),
                       const SizedBox(width: 10),
-                      if (!_readOnly && !isCurrentSlotSubmitted)
+                      if (!_readOnly &&
+                          (isCurrentSlotSubmitted || isSelectedSlotLocked))
+                        GestureDetector(
+                          key: const ValueKey('checklist-header-submit-button'),
+                          onTap: () {
+                            if (selectedSlot != null) {
+                              _showSlotLockedModal(context, selectedSlot);
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 13,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF153A56),
+                              borderRadius: BorderRadius.circular(9),
+                            ),
+                            child: const Text(
+                              'SUBMIT',
+                              style: TextStyle(
+                                color: GacColors.textMuted,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.7,
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (!_readOnly)
                         FilledButton(
                           key: const ValueKey('checklist-header-submit-button'),
-                          onPressed: _saving ? null : () => _save(submit: true),
+                          onPressed: _saving
+                              ? null
+                              : _isChecklistComplete
+                              ? () => _save(submit: true)
+                              : _navigateToFirstMissedItem,
                           style: FilledButton.styleFrom(
-                            backgroundColor: GacColors.primary,
+                            backgroundColor: _isChecklistComplete
+                                ? GacColors.primary
+                                : const Color(0xFFD97706),
                             padding: const EdgeInsets.symmetric(horizontal: 13),
                             minimumSize: const Size(72, 34),
                             shape: RoundedRectangleBorder(
@@ -2914,9 +3035,11 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                                     color: GacColors.white,
                                   ),
                                 )
-                              : const Text(
-                                  'SUBMIT',
-                                  style: TextStyle(
+                              : Text(
+                                  _isChecklistComplete
+                                      ? 'SUBMIT'
+                                      : 'INCOMPLETE',
+                                  style: const TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: 0.7,
@@ -3047,7 +3170,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                   ],
                   if (_readOnly) ...[
                     const SizedBox(height: 10),
-                    const _SubmittedNotice(),
+                    _SubmittedNotice(monthly: _isPrimaryDosAudit),
                   ],
                 ],
               ),
@@ -3248,9 +3371,15 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                       if (!_readOnly)
                         FilledButton(
                           key: const ValueKey('checklist-header-submit-button'),
-                          onPressed: _saving ? null : () => _save(submit: true),
+                          onPressed: _saving
+                              ? null
+                              : _isChecklistComplete
+                              ? () => _save(submit: true)
+                              : _navigateToFirstMissedItem,
                           style: FilledButton.styleFrom(
-                            backgroundColor: GacColors.primary,
+                            backgroundColor: _isChecklistComplete
+                                ? GacColors.primary
+                                : const Color(0xFFD97706),
                             padding: const EdgeInsets.symmetric(horizontal: 13),
                             minimumSize: const Size(72, 34),
                             shape: RoundedRectangleBorder(
@@ -3267,8 +3396,14 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                                 )
                               : Text(
                                   _isCategoryView
-                                      ? (_isReadyToSubmit ? 'SUBMIT' : 'SAVE')
-                                      : 'SUBMIT',
+                                      ? (_isReadyToSubmit
+                                            ? (_isChecklistComplete
+                                                  ? 'SUBMIT'
+                                                  : 'INCOMPLETE')
+                                            : 'SAVE')
+                                      : (_isChecklistComplete
+                                            ? 'SUBMIT'
+                                            : 'INCOMPLETE'),
                                   style: const TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w900,
@@ -3316,7 +3451,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                   ),
                   if (_readOnly) ...[
                     const SizedBox(height: 9),
-                    const _SubmittedNotice(),
+                    _SubmittedNotice(monthly: _isPrimaryDosAudit),
                   ],
                 ],
               ),
@@ -3399,10 +3534,17 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                                 ? () => showQuestion(questionIndex + 1)
                                 : _readOnly
                                 ? null
-                                : () => _save(submit: true),
+                                : (_isChecklistComplete
+                                      ? () => _save(submit: true)
+                                      : _navigateToFirstMissedItem),
                             style: FilledButton.styleFrom(
                               minimumSize: const Size(0, 54),
-                              backgroundColor: GacColors.primary,
+                              backgroundColor:
+                                  (questionIndex == questions.length - 1 &&
+                                      !_isChecklistComplete &&
+                                      _isReadyToSubmit)
+                                  ? const Color(0xFFD97706)
+                                  : GacColors.primary,
                               disabledBackgroundColor: const Color(0xFF153A56),
                               disabledForegroundColor: GacColors.textMuted,
                               shape: RoundedRectangleBorder(
@@ -3413,7 +3555,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                               questionIndex < questions.length - 1
                                   ? Icons.arrow_forward_rounded
                                   : (_isReadyToSubmit
-                                        ? Icons.task_alt_rounded
+                                        ? (_isChecklistComplete
+                                              ? Icons.task_alt_rounded
+                                              : Icons.warning_amber_rounded)
                                         : Icons.arrow_forward_rounded),
                               size: 18,
                             ),
@@ -3423,7 +3567,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                                 questionIndex < questions.length - 1
                                     ? 'NEXT QUESTION'
                                     : (_isReadyToSubmit
-                                          ? 'SUBMIT CHECKLIST'
+                                          ? (_isChecklistComplete
+                                                ? 'SUBMIT CHECKLIST'
+                                                : 'MISSED CHECKLIST')
                                           : 'NEXT CATEGORY'),
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w900,
@@ -3497,8 +3643,10 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
       }
     }
 
-    final isUtilities = _isHourly ||
+    final isUtilities =
+        _isHourly ||
         _template?.slug == 'restroom' ||
+        (_template?.slug.startsWith('restroom') ?? false) ||
         _template?.slug == 'utilities';
 
     showModalBottomSheet<void>(
@@ -3568,8 +3716,8 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                             Text(
                               item.displayNumber != null
                                   ? (isUtilities
-                                      ? 'Question #${item.displayNumber}'
-                                      : 'Standard #${item.displayNumber}')
+                                        ? 'Question #${item.displayNumber}'
+                                        : 'Standard #${item.displayNumber}')
                                   : 'Inspection Verification Criteria',
                               style: const TextStyle(
                                 color: GacColors.white,
@@ -3591,7 +3739,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                     ],
                   ),
                   const SizedBox(height: 14),
-                  if (category != null || coverage != null || subject != null) ...[
+                  if (category != null ||
+                      coverage != null ||
+                      subject != null) ...[
                     Wrap(
                       spacing: 6,
                       runSpacing: 6,
@@ -3806,9 +3956,15 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                       if (!_readOnly)
                         FilledButton(
                           key: const ValueKey('checklist-header-submit-button'),
-                          onPressed: _saving ? null : () => _save(submit: true),
+                          onPressed: _saving
+                              ? null
+                              : _isChecklistComplete
+                              ? () => _save(submit: true)
+                              : _navigateToFirstMissedItem,
                           style: FilledButton.styleFrom(
-                            backgroundColor: GacColors.primary,
+                            backgroundColor: _isChecklistComplete
+                                ? GacColors.primary
+                                : const Color(0xFFD97706),
                             padding: const EdgeInsets.symmetric(horizontal: 13),
                             minimumSize: const Size(72, 34),
                             shape: RoundedRectangleBorder(
@@ -3823,9 +3979,11 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                                     color: GacColors.white,
                                   ),
                                 )
-                              : const Text(
-                                  'SUBMIT',
-                                  style: TextStyle(
+                              : Text(
+                                  _isChecklistComplete
+                                      ? 'SUBMIT'
+                                      : 'INCOMPLETE',
+                                  style: const TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: 0.7,
@@ -3872,7 +4030,7 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                   ),
                   if (_readOnly) ...[
                     const SizedBox(height: 9),
-                    const _SubmittedNotice(),
+                    _SubmittedNotice(monthly: _isPrimaryDosAudit),
                   ],
                 ],
               ),
@@ -3938,7 +4096,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                                       child: _buildDocQuestionCard(
                                         item: item,
                                         status: status,
-                                        enabled: !_isCustomerReadOnly(activeCustomer),
+                                        enabled: !_isCustomerReadOnly(
+                                          activeCustomer,
+                                        ),
                                         onStatusSelected: (newStatus) =>
                                             _handleDocStatusSelected(
                                               customer: activeCustomer,
@@ -3955,19 +4115,37 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                             if (!_readOnly) ...[
                               const SizedBox(height: 16),
                               FilledButton.icon(
-                                key: const ValueKey('dos-documentation-list-submit-button'),
-                                onPressed: _saving ? null : () => _save(submit: true),
+                                key: const ValueKey(
+                                  'dos-documentation-list-submit-button',
+                                ),
+                                onPressed: _saving
+                                    ? null
+                                    : _isChecklistComplete
+                                    ? () => _save(submit: true)
+                                    : _navigateToFirstMissedItem,
                                 style: FilledButton.styleFrom(
-                                  backgroundColor: GacColors.primary,
+                                  backgroundColor: _isChecklistComplete
+                                      ? GacColors.primary
+                                      : const Color(0xFFD97706),
                                   minimumSize: const Size(double.infinity, 50),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                 ),
-                                icon: const Icon(Icons.task_alt_rounded, size: 18),
-                                label: const Text(
-                                  'SUBMIT DOCUMENTATION CHECKLIST',
-                                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+                                icon: Icon(
+                                  _isChecklistComplete
+                                      ? Icons.task_alt_rounded
+                                      : Icons.warning_amber_rounded,
+                                  size: 18,
+                                ),
+                                label: Text(
+                                  _isChecklistComplete
+                                      ? 'SUBMIT DOCUMENTATION CHECKLIST'
+                                      : 'MISSED CHECKLIST',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 13,
+                                  ),
                                 ),
                               ),
                             ],
@@ -4039,17 +4217,22 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
       } else if (hasNextCustomer) {
         showCustomer(customerPosition + 1, 0);
       } else if (!_readOnly) {
-        unawaited(_save(submit: true));
+        if (_isChecklistComplete) {
+          unawaited(_save(submit: true));
+        } else {
+          _navigateToFirstMissedItem();
+        }
       }
     }
 
+    final isLastStep = isLastQuestion && !hasNextCustomer;
     final nextLabel = !isLastQuestion
         ? 'NEXT QUESTION'
         : hasNextCustomer
         ? 'NEXT CUSTOMER'
         : _readOnly
         ? 'CHECKLIST SUBMITTED'
-        : 'SUBMIT CHECKLIST';
+        : (_isChecklistComplete ? 'SUBMIT CHECKLIST' : 'MISSED CHECKLIST');
 
     return Column(
       key: const ValueKey('dos-documentation-step-view'),
@@ -4173,7 +4356,8 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                       Expanded(
                         child: FilledButton.icon(
                           key: const ValueKey('dos-next-question'),
-                          onPressed: _saving ||
+                          onPressed:
+                              _saving ||
                                   !canProceed ||
                                   (_readOnly &&
                                       isLastQuestion &&
@@ -4182,7 +4366,12 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                               : next,
                           style: FilledButton.styleFrom(
                             minimumSize: const Size(0, 50),
-                            backgroundColor: GacColors.primary,
+                            backgroundColor:
+                                (isLastStep &&
+                                    !_isChecklistComplete &&
+                                    !_readOnly)
+                                ? const Color(0xFFD97706)
+                                : GacColors.primary,
                             disabledBackgroundColor: const Color(0xFF153A56),
                             disabledForegroundColor: GacColors.textMuted,
                             shape: RoundedRectangleBorder(
@@ -4190,8 +4379,10 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                             ),
                           ),
                           icon: Icon(
-                            isLastQuestion && !hasNextCustomer
-                                ? Icons.task_alt_rounded
+                            isLastStep
+                                ? (_isChecklistComplete
+                                      ? Icons.task_alt_rounded
+                                      : Icons.warning_amber_rounded)
                                 : Icons.arrow_forward_rounded,
                             size: 17,
                           ),
@@ -4269,10 +4460,13 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
                       if (newIdx != null && newIdx != _selectedCustomerIndex) {
                         setState(() {
                           _selectedCustomerIndex = newIdx;
-                          final documentationItems = _template?.sections
-                              .expand((section) => section.items)
-                              .toList(growable: false) ?? [];
-                          _stepQuestionIndex = (_readOnly && documentationItems.isNotEmpty)
+                          final documentationItems =
+                              _template?.sections
+                                  .expand((section) => section.items)
+                                  .toList(growable: false) ??
+                              [];
+                          _stepQuestionIndex =
+                              (_readOnly && documentationItems.isNotEmpty)
                               ? documentationItems.length - 1
                               : 0;
                           _sectionIndex = 0;
@@ -4310,7 +4504,8 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
             onPressed: !_saving ? _addDocumentationCustomer : null,
           );
           final isSubmittedCust = _isCustomerReadOnly(activeCustomer);
-          final canDelete = !isSubmittedCust && _customers.length > 1 && !_saving;
+          final canDelete =
+              !isSubmittedCust && _customers.length > 1 && !_saving;
           final deleteButton = IconButton.outlined(
             key: ValueKey('remove-customer-${activeCustomer.customerIndex}'),
             tooltip: 'Delete Customer ${activeCustomer.customerIndex}',
@@ -4383,7 +4578,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
   Future<void> _removeDocumentationCustomer(
     CustomerAuditSample customer,
   ) async {
-    if (_isCustomerReadOnly(customer) || _saving || _customers.length <= 1) return;
+    if (_isCustomerReadOnly(customer) || _saving || _customers.length <= 1) {
+      return;
+    }
     final removedPosition = _customers.indexWhere(
       (entry) => entry.customerIndex == customer.customerIndex,
     );
@@ -4419,16 +4616,10 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
               ),
               if (_isCustomerReadOnly(activeCustomer)) ...[
                 const SizedBox(width: 8),
-                const _MetaBadge(
-                  label: 'SUBMITTED',
-                  primary: false,
-                ),
+                const _MetaBadge(label: 'SUBMITTED', primary: false),
               ] else if (_hasNewDocumentationCustomer) ...[
                 const SizedBox(width: 8),
-                const _MetaBadge(
-                  label: 'NEW SAMPLE',
-                  primary: true,
-                ),
+                const _MetaBadge(label: 'NEW SAMPLE', primary: true),
               ],
               const SizedBox(width: 8),
               const Expanded(
@@ -4648,7 +4839,9 @@ class _UserChecklistDetailScreenState extends State<UserChecklistDetailScreen>
       return;
     }
 
-    final hasNoAnswer = customer.answers.values.any((v) => v.trim().toLowerCase() == 'no');
+    final hasNoAnswer = customer.answers.values.any(
+      (v) => v.trim().toLowerCase() == 'no',
+    );
     if (hasNoAnswer && (newStatus == 'yes' || newStatus == 'na')) {
       final confirmed = await _confirmPrerequisiteNoSelection(
         title: 'Reset Customer Evaluation',
@@ -4762,6 +4955,8 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
     required this.onSubmit,
     required this.onChanged,
     this.onShowHowToCheck,
+    this.isChecklistComplete = true,
+    this.onNavigateToMissed,
   });
 
   final ChecklistTemplateData template;
@@ -4780,6 +4975,8 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
   final VoidCallback onSubmit;
   final VoidCallback onChanged;
   final void Function(ChecklistItemData item)? onShowHowToCheck;
+  final bool isChecklistComplete;
+  final VoidCallback? onNavigateToMissed;
 
   @override
   Widget build(BuildContext context) {
@@ -4825,8 +5022,9 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
             (!isNaReasonRequired || hasNaReason) &&
             (!isNotGoodRemarkRequired || hasNotGoodRemark));
 
-    final activeItemsInSlot =
-        items.where((i) => i.isSlotActive(activeSlotKey)).toList();
+    final activeItemsInSlot = items
+        .where((i) => i.isSlotActive(activeSlotKey))
+        .toList();
     final answeredInSlot = activeItemsInSlot.where((i) {
       final mark = answers[i.key]?.slots[activeSlotKey]?.trim().toLowerCase();
       return mark != null && mark.isNotEmpty && mark != 'unanswered';
@@ -4864,39 +5062,76 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      if (!readOnly && !isCurrentSlotSubmitted) ...[
+                      if (!readOnly) ...[
                         const SizedBox(width: 10),
-                        FilledButton(
-                          key: const ValueKey('checklist-header-submit-button'),
-                          onPressed: saving ? null : onSubmit,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: GacColors.primary,
-                            padding: const EdgeInsets.symmetric(horizontal: 13),
-                            minimumSize: const Size(72, 34),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(9),
+                        if (isCurrentSlotSubmitted || isCurrentSlotLocked)
+                          GestureDetector(
+                            key: const ValueKey(
+                              'checklist-header-submit-button',
                             ),
-                          ),
-                          child: saving
-                              ? const SizedBox.square(
-                                  dimension: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: GacColors.white,
-                                  ),
-                                )
-                              : const Text(
-                                  'SUBMIT',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 0.7,
-                                  ),
+                            onTap: () =>
+                                _showSlotLockedModal(context, activeSlot),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 13,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF153A56),
+                                borderRadius: BorderRadius.circular(9),
+                              ),
+                              child: const Text(
+                                'SUBMIT',
+                                style: TextStyle(
+                                  color: GacColors.textMuted,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.7,
                                 ),
-                        ),
-                      ] else if (isCurrentSlotSubmitted) ...[
-                        const SizedBox(width: 10),
-                        const _SubmittedPill(),
+                              ),
+                            ),
+                          )
+                        else
+                          FilledButton(
+                            key: const ValueKey(
+                              'checklist-header-submit-button',
+                            ),
+                            onPressed: saving
+                                ? null
+                                : isChecklistComplete
+                                ? onSubmit
+                                : onNavigateToMissed,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: isChecklistComplete
+                                  ? GacColors.primary
+                                  : const Color(0xFFD97706),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 13,
+                              ),
+                              minimumSize: const Size(72, 34),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(9),
+                              ),
+                            ),
+                            child: saving
+                                ? const SizedBox.square(
+                                    dimension: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: GacColors.white,
+                                    ),
+                                  )
+                                : Text(
+                                    isChecklistComplete
+                                        ? 'SUBMIT'
+                                        : 'INCOMPLETE',
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.7,
+                                    ),
+                                  ),
+                          ),
                       ],
                     ],
                   ),
@@ -4997,45 +5232,51 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
                                   color: isTurnedOff
                                       ? const Color(0x2664748B)
                                       : (currentMark == 'good'
-                                          ? const Color(0x261B8A5A)
-                                          : (currentMark == 'not_good'
-                                                ? const Color(0x26D92D20)
-                                                : (currentMark == 'na'
-                                                      ? const Color(0x26D97706)
-                                                      : Colors.white10))),
+                                            ? const Color(0x261B8A5A)
+                                            : (currentMark == 'not_good'
+                                                  ? const Color(0x26D92D20)
+                                                  : (currentMark == 'na'
+                                                        ? const Color(
+                                                            0x26D97706,
+                                                          )
+                                                        : Colors.white10))),
                                   borderRadius: BorderRadius.circular(8),
                                   border: Border.all(
                                     color: isTurnedOff
                                         ? const Color(0xFF64748B)
                                         : (currentMark == 'good'
-                                            ? const Color(0xFF1B8A5A)
-                                            : (currentMark == 'not_good'
-                                                  ? const Color(0xFFD92D20)
-                                                  : (currentMark == 'na'
-                                                        ? const Color(0xFFD97706)
-                                                        : Colors.white24))),
+                                              ? const Color(0xFF1B8A5A)
+                                              : (currentMark == 'not_good'
+                                                    ? const Color(0xFFD92D20)
+                                                    : (currentMark == 'na'
+                                                          ? const Color(
+                                                              0xFFD97706,
+                                                            )
+                                                          : Colors.white24))),
                                   ),
                                 ),
                                 child: Text(
                                   isTurnedOff
                                       ? 'TURNED OFF'
                                       : (currentMark == 'good'
-                                          ? 'MARKED YES'
-                                          : (currentMark == 'not_good'
-                                                ? 'MARKED NO'
-                                                : (currentMark == 'na'
-                                                      ? 'MARKED N/A'
-                                                      : 'UNANSWERED'))),
+                                            ? 'MARKED YES'
+                                            : (currentMark == 'not_good'
+                                                  ? 'MARKED NO'
+                                                  : (currentMark == 'na'
+                                                        ? 'MARKED N/A'
+                                                        : 'UNANSWERED'))),
                                   style: TextStyle(
                                     color: isTurnedOff
                                         ? const Color(0xFF94A3B8)
                                         : (currentMark == 'good'
-                                            ? const Color(0xFF1B8A5A)
-                                            : (currentMark == 'not_good'
-                                                  ? const Color(0xFFD92D20)
-                                                  : (currentMark == 'na'
-                                                        ? const Color(0xFFD97706)
-                                                        : GacColors.gray))),
+                                              ? const Color(0xFF1B8A5A)
+                                              : (currentMark == 'not_good'
+                                                    ? const Color(0xFFD92D20)
+                                                    : (currentMark == 'na'
+                                                          ? const Color(
+                                                              0xFFD97706,
+                                                            )
+                                                          : GacColors.gray))),
                                     fontSize: 10,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: .5,
@@ -5285,9 +5526,9 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
                                     if (currentMark == 'good') {
                                       final confirmed =
                                           await _showUndoChoiceConfirmationDialog(
-                                        context,
-                                        choiceLabel: 'YES',
-                                      );
+                                            context,
+                                            choiceLabel: 'YES',
+                                          );
                                       if (!confirmed) return;
                                       answer.slots.remove(activeSlotKey);
                                       onChanged();
@@ -5314,9 +5555,9 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
                                     if (currentMark == 'not_good') {
                                       final confirmed =
                                           await _showUndoChoiceConfirmationDialog(
-                                        context,
-                                        choiceLabel: 'NO',
-                                      );
+                                            context,
+                                            choiceLabel: 'NO',
+                                          );
                                       if (!confirmed) return;
                                       answer.slots.remove(activeSlotKey);
                                       onChanged();
@@ -5343,9 +5584,9 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
                                     if (currentMark == 'na') {
                                       final confirmed =
                                           await _showUndoChoiceConfirmationDialog(
-                                        context,
-                                        choiceLabel: 'N/A',
-                                      );
+                                            context,
+                                            choiceLabel: 'N/A',
+                                          );
                                       if (!confirmed) return;
                                       answer.slots.remove(activeSlotKey);
                                       onChanged();
@@ -5415,7 +5656,23 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
                           child: FilledButton.icon(
                             style: FilledButton.styleFrom(
                               minimumSize: const Size(0, 48),
-                              backgroundColor: GacColors.primary,
+                              backgroundColor:
+                                  (questionIndex == items.length - 1 &&
+                                      (readOnly ||
+                                          isCurrentSlotSubmitted ||
+                                          isCurrentSlotLocked))
+                                  ? const Color(0xFF153A56)
+                                  : (questionIndex == items.length - 1 &&
+                                        !isChecklistComplete)
+                                  ? const Color(0xFFD97706)
+                                  : GacColors.primary,
+                              foregroundColor:
+                                  (questionIndex == items.length - 1 &&
+                                      (readOnly ||
+                                          isCurrentSlotSubmitted ||
+                                          isCurrentSlotLocked))
+                                  ? GacColors.textMuted
+                                  : GacColors.white,
                               disabledBackgroundColor: const Color(0xFF153A56),
                               disabledForegroundColor: GacColors.textMuted,
                               shape: RoundedRectangleBorder(
@@ -5426,21 +5683,46 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
                                 ? null
                                 : questionIndex < items.length - 1
                                 ? (canProceed
-                                    ? () => onQuestionChanged(questionIndex + 1)
-                                    : null)
-                                : (readOnly || isCurrentSlotSubmitted || isCurrentSlotLocked)
-                                ? null
-                                : (canProceed ? onSubmit : null),
+                                      ? () =>
+                                            onQuestionChanged(questionIndex + 1)
+                                      : null)
+                                : (readOnly ||
+                                      isCurrentSlotSubmitted ||
+                                      isCurrentSlotLocked)
+                                ? () =>
+                                      _showSlotLockedModal(context, activeSlot)
+                                : (canProceed
+                                      ? (isChecklistComplete
+                                            ? onSubmit
+                                            : onNavigateToMissed)
+                                      : null),
                             icon: Icon(
                               questionIndex < items.length - 1
                                   ? Icons.arrow_forward_rounded
-                                  : Icons.task_alt_rounded,
+                                  : (isCurrentSlotSubmitted ||
+                                        isCurrentSlotLocked)
+                                  ? Icons.lock_clock_rounded
+                                  : (isChecklistComplete
+                                        ? Icons.task_alt_rounded
+                                        : Icons.warning_amber_rounded),
                               size: 18,
+                              color:
+                                  (questionIndex == items.length - 1 &&
+                                      (readOnly ||
+                                          isCurrentSlotSubmitted ||
+                                          isCurrentSlotLocked))
+                                  ? GacColors.textMuted
+                                  : null,
                             ),
                             label: Text(
                               questionIndex < items.length - 1
                                   ? 'NEXT'
-                                  : 'SUBMIT CHECKLIST',
+                                  : (isCurrentSlotSubmitted ||
+                                        isCurrentSlotLocked)
+                                  ? 'SUBMIT CHECKLIST'
+                                  : (isChecklistComplete
+                                        ? 'SUBMIT CHECKLIST'
+                                        : 'MISSED CHECKLIST'),
                               style: const TextStyle(
                                 fontWeight: FontWeight.w800,
                               ),
@@ -5460,8 +5742,9 @@ class _UtilitiesQuestionByQuestionView extends StatelessWidget {
                             _QuestionJumperDot(
                               number: i + 1,
                               isCurrent: i == questionIndex,
-                              isTurnedOff:
-                                  !items[i].isSlotActive(activeSlotKey),
+                              isTurnedOff: !items[i].isSlotActive(
+                                activeSlotKey,
+                              ),
                               status:
                                   answers[items[i].key]?.slots[activeSlotKey],
                               onTap: () => onQuestionChanged(i),
@@ -6162,7 +6445,11 @@ class _ChecklistQuestionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDos = template.validationMode == 'dos';
-    final isRestroom = template.validationMode == 'time_slots';
+    final isRestroom =
+        template.validationMode == 'time_slots' ||
+        template.slug == 'restroom' ||
+        template.slug.startsWith('restroom') ||
+        template.slug == 'utilities';
     final isSubform = template.validationMode == 'dos_subform';
     final isSubformRef =
         isDos && !isSubform && _isSubformReferenceItem(item, template);
@@ -6337,8 +6624,9 @@ class _ChecklistQuestionCard extends StatelessWidget {
                   if (answer.eligibility == newEligibility) {
                     final confirmed = await _showUndoChoiceConfirmationDialog(
                       context,
-                      choiceLabel:
-                          newEligibility == 'na' ? 'N/A' : 'SHOW SUBFORM',
+                      choiceLabel: newEligibility == 'na'
+                          ? 'N/A'
+                          : 'SHOW SUBFORM',
                     );
                     if (!confirmed) return;
                     answer.eligibility = null;
@@ -6866,9 +7154,9 @@ class _TimeSlotAnswers extends StatelessWidget {
                           if (answer.slots[slot.key] == 'good') {
                             final confirmed =
                                 await _showUndoChoiceConfirmationDialog(
-                              context,
-                              choiceLabel: 'YES',
-                            );
+                                  context,
+                                  choiceLabel: 'YES',
+                                );
                             if (!confirmed) return;
                             answer.slots.remove(slot.key);
                             onChanged();
@@ -6891,9 +7179,9 @@ class _TimeSlotAnswers extends StatelessWidget {
                           if (answer.slots[slot.key] == 'not_good') {
                             final confirmed =
                                 await _showUndoChoiceConfirmationDialog(
-                              context,
-                              choiceLabel: 'NO',
-                            );
+                                  context,
+                                  choiceLabel: 'NO',
+                                );
                             if (!confirmed) return;
                             answer.slots.remove(slot.key);
                             onChanged();
@@ -6916,9 +7204,9 @@ class _TimeSlotAnswers extends StatelessWidget {
                           if (answer.slots[slot.key] == 'na') {
                             final confirmed =
                                 await _showUndoChoiceConfirmationDialog(
-                              context,
-                              choiceLabel: 'N/A',
-                            );
+                                  context,
+                                  choiceLabel: 'N/A',
+                                );
                             if (!confirmed) return;
                             answer.slots.remove(slot.key);
                             onChanged();
@@ -7317,9 +7605,11 @@ class _SubformQuestionDropboxViewState
   Widget build(BuildContext context) {
     final items = widget.attentionOnly
         ? widget.subformSection.items
-              .where((item) => checklistResponseNeedsAttention(
-                    widget.answer.subformAnswers[item.id],
-                  ))
+              .where(
+                (item) => checklistResponseNeedsAttention(
+                  widget.answer.subformAnswers[item.id],
+                ),
+              )
               .toList()
         : widget.subformSection.items;
     if (items.isEmpty) return const SizedBox.shrink();
@@ -7894,7 +8184,9 @@ class _MetaBadge extends StatelessWidget {
 }
 
 class _SubmittedNotice extends StatelessWidget {
-  const _SubmittedNotice();
+  const _SubmittedNotice({this.monthly = false});
+
+  final bool monthly;
 
   @override
   Widget build(BuildContext context) {
@@ -7905,14 +8197,20 @@ class _SubmittedNotice extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0x40249D6B)),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.check_circle_outline, color: GacColors.success, size: 17),
-          SizedBox(width: 7),
+          const Icon(
+            Icons.check_circle_outline,
+            color: GacColors.success,
+            size: 17,
+          ),
+          const SizedBox(width: 7),
           Expanded(
             child: Text(
-              'This checklist was submitted and is read-only.',
-              style: TextStyle(
+              monthly
+                  ? 'This month\'s DOS checklist was submitted and is read-only. A new checklist will be available next month.'
+                  : 'This checklist was submitted and is read-only.',
+              style: const TextStyle(
                 color: GacColors.success,
                 fontSize: 9,
                 fontWeight: FontWeight.w800,
@@ -8143,6 +8441,131 @@ String _slotWindowLabel(BuildContext context, ChecklistTimeSlot slot) {
   return '$startLabel–$endLabel';
 }
 
+Future<void> _showSlotLockedModal(
+  BuildContext context,
+  ChecklistTimeSlot slot,
+) {
+  const accentColor = Color(0xFFD97706);
+  final windowLabel = _slotWindowLabel(context, slot);
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      backgroundColor: const Color(0xFF0F2642),
+      elevation: 24,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(
+          color: accentColor.withValues(alpha: 0.35),
+          width: 1.5,
+        ),
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(24, 26, 24, 16),
+      actionsPadding: const EdgeInsets.fromLTRB(22, 0, 22, 22),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: accentColor.withValues(alpha: 0.12),
+              border: Border.all(
+                color: accentColor.withValues(alpha: 0.28),
+                width: 2,
+              ),
+            ),
+            child: Center(
+              child: Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accentColor,
+                  boxShadow: [
+                    BoxShadow(
+                      color: accentColor.withValues(alpha: 0.42),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.lock_clock_rounded,
+                  color: GacColors.white,
+                  size: 28,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: const Text(
+              'SCHEDULED HOUR ONLY',
+              style: TextStyle(
+                color: accentColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.9,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Submission Locked',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: GacColors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -0.3,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'This checklist can only be submitted during its scheduled hour ($windowLabel).',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFCBD5E1),
+              fontSize: 13,
+              height: 1.45,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            key: const ValueKey('checklist-message-ok-button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: accentColor,
+              foregroundColor: GacColors.white,
+              minimumSize: const Size(double.infinity, 48),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(13),
+              ),
+              elevation: 0,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            icon: const Icon(Icons.close_rounded, size: 18),
+            label: const Text(
+              'OK',
+              style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 bool _hasCommitmentDateAndTime(String? value) {
   final normalized = value?.trim();
   return normalized != null &&
@@ -8216,11 +8639,7 @@ Future<bool> _showUndoChoiceConfirmationDialog(
       ),
       title: const Row(
         children: [
-          Icon(
-            Icons.help_outline_rounded,
-            color: GacColors.primary,
-            size: 26,
-          ),
+          Icon(Icons.help_outline_rounded, color: GacColors.primary, size: 26),
           SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -8236,11 +8655,7 @@ Future<bool> _showUndoChoiceConfirmationDialog(
       ),
       content: const Text(
         'Are you sure you want to undo your choice?',
-        style: TextStyle(
-          color: GacColors.gray,
-          fontSize: 13,
-          height: 1.45,
-        ),
+        style: TextStyle(color: GacColors.gray, fontSize: 13, height: 1.45),
       ),
       actions: [
         TextButton(

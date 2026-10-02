@@ -39,8 +39,11 @@ const bool gacEnableOfflineChecklistFallback = bool.fromEnvironment(
 /// Default lead time before a task's due time to fire the reminder.
 const int gacDefaultReminderLeadTimeMinutes = 5;
 
-/// Duration of inactivity before a non-remembered session times out.
-const Duration gacSessionTimeoutDuration = Duration(minutes: 15);
+/// Duration of inactivity before a non-remembered session times out (1 hour).
+const Duration gacSessionTimeoutDuration = Duration(hours: 1);
+
+/// Storage key for recording the last user interaction timestamp across app sessions.
+const String gacLastActivityTimeKey = 'gac_last_activity_time';
 
 /// Time zone used by Gateway's checklist windows and hourly inspection slots.
 const String gacBusinessTimezone = String.fromEnvironment(

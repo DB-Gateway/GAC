@@ -21,7 +21,8 @@ class RegistrationTest extends TestCase
             ->assertSee('Utilities')
             ->assertSee('Sales &amp; Service', false)
             ->assertSee('Branch Operations Manager')
-            ->assertSee('Compliance Administrator');
+            ->assertSee('General Manager')
+            ->assertDontSee('System Administrator');
     }
 
     public function test_new_users_can_register(): void

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\UserManagementController;
 use App\Models\ChecklistTemplate;
 use App\Models\Report;
 use App\Models\User;
@@ -35,7 +36,7 @@ class DatabaseBackedAdminTest extends TestCase
             ->assertRedirect();
 
         $user = User::where('email', 'pic@gateway.test')->firstOrFail();
-        $this->assertTrue(Hash::check('password123', $user->password));
+        $this->assertTrue(Hash::check(UserManagementController::PRESET_PASSWORD, $user->password));
 
         $this->actingAs($administrator)
             ->patch(route('users.status', $user), ['account_status' => 'inactive'])

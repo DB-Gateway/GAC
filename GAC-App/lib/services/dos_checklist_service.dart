@@ -33,10 +33,24 @@ class DosChecklistService implements ChecklistRepository {
   String? get checkerCode => _scope?.checkerCode;
   List<String> get allowedSlugs => _scope?.allowedSlugs ?? const [];
 
+  /// DOS Sales and Aftersales audits use one durable record per calendar
+  /// month. Using the first day as the period key makes every date selected in
+  /// the same month resolve to that same server-side submission.
+  static String? monthlyAuditDate(String? date) {
+    if (date == null || date.trim().isEmpty) return date;
+    final parsed = DateTime.tryParse(date.trim());
+    if (parsed == null) return date;
+    return '${parsed.year.toString().padLeft(4, '0')}-'
+        '${parsed.month.toString().padLeft(2, '0')}-01';
+  }
+
+  static bool _isPrimaryAudit(String slug) =>
+      slug == salesSlug || slug == aftersalesSlug;
+
   @override
   Future<List<ChecklistCatalogItem>> fetchCatalog({String? date}) async {
     final scope = _requireScope();
-    final catalog = await _delegate.fetchCatalog(date: date);
+    final catalog = await _delegate.fetchCatalog(date: monthlyAuditDate(date));
 
     return catalog
         .where((item) => scope.allows(item.slug))
@@ -53,7 +67,10 @@ class DosChecklistService implements ChecklistRepository {
   }) async {
     final scope = _authorizeSlug(slug);
     try {
-      final result = await _delegate.fetchChecklist(slug, date: date);
+      final result = await _delegate.fetchChecklist(
+        slug,
+        date: _isPrimaryAudit(slug) ? monthlyAuditDate(date) : date,
+      );
       if (!scope.allows(result.template.slug)) {
         throw const ChecklistApiException(
           'The checklist returned by the server is not assigned to this account.',
@@ -95,7 +112,7 @@ class DosChecklistService implements ChecklistRepository {
     final scope = _authorizeSlug(slug);
     final submission = await _delegate.saveDraft(
       slug,
-      date: date,
+      date: _isPrimaryAudit(slug) ? monthlyAuditDate(date)! : date,
       responses: responses,
       context: context,
     );
@@ -109,9 +126,26 @@ class DosChecklistService implements ChecklistRepository {
     required List<Map<String, dynamic>> responses,
   }) async {
     final scope = _authorizeSlug(slug);
+    final effectiveDate = _isPrimaryAudit(slug)
+        ? monthlyAuditDate(date)!
+        : date;
+
+    // Re-read immediately before the final write. This prevents another
+    // checklist opened earlier in the month (or a stale second app window)
+    // from submitting after this month's audit has already been completed.
+    if (_isPrimaryAudit(slug)) {
+      final current = await _delegate.fetchChecklist(slug, date: effectiveDate);
+      if (current.submission?.isSubmitted == true) {
+        throw const ChecklistApiException(
+          'This DOS checklist has already been submitted for this month. '
+          'A new checklist will be available next month.',
+          status: 409,
+        );
+      }
+    }
     final submission = await _delegate.submit(
       slug,
-      date: date,
+      date: effectiveDate,
       responses: responses,
     );
     return _normalizeSubmission(submission, scope.itemCountFor(slug))!;

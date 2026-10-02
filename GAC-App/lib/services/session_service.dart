@@ -9,11 +9,13 @@ import 'local_notification_service.dart';
 
 /// Manages active user session inactivity timeouts and auto-logout.
 ///
-/// When a user logs in WITHOUT "Remember Me", an inactivity timer is started.
+/// When a user logs in, an inactivity timer is started.
 /// If no interaction occurs within [gacSessionTimeoutDuration], the user is
 /// automatically logged out and redirected to the login screen.
 ///
-/// If "Remember Me" is enabled, sessions remain persistent across inactivity.
+/// If "Remember Me" is enabled, credential preferences are preserved to allow
+/// Quick PIN / Biometric unlock, but active sessions strictly time out after
+/// [gacSessionTimeoutDuration] of inactivity for all users.
 class SessionManager {
   SessionManager._();
   static final SessionManager instance = SessionManager._();
@@ -34,7 +36,7 @@ class SessionManager {
   /// Configure custom timeout duration (useful for tests).
   void setCustomTimeout(Duration duration) {
     _timeoutDuration = duration;
-    if (_isTracking && !_isRemembered) {
+    if (_isTracking) {
       _resetTimer();
     }
   }
@@ -42,14 +44,12 @@ class SessionManager {
   /// Reset to standard timeout duration.
   void resetTimeout() {
     _timeoutDuration = gacSessionTimeoutDuration;
-    if (_isTracking && !_isRemembered) {
+    if (_isTracking) {
       _resetTimer();
     }
   }
 
-  /// Starts tracking session activity.
-  ///
-  /// If [isRemembered] is true, session inactivity auto-logout is disabled.
+  /// Starts tracking session activity for all authenticated users.
   void startTracking({required bool isRemembered, Duration? customTimeout}) {
     if (customTimeout != null) {
       _timeoutDuration = customTimeout;
@@ -58,21 +58,57 @@ class SessionManager {
     _isTracking = true;
     _lastActivityTime = DateTime.now();
     _backgroundedTime = null;
-
-    if (_isRemembered) {
-      _inactivityTimer?.cancel();
-      _inactivityTimer = null;
-      return;
-    }
+    unawaited(_persistLastActivity(_lastActivityTime!));
 
     _resetTimer();
   }
 
   /// Records user touch/interaction event and resets the inactivity timer.
+  /// If inactivity has already exceeded [_timeoutDuration], immediately handles timeout.
   void recordUserActivity() {
-    if (!_isTracking || _isRemembered) return;
-    _lastActivityTime = DateTime.now();
+    if (!_isTracking) return;
+    final now = DateTime.now();
+    if (_lastActivityTime != null &&
+        now.difference(_lastActivityTime!) >= _timeoutDuration) {
+      unawaited(handleSessionTimeout());
+      return;
+    }
+    _lastActivityTime = now;
+    unawaited(_persistLastActivity(_lastActivityTime!));
     _resetTimer();
+  }
+
+  Future<void> _persistLastActivity(DateTime time) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(gacLastActivityTimeKey, time.toIso8601String());
+    } catch (_) {}
+  }
+
+  /// Checks if an existing stored session is still within the 1-hour timeout window.
+  Future<bool> isSessionActive() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final token = prefs.getString(gacAuthTokenKey);
+      final user = prefs.getString(gacAuthUserKey);
+      if (token == null || token.trim().isEmpty || user == null) return false;
+
+      final lastActivityStr = prefs.getString(gacLastActivityTimeKey);
+      if (lastActivityStr == null) {
+        // If lastActivityTime in memory exists, check that
+        if (_lastActivityTime != null) {
+          return DateTime.now().difference(_lastActivityTime!) < _timeoutDuration;
+        }
+        return true;
+      }
+      final lastActivity = DateTime.tryParse(lastActivityStr);
+      if (lastActivity == null) return false;
+
+      return DateTime.now().difference(lastActivity) < _timeoutDuration;
+    } catch (_) {
+      return false;
+    }
   }
 
   void _resetTimer() {
@@ -84,11 +120,12 @@ class SessionManager {
 
   /// Handles app lifecycle state transitions.
   void handleAppLifecycleState(AppLifecycleState state) {
-    if (!_isTracking || _isRemembered) return;
+    if (!_isTracking) return;
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       _backgroundedTime = DateTime.now();
+      unawaited(_persistLastActivity(_backgroundedTime!));
     } else if (state == AppLifecycleState.resumed) {
       final now = DateTime.now();
       final reference = _backgroundedTime ?? _lastActivityTime;
@@ -121,6 +158,7 @@ class SessionManager {
 
       await prefs.remove(gacAuthTokenKey);
       await prefs.remove(gacAuthUserKey);
+      await prefs.remove(gacLastActivityTimeKey);
       await prefs.setBool(gacRememberMeKey, false);
       // NOTE: Scheduled local notifications matching the user's role continue uninterrupted
       // based on the previous login's account user type.

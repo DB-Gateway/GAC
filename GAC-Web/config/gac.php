@@ -85,7 +85,7 @@ return [
         'Parts Supervisor',
         'Workshop Supervisor',
         'Branch Operations Manager',
-        'Compliance Administrator',
+        'General Manager',
     ],
 
     'pic_assignment_types' => [
@@ -101,5 +101,11 @@ return [
     'seeded_dos_accounts' => [
         'branch' => env('GAC_DOS_ACCOUNT_BRANCH', 'Pasong Tamo'),
         'initial_password' => env('GAC_DOS_INITIAL_PASSWORD'),
+    ],
+
+    'seeded_admin_account' => [
+        'name' => env('GAC_ADMIN_NAME', 'Gateway System Administrator'),
+        'username' => env('GAC_ADMIN_USERNAME', 'Admin.Gateway'),
+        'initial_password' => env('GAC_ADMIN_INITIAL_PASSWORD'),
     ],
 ];

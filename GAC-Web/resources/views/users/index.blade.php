@@ -41,7 +41,7 @@
     <div class="main-shell" id="mainShell">
         @include('partials.app-topbar', [
             'topbarTitle' => 'User Management',
-            'topbarSubtitle' => 'GM-managed Gateway accounts and access',
+            'topbarSubtitle' => 'Administrator-managed Gateway accounts and access',
             'notificationId' => 'notificationsBtn',
         ])
 
@@ -80,11 +80,11 @@
                 <article class="stat-card"><div class="stat-top"><span class="stat-label">Inactive</span><span class="stat-icon"><i class="fas fa-user-slash"></i></span></div><div class="stat-value">{{ $stats['inactive'] }}</div><div class="stat-meta">Accounts blocked from signing in</div></article>
                 <article class="stat-card"><div class="stat-top"><span class="stat-label">PIC</span><span class="stat-icon"><i class="fas fa-clipboard-check"></i></span></div><div class="stat-value">{{ $stats['pic'] }}</div><div class="stat-meta">Person In Charge accounts</div></article>
                 <article class="stat-card"><div class="stat-top"><span class="stat-label">BOM</span><span class="stat-icon"><i class="fas fa-user-tie"></i></span></div><div class="stat-value">{{ $stats['bom'] }}</div><div class="stat-meta">Branch Operations Managers</div></article>
-                <article class="stat-card"><div class="stat-top"><span class="stat-label">Admin</span><span class="stat-icon"><i class="fas fa-shield-halved"></i></span></div><div class="stat-value">{{ $stats['admin'] }}</div><div class="stat-meta">Compliance Administrator accounts</div></article>
+                <article class="stat-card"><div class="stat-top"><span class="stat-label">Admin</span><span class="stat-icon"><i class="fas fa-shield-halved"></i></span></div><div class="stat-value">{{ $stats['admin'] }}</div><div class="stat-meta">System Administrator accounts</div></article>
             </section>
 
             <form class="panel filter-panel" method="GET" action="{{ route('users.index') }}" aria-label="User filters">
-                <div class="field"><label for="userSearch">Search Users</label><input id="userSearch" name="search" type="search" value="{{ request('search') }}" placeholder="Name, email, branch, or role..."></div>
+                <div class="field"><label for="userSearch">Search Users</label><input id="userSearch" name="search" type="search" value="{{ request('search') }}" placeholder="Name, username, branch, or role..."></div>
                 <div class="field"><label for="roleFilter">Role</label><select id="roleFilter" name="role"><option value="">All roles</option>@foreach ($roleOptions as $code => $label)<option value="{{ $code }}" @selected(request('role') === $code)>{{ $label }}</option>@endforeach</select></div>
                 <div class="field"><label for="branchFilter">Branch</label><select id="branchFilter" name="branch"><option value="">All branches</option>@foreach ($branches as $branch)<option value="{{ $branch }}" @selected(request('branch') === $branch)>{{ $branch }}</option>@endforeach</select></div>
                 <div class="field"><label for="statusFilter">Account Status</label><select id="statusFilter" name="status"><option value="">All statuses</option>@foreach (['active', 'inactive'] as $status)<option value="{{ $status }}" @selected(request('status') === $status)>{{ ucfirst($status) }}</option>@endforeach</select></div>
@@ -126,10 +126,10 @@
                                                     @method('PATCH')
                                                     <input type="hidden" name="_editing_user_id" value="{{ $user->id }}">
                                                     <div class="field full"><label>Full Name</label><input name="name" value="{{ $editValue('name', $user->name) }}" required></div>
-                                                    <div class="field full"><label>Email</label><input name="email" type="email" value="{{ $editValue('email', $user->email) }}" required></div>
+                                                    <div class="field full"><label>Username</label><input name="email" type="text" value="{{ $editValue('email', $user->email) }}" autocomplete="username" required></div>
                                                     <div class="field"><label>Role</label><select name="user_type">@foreach ($roleOptions as $code => $label)<option value="{{ $code }}" @selected($editValue('user_type', $roleCode) === $code)>{{ $label }}</option>@endforeach</select></div>
                                                     <div class="field"><label>PIC Assignment</label><select name="pic_assignment_type"><option value="">Not applicable</option>@foreach ($picAssignmentOptions as $value => $label)<option value="{{ $value }}" @selected($editValue('pic_assignment_type', $user->picAssignmentType()) === $value)>{{ $label }}</option>@endforeach</select></div>
-                                                    <div class="field"><label>Branch</label><select name="branch" required>@foreach ($branches as $branch)<option value="{{ $branch }}" @selected($editValue('branch', $user->branch) === $branch)>{{ $branch }}</option>@endforeach</select></div>
+                                                    <div class="field"><label>Dealer / Branch</label><select name="branch"><option value="">All dealers (administrator only)</option>@foreach ($branches as $branch)<option value="{{ $branch }}" @selected($editValue('branch', $user->branch) === $branch)>{{ $branch }}</option>@endforeach</select></div>
                                                     <div class="field"><label>Status</label><select name="account_status">@foreach (['active', 'pending', 'inactive', 'rejected'] as $status)<option value="{{ $status }}" @selected($editValue('account_status', $user->account_status) === $status)>{{ ucfirst($status) }}</option>@endforeach</select></div>
                                                     <div class="field full"><button class="button primary" type="submit">Save Account</button></div>
                                                 </form>
@@ -210,10 +210,10 @@
                     @csrf
                     <div class="form-grid">
                         <div class="field full"><label for="userNameInput">Full Name</label><input id="userNameInput" name="name" value="{{ old('name') }}" required></div>
-                        <div class="field full"><label for="userEmailInput">Email Address</label><input id="userEmailInput" name="email" type="email" value="{{ old('email') }}" required></div>
+                        <div class="field full"><label for="userUsernameInput">Username</label><input id="userUsernameInput" name="email" type="text" value="{{ old('email') }}" placeholder="BOM.MitsubishiSucat" autocomplete="username" required></div>
                         <div class="field"><label for="userRoleInput">System Role</label><select id="userRoleInput" name="user_type">@foreach ($roleOptions as $code => $label)<option value="{{ $code }}">{{ $label }}</option>@endforeach</select></div>
                         <div class="field"><label for="userPicAssignmentInput">PIC Assignment</label><select id="userPicAssignmentInput" name="pic_assignment_type"><option value="">Not applicable</option>@foreach ($picAssignmentOptions as $value => $label)<option value="{{ $value }}" @selected(old('pic_assignment_type') === $value)>{{ $label }}</option>@endforeach</select></div>
-                        <div class="field"><label for="userBranchInput">Branch</label><select id="userBranchInput" name="branch" required>@foreach ($branches as $branch)<option value="{{ $branch }}" @selected(old('branch', auth()->user()->branch) === $branch)>{{ $branch }}</option>@endforeach</select></div>
+                        <div class="field"><label for="userBranchInput">Dealer / Branch</label><select id="userBranchInput" name="branch"><option value="">All dealers (administrator only)</option>@foreach ($branches as $branch)<option value="{{ $branch }}" @selected(old('branch', auth()->user()->branch) === $branch)>{{ $branch }}</option>@endforeach</select></div>
                         <div class="field"><label for="userStatusInput">Account Status</label><select id="userStatusInput" name="account_status"><option value="active">Active</option><option value="pending">Pending</option><option value="inactive">Inactive</option></select></div>
                         <div class="field full">
                             <label for="userPasswordInput">Default Password</label>

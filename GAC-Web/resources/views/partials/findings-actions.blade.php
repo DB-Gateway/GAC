@@ -26,6 +26,31 @@
                 </div>
             </div>
 
+            <!-- Current Action Timestamp Notice -->
+            <div class="modal-callout override-audit-notice">
+                <i class="fas fa-clock-rotate-left" aria-hidden="true"></i>
+                <div class="audit-notice-content">
+                    <strong>Official Manager Override Log:</strong>
+                    <span>Applying this override will record your manager credentials and stamp the exact action date &amp; time (<span id="modalCurrentTimestampIndicator">—</span>).</span>
+                </div>
+            </div>
+
+            <!-- Previous Override Information (if already overridden) -->
+            <div class="modal-callout override-history-callout" id="modalPreviousOverrideWrap" style="display:none;">
+                <i class="fas fa-shield-check text-success" aria-hidden="true"></i>
+                <div class="history-callout-content">
+                    <strong>Previously Overridden finding:</strong>
+                    <div class="history-callout-meta" id="modalPreviousOverrideMeta">—</div>
+                    <div class="history-callout-reason" id="modalPreviousOverrideReason"></div>
+                    <div class="history-callout-proof" id="modalPreviousOverrideProof" style="display:none;">
+                        <a href="#" target="_blank" rel="noopener noreferrer" class="override-proof-chip" id="modalPreviousOverrideProofLink">
+                            <i class="fas fa-paperclip" aria-hidden="true"></i>
+                            <span id="modalPreviousOverrideProofName">View Current Attached Proof</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
             <div class="modal-fields-grid">
                 <!-- Status Override Choice -->
                 <div class="form-group span-full">
@@ -100,6 +125,38 @@
                         <i class="fas fa-comment-dots" aria-hidden="true"></i> Manager Override Justification / Reason <span class="required-asterisk">*</span>
                     </label>
                     <textarea id="modalOverrideReason" name="override_reason" class="form-textarea" rows="2" maxlength="1000" required placeholder="Specify why this response is being overridden or edited (e.g., Verified rectified on-site, Approved warranty replacement, Exemption granted)"></textarea>
+                </div>
+
+                <!-- Attachment of Proof -->
+                <div class="form-group span-full">
+                    <label for="modalOverrideProof" class="form-label">
+                        <i class="fas fa-paperclip" aria-hidden="true"></i> Attachment of Proof / Supporting Document
+                    </label>
+                    <div class="attachment-upload-zone" id="overrideProofDropzone">
+                        <input type="file" id="modalOverrideProof" name="proof" class="attachment-file-input" accept="image/jpeg,image/png,image/jpg,image/webp,image/heic,application/pdf">
+                        <div class="attachment-prompt" id="overrideProofPrompt">
+                            <i class="fas fa-cloud-arrow-up" aria-hidden="true"></i>
+                            <div class="prompt-text">
+                                <strong>Choose a proof file or drag and drop here</strong>
+                                <small>Photo evidence, repair verification, job order, receipt, or PDF exemption (Max 15MB)</small>
+                            </div>
+                            <span class="button button-sm button-browse" type="button">Browse File</span>
+                        </div>
+                        <div class="attachment-preview-card" id="overrideProofPreview" style="display:none;">
+                            <div class="preview-thumb-wrap" id="overridePreviewThumbWrap">
+                                <img id="overridePreviewImg" src="" alt="Proof preview" style="display:none;">
+                                <i id="overridePreviewPdfIcon" class="fas fa-file-pdf text-danger" style="display:none;" aria-hidden="true"></i>
+                            </div>
+                            <div class="preview-file-details">
+                                <strong class="preview-name" id="overridePreviewName">—</strong>
+                                <small class="preview-size" id="overridePreviewSize">—</small>
+                            </div>
+                            <button type="button" class="button-remove-file" id="removeOverrideProofBtn" title="Remove selected proof file">
+                                <i class="fas fa-times" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <span class="field-hint">Upload evidence verifying rectification or justification for this override.</span>
                 </div>
             </div>
 
@@ -285,6 +342,84 @@
         });
         @endif
 
+        @if ($canManageEscalations || $showOverrideActions)
+        const escalationOptionsMap = @json($escalationOptionsMap ?? \App\Models\ChecklistResponse::contextualEscalationOptionsMap());
+
+        function resolveEscalationOptions(data) {
+            const templateSlug = (data.templateSlug || '').toLowerCase();
+            const auditorRole = (data.auditorRole || '').toLowerCase();
+            const checkerRole = (data.checkerRole || '').toLowerCase();
+            const isRestroom = data.isRestroom === '1' || templateSlug === 'restroom' || templateSlug === 'utilities';
+
+            if (isRestroom || auditorRole.includes('utility') || checkerRole.includes('utility')) {
+                return escalationOptionsMap.utility || { property_management: 'Property Management (PM)', general_manager: 'General Manager (GM)' };
+            }
+
+            if (templateSlug.includes('sales') && templateSlug.includes('dealer-operations')) {
+                return escalationOptionsMap.sales || escalationOptionsMap.default;
+            }
+            if (auditorRole.includes('sales manager') || checkerRole.includes('sales manager')) {
+                return escalationOptionsMap.sales || escalationOptionsMap.default;
+            }
+
+            const isAftersales = templateSlug.includes('dealer-operations') ||
+                auditorRole.includes('aftersales') || auditorRole.includes('ce') ||
+                auditorRole.includes('job controller') || auditorRole.includes('parts') ||
+                auditorRole.includes('workshop');
+
+            if (isAftersales) {
+                if (checkerRole.includes('jc') || checkerRole.includes('job controller') ||
+                    checkerRole.includes('parts') || checkerRole.includes('workshop') ||
+                    auditorRole.includes('job controller') || auditorRole.includes('parts') ||
+                    auditorRole.includes('workshop')) {
+                    return escalationOptionsMap.aftersales_single_gm || { general_manager: 'General Manager (GM)' };
+                }
+                if (checkerRole.includes('asm') || auditorRole.includes('aftersales manager')) {
+                    return escalationOptionsMap.aftersales_asm || escalationOptionsMap.aftersales;
+                }
+                if (checkerRole.includes('ce') || auditorRole.includes('ce service')) {
+                    return escalationOptionsMap.aftersales_ce || escalationOptionsMap.aftersales;
+                }
+                return escalationOptionsMap.aftersales || escalationOptionsMap.default;
+            }
+
+            if (templateSlug === 'sales' || templateSlug === 'service' || templateSlug === '5s') {
+                return escalationOptionsMap.five_s || escalationOptionsMap.default;
+            }
+
+            return escalationOptionsMap.default;
+        }
+
+        function populateEscalationSelect(selectElem, options, selectedValue, defaultLabel) {
+            if (!selectElem) return;
+            selectElem.innerHTML = '';
+            const defaultOpt = document.createElement('option');
+            defaultOpt.value = '';
+            defaultOpt.textContent = defaultLabel;
+            selectElem.appendChild(defaultOpt);
+
+            let hasSelected = false;
+            for (const [val, label] of Object.entries(options || {})) {
+                const opt = document.createElement('option');
+                opt.value = val;
+                opt.textContent = label;
+                if (selectedValue && val === selectedValue) {
+                    opt.selected = true;
+                    hasSelected = true;
+                }
+                selectElem.appendChild(opt);
+            }
+
+            if (selectedValue && !hasSelected) {
+                const opt = document.createElement('option');
+                opt.value = selectedValue;
+                opt.textContent = selectedValue.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                opt.selected = true;
+                selectElem.appendChild(opt);
+            }
+        }
+        @endif
+
         // BOM Escalation & Action Plan Modal
         @if ($canManageEscalations)
         const escalateModal = document.getElementById('escalateModal');
@@ -311,7 +446,9 @@
                 bomTaskGroup.style.display = 'none';
             }
 
-            document.getElementById('escalateSelectTarget').value = data.escalation || '';
+            const options = resolveEscalationOptions(data);
+            populateEscalationSelect(document.getElementById('escalateSelectTarget'), options, data.escalation || '', 'Select a recipient');
+
             document.getElementById('escalateCommitmentDate').value = data.commitment || '';
             document.getElementById('escalateActionPlan').value = data.actionPlan || '';
 
@@ -332,6 +469,10 @@
                 openEscalateModal({
                     responseId: btn.dataset.responseId,
                     template: btn.dataset.template,
+                    templateSlug: btn.dataset.templateSlug,
+                    auditorRole: btn.dataset.auditorRole,
+                    checkerRole: btn.dataset.checkerRole,
+                    isRestroom: btn.dataset.isRestroom,
                     branch: btn.dataset.branch,
                     itemKey: btn.dataset.itemKey,
                     itemPrompt: btn.dataset.itemPrompt,
@@ -413,6 +554,105 @@
         const closeOverrideBtn = document.getElementById('closeOverrideModal');
         const cancelOverrideBtn = document.getElementById('cancelOverrideBtn');
         const overrideForm = document.getElementById('overrideForm');
+        const modalOverrideProof = document.getElementById('modalOverrideProof');
+        const overrideProofPrompt = document.getElementById('overrideProofPrompt');
+        const overrideProofPreview = document.getElementById('overrideProofPreview');
+        const overridePreviewImg = document.getElementById('overridePreviewImg');
+        const overridePreviewPdfIcon = document.getElementById('overridePreviewPdfIcon');
+        const overridePreviewName = document.getElementById('overridePreviewName');
+        const overridePreviewSize = document.getElementById('overridePreviewSize');
+        const removeOverrideProofBtn = document.getElementById('removeOverrideProofBtn');
+        const overrideProofDropzone = document.getElementById('overrideProofDropzone');
+
+        function formatCurrentDateTime() {
+            const now = new Date();
+            return now.toLocaleString('en-US', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+            });
+        }
+
+        function resetOverrideProofInput() {
+            if (modalOverrideProof) modalOverrideProof.value = '';
+            if (overridePreviewImg) {
+                overridePreviewImg.src = '';
+                overridePreviewImg.style.display = 'none';
+            }
+            if (overridePreviewPdfIcon) overridePreviewPdfIcon.style.display = 'none';
+            if (overrideProofPreview) overrideProofPreview.style.display = 'none';
+            if (overrideProofPrompt) overrideProofPrompt.style.display = '';
+        }
+
+        function handleProofFileSelect(file) {
+            if (!file) {
+                resetOverrideProofInput();
+                return;
+            }
+
+            overridePreviewName.textContent = file.name;
+            const sizeKb = file.size / 1024;
+            overridePreviewSize.textContent = sizeKb > 1024
+                ? (sizeKb / 1024).toFixed(2) + ' MB'
+                : Math.round(sizeKb) + ' KB';
+
+            if (file.type.startsWith('image/')) {
+                overridePreviewImg.src = URL.createObjectURL(file);
+                overridePreviewImg.style.display = 'block';
+                overridePreviewPdfIcon.style.display = 'none';
+            } else if (file.type === 'application/pdf') {
+                overridePreviewImg.style.display = 'none';
+                overridePreviewPdfIcon.style.display = 'block';
+            } else {
+                overridePreviewImg.style.display = 'none';
+                overridePreviewPdfIcon.style.display = 'none';
+            }
+
+            overrideProofPrompt.style.display = 'none';
+            overrideProofPreview.style.display = 'flex';
+        }
+
+        if (modalOverrideProof) {
+            modalOverrideProof.addEventListener('change', () => {
+                const file = modalOverrideProof.files?.[0];
+                handleProofFileSelect(file);
+            });
+        }
+
+        if (removeOverrideProofBtn) {
+            removeOverrideProofBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                resetOverrideProofInput();
+            });
+        }
+
+        if (overrideProofDropzone) {
+            ['dragenter', 'dragover'].forEach(eventName => {
+                overrideProofDropzone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    overrideProofDropzone.classList.add('is-dragover');
+                });
+            });
+            ['dragleave', 'drop'].forEach(eventName => {
+                overrideProofDropzone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    overrideProofDropzone.classList.remove('is-dragover');
+                });
+            });
+            overrideProofDropzone.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                const file = dt?.files?.[0];
+                if (file && modalOverrideProof) {
+                    modalOverrideProof.files = dt.files;
+                    handleProofFileSelect(file);
+                }
+            });
+        }
 
         function openOverrideModal(data) {
             overrideForm.dataset.endpoint = data.endpoint;
@@ -421,6 +661,42 @@
             document.getElementById('modalBranchName').textContent = data.branch || 'Branch';
             document.getElementById('modalItemKey').textContent = data.itemKey || 'ITEM';
             document.getElementById('modalItemPrompt').textContent = data.itemPrompt || '';
+
+            // Update live action timestamp indicator
+            const currentTsElem = document.getElementById('modalCurrentTimestampIndicator');
+            if (currentTsElem) currentTsElem.textContent = formatCurrentDateTime();
+
+            // Populate previous override history if already overridden
+            const prevWrap = document.getElementById('modalPreviousOverrideWrap');
+            const prevMeta = document.getElementById('modalPreviousOverrideMeta');
+            const prevReason = document.getElementById('modalPreviousOverrideReason');
+            const prevProofWrap = document.getElementById('modalPreviousOverrideProof');
+            const prevProofLink = document.getElementById('modalPreviousOverrideProofLink');
+            const prevProofName = document.getElementById('modalPreviousOverrideProofName');
+
+            const isOverridden = data.isOverridden || !!data.overriddenAt;
+            if (isOverridden && prevWrap) {
+                prevWrap.style.display = '';
+                const timeStr = data.overriddenAtFormatted || data.overriddenAt || 'Recorded';
+                const byStr = data.overriddenByName || 'Authorized Manager';
+                const roleStr = data.overriddenRole || 'BOM';
+                if (prevMeta) prevMeta.textContent = `Overridden on ${timeStr} by ${byStr} (${roleStr})`;
+                if (prevReason) prevReason.textContent = data.overrideReason ? `“${data.overrideReason}”` : 'No justification specified.';
+
+                if (data.overrideAttachmentUrl && prevProofWrap && prevProofLink) {
+                    prevProofWrap.style.display = '';
+                    prevProofLink.href = data.overrideAttachmentUrl;
+                    if (prevProofName) {
+                        prevProofName.textContent = data.overrideAttachmentName
+                            ? `View Current Attached Proof (${data.overrideAttachmentName})`
+                            : 'View Current Attached Proof';
+                    }
+                } else if (prevProofWrap) {
+                    prevProofWrap.style.display = 'none';
+                }
+            } else if (prevWrap) {
+                prevWrap.style.display = 'none';
+            }
 
             const status = (data.status || 'no').toLowerCase();
             if (status === 'yes') {
@@ -431,17 +707,23 @@
                 document.getElementById('radioStatusNo').checked = true;
             }
 
-            document.getElementById('modalEscalation').value = data.escalation || '';
+            const options = resolveEscalationOptions(data);
+            populateEscalationSelect(document.getElementById('modalEscalation'), options, data.escalation || '', 'No Escalation Required');
+
             document.getElementById('modalCommitmentDate').value = data.commitment || '';
             document.getElementById('modalActionPlan').value = data.actionPlan || '';
             document.getElementById('modalFinding').value = data.finding || '';
-            document.getElementById('modalOverrideReason').value = '';
+            document.getElementById('modalOverrideReason').value = data.overrideReason || '';
+
+            // Reset file upload
+            resetOverrideProofInput();
 
             overrideModal?.classList.add('is-open');
         }
 
         function closeOverrideModalDialog() {
             overrideModal?.classList.remove('is-open');
+            resetOverrideProofInput();
         }
 
         document.querySelectorAll('[data-action="open-override"]').forEach(btn => {
@@ -450,6 +732,10 @@
                     endpoint: btn.dataset.endpoint,
                     responseId: btn.dataset.responseId,
                     template: btn.dataset.template,
+                    templateSlug: btn.dataset.templateSlug,
+                    auditorRole: btn.dataset.auditorRole,
+                    checkerRole: btn.dataset.checkerRole,
+                    isRestroom: btn.dataset.isRestroom,
                     branch: btn.dataset.branch,
                     itemKey: btn.dataset.itemKey,
                     itemPrompt: btn.dataset.itemPrompt,
@@ -458,6 +744,14 @@
                     commitment: btn.dataset.commitment,
                     actionPlan: btn.dataset.actionPlan,
                     finding: btn.dataset.finding,
+                    isOverridden: btn.dataset.isOverridden === '1' || btn.dataset.isOverridden === 'true',
+                    overriddenAt: btn.dataset.overriddenAt || '',
+                    overriddenAtFormatted: btn.dataset.overriddenAtFormatted || '',
+                    overriddenByName: btn.dataset.overriddenBy || '',
+                    overriddenRole: btn.dataset.overriddenRole || '',
+                    overrideReason: btn.dataset.overrideReason || '',
+                    overrideAttachmentUrl: btn.dataset.overrideAttachmentUrl || '',
+                    overrideAttachmentName: btn.dataset.overrideAttachmentName || '',
                 });
             });
         });
@@ -486,29 +780,36 @@
             }
 
             saveBtn.disabled = true;
-            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Saving...';
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Saving Override...';
 
             try {
+                const formData = new FormData();
+                formData.append('_method', 'PATCH');
+                formData.append('status', status);
+                if (escalationTarget) formData.append('escalation_target', escalationTarget);
+                if (commitmentDate) formData.append('commitment_date', commitmentDate);
+                if (actionPlan) formData.append('action_plan', actionPlan);
+                if (finding) formData.append('finding', finding);
+                formData.append('override_reason', overrideReason);
+
+                const file = modalOverrideProof?.files?.[0];
+                if (file) {
+                    formData.append('proof', file);
+                }
+
                 const res = await fetch(overrideForm.dataset.endpoint, {
-                    method: 'PATCH',
+                    method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
                         'Accept': 'application/json',
                         'X-CSRF-TOKEN': csrfToken,
                     },
-                    body: JSON.stringify({
-                        status: status,
-                        escalation_target: escalationTarget || null,
-                        commitment_date: commitmentDate || null,
-                        action_plan: actionPlan || null,
-                        finding: finding || null,
-                        override_reason: overrideReason,
-                    }),
+                    body: formData,
                 });
 
-                const data = await res.json();
+                const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    throw new Error(data.message || 'Failed to save override.');
+                    const validationMsg = data.errors ? Object.values(data.errors).flat().join('\n') : '';
+                    throw new Error(validationMsg || data.message || 'Failed to save override.');
                 }
 
                 closeOverrideModalDialog();

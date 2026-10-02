@@ -9,47 +9,92 @@ import 'package:gac_flutter/theme/gac_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('attention ignores stale counts and notes on YES and unanswered responses', (tester) async {
-    _setViewport(tester);
-    final repository = _HomeRepository([
-      _catalog(
-        slug: 'service', name: 'Service Checklist', itemCount: 3,
-        submission: _submission(status: 'draft', answered: 3, total: 3, issueCount: 3),
-      ),
-    ], {'service': _attentionRecord('service', ['yes', 'yes', null])});
+  testWidgets(
+    'attention ignores stale counts and notes on YES and unanswered responses',
+    (tester) async {
+      _setViewport(tester);
+      final repository = _HomeRepository(
+        [
+          _catalog(
+            slug: 'service',
+            name: 'Service Checklist',
+            itemCount: 3,
+            submission: _submission(
+              status: 'draft',
+              answered: 3,
+              total: 3,
+              issueCount: 3,
+            ),
+          ),
+        ],
+        {
+          'service': _attentionRecord('service', ['yes', 'yes', null]),
+        },
+      );
 
-    await tester.pumpWidget(_app(repository));
-    await tester.pumpAndSettle();
-    expect(find.text('Attention needed · 0'), findsOneWidget);
-    expect(find.textContaining('checklist response(s) need review'), findsNothing);
-    await tester.ensureVisible(find.text('Attention needed · 0'));
-    await tester.tap(find.text('Attention needed · 0'));
-    await tester.pumpAndSettle();
-    expect(find.text('Service Checklist'), findsNothing);
-  });
+      await tester.pumpWidget(_app(repository));
+      await tester.pumpAndSettle();
+      expect(find.text('Attention needed · 0'), findsOneWidget);
+      expect(
+        find.textContaining('checklist response(s) need review'),
+        findsNothing,
+      );
+      await tester.ensureVisible(find.text('Attention needed · 0'));
+      await tester.tap(find.text('Attention needed · 0'));
+      await tester.pumpAndSettle();
+      expect(find.text('Service Checklist'), findsNothing);
+    },
+  );
 
-  testWidgets('attention detects NO even when summary reports zero issues', (tester) async {
+  testWidgets('attention detects NO even when summary reports zero issues', (
+    tester,
+  ) async {
     _setViewport(tester);
-    final repository = _HomeRepository([
-      _catalog(
-        slug: 'service', name: 'Service Checklist', itemCount: 2,
-        submission: _submission(status: 'draft', answered: 2, total: 2, issueCount: 0),
-      ),
-    ], {'service': _attentionRecord('service', ['yes', 'no'])});
+    final repository = _HomeRepository(
+      [
+        _catalog(
+          slug: 'service',
+          name: 'Service Checklist',
+          itemCount: 2,
+          submission: _submission(
+            status: 'draft',
+            answered: 2,
+            total: 2,
+            issueCount: 0,
+          ),
+        ),
+      ],
+      {
+        'service': _attentionRecord('service', ['yes', 'no']),
+      },
+    );
     String? openedItem;
-    await tester.pumpWidget(MaterialApp(
-      theme: GacTheme.light,
-      home: Scaffold(body: UserHomeScreen(
-        isActive: true, repository: repository, now: () => DateTime(2026, 9, 2),
-        onOpenChecklists: () {}, onOpenProfile: () {}, onOpenNotifications: () {},
-        onOpenChecklistWithQuestion: (slug, date, slot, item) => openedItem = item,
-      )),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: GacTheme.light,
+        home: Scaffold(
+          body: UserHomeScreen(
+            isActive: true,
+            repository: repository,
+            now: () => DateTime(2026, 9, 2),
+            onOpenChecklists: () {},
+            onOpenProfile: () {},
+            onOpenNotifications: () {},
+            onOpenChecklistWithQuestion: (slug, date, slot, item) =>
+                openedItem = item,
+          ),
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Attention needed · 1'), findsWidgets);
-    final issueRow = find.widgetWithText(ListTile, 'Service Checklist');
-    await tester.ensureVisible(issueRow);
-    await tester.tap(issueRow);
+    final attentionFilter = find.text('Attention needed · 1').first;
+    await tester.ensureVisible(attentionFilter);
+    await tester.tap(attentionFilter);
+    await tester.pumpAndSettle();
+    final issueCard = find.text('Service Checklist');
+    await tester.ensureVisible(issueCard);
+    await tester.tap(issueCard);
     await tester.pumpAndSettle();
     expect(openedItem, isNull);
     final review = tester.widget<UserChecklistDetailScreen>(
@@ -60,43 +105,154 @@ void main() {
     expect(find.text('Question 0'), findsNothing);
   });
 
-  for (final failVerification in [false, true]) {
-    testWidgets('attention does not navigate when recheck ${failVerification ? 'fails' : 'finds resolved answers'}', (tester) async {
+  testWidgets(
+    'attention needed section and review ignore N/A and only include NO',
+    (tester) async {
       _setViewport(tester);
-      final records = {'service': _attentionRecord('service', ['no', 'yes'])};
-      final repository = _HomeRepository([
-        _catalog(
-          slug: 'service', name: 'Service Checklist', itemCount: 2,
-          submission: _submission(status: 'draft', answered: 2, total: 2, issueCount: 1),
+      final repository = _HomeRepository(
+        [
+          _catalog(
+            slug: 'sales',
+            name: 'Sales Checklist',
+            itemCount: 2,
+            submission: _submission(
+              status: 'draft',
+              answered: 2,
+              total: 2,
+              issueCount: 0,
+            ),
+          ),
+          _catalog(
+            slug: 'service',
+            name: 'Service Checklist',
+            itemCount: 2,
+            submission: _submission(
+              status: 'draft',
+              answered: 2,
+              total: 2,
+              issueCount: 0,
+            ),
+          ),
+        ],
+        {
+          'sales': _attentionRecord('sales', ['yes', 'na']),
+          'service': _attentionRecord('service', ['no', 'na']),
+        },
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: Scaffold(
+            body: UserHomeScreen(
+              isActive: true,
+              repository: repository,
+              now: () => DateTime(2026, 9, 2),
+              onOpenChecklists: () {},
+              onOpenProfile: () {},
+              onOpenNotifications: () {},
+            ),
+          ),
         ),
-      ], records);
-      var opened = false;
-      await tester.pumpWidget(MaterialApp(
-        theme: GacTheme.light,
-        home: Scaffold(body: UserHomeScreen(
-          isActive: true, repository: repository, now: () => DateTime(2026, 9, 2),
-          onOpenChecklists: () {}, onOpenProfile: () {}, onOpenNotifications: () {},
-          onOpenChecklistWithQuestion: (slug, date, slot, item) { opened = true; },
-        )),
-      ));
+      );
       await tester.pumpAndSettle();
-      if (failVerification) {
-        records.clear();
-      } else {
-        records['service'] = _attentionRecord('service', ['yes', 'yes']);
-      }
-      final issueRow = find.widgetWithText(ListTile, 'Service Checklist');
-      await tester.ensureVisible(issueRow);
-      await tester.tap(issueRow);
+
+      // Sales has only yes and na, so it should NOT appear in Attention needed
+      // Service has one no and one na, so only 1 issue should be counted
+      expect(find.text('Attention needed · 1'), findsWidgets);
+      final attentionFilter = find.text('Attention needed · 1').first;
+      await tester.ensureVisible(attentionFilter);
+      await tester.tap(attentionFilter);
       await tester.pumpAndSettle();
-      expect(opened, isFalse);
-      expect(find.text(failVerification
-          ? 'Unable to verify responses. Please try again.'
-          : 'No responses currently need review.'), findsOneWidget);
-      if (!failVerification) {
-        expect(find.text('Attention needed · 0'), findsOneWidget);
-      }
-    });
+      expect(find.text('Service Checklist'), findsOneWidget);
+      expect(find.text('1 issue'), findsOneWidget);
+      expect(find.text('ATTENTION NEEDED'), findsOneWidget);
+      expect(find.text('Sales Checklist'), findsNothing);
+
+      // Tapping the attention tile opens review showing ONLY Question 0 ('no'), not Question 1 ('na')
+      final issueCard = find.text('Service Checklist');
+      await tester.ensureVisible(issueCard);
+      await tester.tap(issueCard);
+      await tester.pumpAndSettle();
+
+      final review = tester.widget<UserChecklistDetailScreen>(
+        find.byType(UserChecklistDetailScreen),
+      );
+      expect(review.attentionOnly, isTrue);
+      expect(find.text('1 of 1 responses · No'), findsOneWidget);
+      expect(find.text('Question 0'), findsOneWidget);
+      expect(find.text('Question 1'), findsNothing);
+    },
+  );
+
+  for (final failVerification in [false, true]) {
+    testWidgets(
+      'attention does not navigate when recheck ${failVerification ? 'fails' : 'finds resolved answers'}',
+      (tester) async {
+        _setViewport(tester);
+        final records = {
+          'service': _attentionRecord('service', ['no', 'yes']),
+        };
+        final repository = _HomeRepository([
+          _catalog(
+            slug: 'service',
+            name: 'Service Checklist',
+            itemCount: 2,
+            submission: _submission(
+              status: 'draft',
+              answered: 2,
+              total: 2,
+              issueCount: 1,
+            ),
+          ),
+        ], records);
+        var opened = false;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: GacTheme.light,
+            home: Scaffold(
+              body: UserHomeScreen(
+                isActive: true,
+                repository: repository,
+                now: () => DateTime(2026, 9, 2),
+                onOpenChecklists: () {},
+                onOpenProfile: () {},
+                onOpenNotifications: () {},
+                onOpenChecklistWithQuestion: (slug, date, slot, item) {
+                  opened = true;
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (failVerification) {
+          records.clear();
+        } else {
+          records['service'] = _attentionRecord('service', ['yes', 'yes']);
+        }
+        final attentionFilter = find.text('Attention needed · 1').first;
+        await tester.ensureVisible(attentionFilter);
+        await tester.tap(attentionFilter);
+        await tester.pumpAndSettle();
+        final issueCard = find.text('Service Checklist');
+        await tester.ensureVisible(issueCard);
+        await tester.tap(issueCard);
+        await tester.pumpAndSettle();
+        expect(opened, isFalse);
+        expect(
+          find.text(
+            failVerification
+                ? 'Unable to verify responses. Please try again.'
+                : 'No responses currently need review.',
+          ),
+          findsOneWidget,
+        );
+        if (!failVerification) {
+          expect(find.text('Attention needed · 0'), findsOneWidget);
+        }
+      },
+    );
   }
 
   testWidgets('home renders only the assigned Server tasks', (tester) async {
@@ -106,19 +262,14 @@ void main() {
         slug: 'restroom',
         name: 'Restroom Checklist',
         itemCount: 11,
-        workUnitCount: 99,
+        workUnitCount: 44,
         settings: const {
           'validation_mode': 'time_slots',
           'time_slots': [
             {'key': '08:00'},
-            {'key': '09:00'},
-            {'key': '10:00'},
             {'key': '11:00'},
-            {'key': '13:00'},
             {'key': '14:00'},
-            {'key': '15:00'},
             {'key': '16:00'},
-            {'key': '17:00'},
           ],
         },
       ),
@@ -129,7 +280,7 @@ void main() {
 
     expect(repository.requestedDates, ['2026-09-02']);
     expect(find.text('Restroom Checklist'), findsOneWidget);
-    expect(find.text('0 / 99 checks completed'), findsOneWidget);
+    expect(find.text('0 / 44 checks completed'), findsOneWidget);
     expect(find.text('Sales Checklist'), findsNothing);
     expect(find.text('Sales materials outdated'), findsNothing);
   });
@@ -138,20 +289,25 @@ void main() {
     tester,
   ) async {
     _setViewport(tester);
-    final repository = _HomeRepository([
-      _catalog(slug: 'sales', name: 'Sales Checklist', itemCount: 41),
-      _catalog(
-        slug: 'service',
-        name: 'Service Checklist',
-        itemCount: 33,
-        submission: _submission(
-          status: 'draft',
-          answered: 10,
-          total: 33,
-          issueCount: 2,
+    final repository = _HomeRepository(
+      [
+        _catalog(slug: 'sales', name: 'Sales Checklist', itemCount: 41),
+        _catalog(
+          slug: 'service',
+          name: 'Service Checklist',
+          itemCount: 33,
+          submission: _submission(
+            status: 'draft',
+            answered: 10,
+            total: 33,
+            issueCount: 2,
+          ),
         ),
-      ),
-    ], {'service': _attentionRecord('service', ['no', 'no'])});
+      ],
+      {
+        'service': _attentionRecord('service', ['no', 'no']),
+      },
+    );
 
     await tester.pumpWidget(_app(repository));
     await tester.pumpAndSettle();
@@ -161,6 +317,7 @@ void main() {
     expect(find.text('Service Checklist'), findsWidgets);
     expect(find.text('Sales Checklist'), findsNothing);
     expect(find.text('Attention needed · 2'), findsOneWidget);
+    expect(find.text('ATTENTION NEEDED'), findsNothing);
 
     await tester.tap(
       find.byKey(const ValueKey<String>('home-date-2026-09-01')),
@@ -236,24 +393,15 @@ void main() {
 
       // Verify filter chip counts
       expect(find.text('All · 3'), findsOneWidget);
-      expect(find.text('To do · 1'), findsOneWidget);
       expect(find.text('In progress · 1'), findsOneWidget);
-      expect(find.text('Completed · 1'), findsOneWidget);
+      expect(find.text('Attention needed · 0'), findsOneWidget);
 
-      // Filter by To do
-      await tester.tap(find.text('To do · 1'));
-      await tester.pumpAndSettle();
-
-      // Only the unstarted Sales Checklist should be visible
+      // In All tab, unstarted Sales Checklist is visible with TO DO and START
       expect(find.text('Sales Checklist'), findsOneWidget);
-      expect(find.text('Service Checklist'), findsNothing);
-      expect(find.text('5S Completed Audit'), findsNothing);
-
-      // Badge and action label on To do task
       expect(find.text('TO DO'), findsOneWidget);
       expect(find.text('START'), findsOneWidget);
 
-      // Tapping the To do task opens it
+      // Tapping the unstarted task opens it
       await tester.tap(find.text('Sales Checklist'));
       await tester.pumpAndSettle();
       expect(openedSlug, 'sales');
@@ -266,15 +414,6 @@ void main() {
       expect(find.text('Sales Checklist'), findsNothing);
       expect(find.text('IN PROGRESS'), findsOneWidget);
       expect(find.text('CONTINUE'), findsOneWidget);
-
-      // Filter by Completed
-      await tester.ensureVisible(find.text('Completed · 1'));
-      await tester.tap(find.text('Completed · 1'));
-      await tester.pumpAndSettle();
-      expect(find.text('5S Completed Audit'), findsOneWidget);
-      expect(find.text('Sales Checklist'), findsNothing);
-      expect(find.text('COMPLETED'), findsOneWidget);
-      expect(find.text('VIEW'), findsOneWidget);
     },
   );
 
@@ -385,19 +524,14 @@ void main() {
   });
 
   testWidgets(
-    '5S utilities displays 9 total checklists on row and remains in To-do until all are finished',
+    '5S utilities becomes In progress after a time slot and completes after all slots',
     (tester) async {
       _setViewport(tester);
       final slots = const [
         {'key': '08:00', 'label': '8 AM'},
-        {'key': '09:00', 'label': '9 AM'},
-        {'key': '10:00', 'label': '10 AM'},
         {'key': '11:00', 'label': '11 AM'},
-        {'key': '13:00', 'label': '1 PM'},
         {'key': '14:00', 'label': '2 PM'},
-        {'key': '15:00', 'label': '3 PM'},
         {'key': '16:00', 'label': '4 PM'},
-        {'key': '17:00', 'label': '5 PM'},
       ];
 
       // 1. Initial state (0 slots submitted)
@@ -406,39 +540,33 @@ void main() {
           slug: 'restroom',
           name: 'Restroom Checklist',
           itemCount: 11,
-          workUnitCount: 99,
-          settings: {
-            'validation_mode': 'time_slots',
-            'time_slots': slots,
-          },
+          workUnitCount: 44,
+          settings: {'validation_mode': 'time_slots', 'time_slots': slots},
         ),
       ]);
 
       await tester.pumpWidget(_app(repo));
       await tester.pumpAndSettle();
 
-      expect(find.text('0/9 '), findsOneWidget);
+      expect(find.text('0/4 '), findsOneWidget);
       expect(find.text('checklists submitted'), findsOneWidget);
-      expect(find.text('To do · 1'), findsOneWidget);
-      expect(find.text('Completed · 0'), findsOneWidget);
+      expect(find.text('All · 1'), findsOneWidget);
+      expect(find.text('In progress · 0'), findsOneWidget);
       expect(find.text('TO DO'), findsOneWidget);
       expect(find.text('START'), findsOneWidget);
 
-      // 2. One slot submitted (11 of 99 checks completed, status = submitted)
+      // 2. One slot submitted (11 of 44 checks completed, status = submitted)
       repo = _HomeRepository([
         _catalog(
           slug: 'restroom',
           name: 'Restroom Checklist',
           itemCount: 11,
-          workUnitCount: 99,
-          settings: {
-            'validation_mode': 'time_slots',
-            'time_slots': slots,
-          },
+          workUnitCount: 44,
+          settings: {'validation_mode': 'time_slots', 'time_slots': slots},
           submission: _submission(
             status: 'submitted',
             answered: 11,
-            total: 99,
+            total: 44,
             issueCount: 0,
           ),
         ),
@@ -447,33 +575,33 @@ void main() {
       await tester.pumpWidget(_app(repo));
       await tester.pumpAndSettle();
 
-      expect(find.text('1/9 '), findsOneWidget);
+      expect(find.text('1/4 '), findsOneWidget);
       expect(find.text('checklists submitted'), findsOneWidget);
-      expect(find.text('To do · 1'), findsOneWidget);
-      expect(find.text('Completed · 0'), findsOneWidget);
-      expect(find.text('TO DO'), findsOneWidget);
+      expect(find.text('All · 1'), findsOneWidget);
+      expect(find.text('In progress · 1'), findsOneWidget);
+      expect(find.text('IN PROGRESS'), findsOneWidget);
       expect(find.text('CONTINUE'), findsOneWidget);
-
-      // Verify task still shows when filtering by To do
-      await tester.tap(find.text('To do · 1'));
-      await tester.pumpAndSettle();
       expect(find.text('Restroom Checklist'), findsOneWidget);
 
-      // 3. All 9 slots submitted (99 of 99 checks completed, status = submitted)
+      await tester.tap(find.text('In progress · 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('Restroom Checklist'), findsOneWidget);
+      expect(find.text('ATTENTION NEEDED'), findsNothing);
+      await tester.tap(find.text('All · 1'));
+      await tester.pumpAndSettle();
+
+      // 3. All 4 slots submitted (44 of 44 checks completed, status = submitted)
       repo = _HomeRepository([
         _catalog(
           slug: 'restroom',
           name: 'Restroom Checklist',
           itemCount: 11,
-          workUnitCount: 99,
-          settings: {
-            'validation_mode': 'time_slots',
-            'time_slots': slots,
-          },
+          workUnitCount: 44,
+          settings: {'validation_mode': 'time_slots', 'time_slots': slots},
           submission: _submission(
             status: 'submitted',
-            answered: 99,
-            total: 99,
+            answered: 44,
+            total: 44,
             issueCount: 0,
           ),
         ),
@@ -482,13 +610,9 @@ void main() {
       await tester.pumpWidget(_app(repo));
       await tester.pumpAndSettle();
 
-      expect(find.text('9/9 '), findsOneWidget);
+      expect(find.text('4/4 '), findsOneWidget);
       expect(find.text('checklists submitted'), findsOneWidget);
-      expect(find.text('To do · 0'), findsOneWidget);
-      expect(find.text('Completed · 1'), findsOneWidget);
-
-      await tester.tap(find.text('All · 1'));
-      await tester.pumpAndSettle();
+      expect(find.text('All · 1'), findsOneWidget);
 
       expect(find.text('COMPLETED'), findsOneWidget);
       expect(find.text('VIEW'), findsOneWidget);
@@ -496,53 +620,61 @@ void main() {
   );
 
   testWidgets(
-    'Attention needed tab displays count of checklists needing attention and filters them',
+    'Attention needed tab displays the issue count and only attention cards',
     (tester) async {
       _setViewport(tester);
-      final repository = _HomeRepository([
-        _catalog(slug: 'sales', name: 'Sales Checklist', itemCount: 41),
-        _catalog(
-          slug: 'service',
-          name: 'Service Checklist',
-          itemCount: 33,
-          submission: _submission(
-            status: 'draft',
-            answered: 10,
-            total: 33,
-            issueCount: 2,
+      final repository = _HomeRepository(
+        [
+          _catalog(slug: 'sales', name: 'Sales Checklist', itemCount: 41),
+          _catalog(
+            slug: 'service',
+            name: 'Service Checklist',
+            itemCount: 33,
+            submission: _submission(
+              status: 'draft',
+              answered: 10,
+              total: 33,
+              issueCount: 2,
+            ),
           ),
-        ),
-        _catalog(
-          slug: 'restroom',
-          name: 'Restroom Checklist',
-          itemCount: 11,
-          submission: _submission(
-            status: 'draft',
-            answered: 5,
-            total: 11,
-            issueCount: 1,
+          _catalog(
+            slug: 'restroom',
+            name: 'Restroom Checklist',
+            itemCount: 11,
+            submission: _submission(
+              status: 'draft',
+              answered: 5,
+              total: 11,
+              issueCount: 1,
+            ),
           ),
-        ),
-      ], {
-        'service': _attentionRecord('service', ['no', 'no']),
-        'restroom': _attentionRecord('restroom', ['not_good']),
-      });
+        ],
+        {
+          'service': _attentionRecord('service', ['no', 'no']),
+          'restroom': _attentionRecord('restroom', ['not_good']),
+        },
+      );
 
       await tester.pumpWidget(_app(repository));
       await tester.pumpAndSettle();
 
-      // The tab chip displays the exact number of checklists that need attention (2)
-      expect(find.text('Attention needed · 2'), findsWidgets);
+      // The tab chip displays the total number of issues (2 + 1).
+      expect(find.text('Attention needed · 3'), findsOneWidget);
+      // All classifies attention, in-progress, and unstarted tasks together.
+      expect(find.text('ATTENTION NEEDED'), findsNWidgets(2));
+      expect(find.text('TO DO'), findsOneWidget);
 
       // Tap the Attention needed filter chip
-      await tester.ensureVisible(find.text('Attention needed · 2').first);
-      await tester.tap(find.text('Attention needed · 2').first);
+      await tester.ensureVisible(find.text('Attention needed · 3'));
+      await tester.tap(find.text('Attention needed · 3'));
       await tester.pumpAndSettle();
 
-      // Only the two checklists that need attention are shown
-      expect(find.text('Service Checklist'), findsWidgets);
-      expect(find.text('Restroom Checklist'), findsWidgets);
+      // Only attention cards are shown, using the same task-card design.
+      expect(find.text('Service Checklist'), findsOneWidget);
+      expect(find.text('Restroom Checklist'), findsOneWidget);
       expect(find.text('Sales Checklist'), findsNothing);
+      expect(find.text('ATTENTION NEEDED'), findsNWidgets(2));
+      expect(find.text('REVIEW'), findsNWidgets(2));
 
       // Verify zero count and empty panel message
       final repoClean = _HomeRepository([
@@ -751,10 +883,7 @@ void main() {
               actionPlan: '',
               commitmentDate: null,
               details: {
-                'slots': {
-                  '08:00': 'good',
-                  '10:00': 'not_good',
-                },
+                'slots': {'08:00': 'good', '10:00': 'not_good'},
               },
             ),
           },
@@ -823,6 +952,144 @@ void main() {
       expect(openedSlot, '10:00');
     },
   );
+
+  testWidgets(
+    'month navigation moves backward and forward to previous checklist date',
+    (tester) async {
+      _setViewport(tester);
+      final repository = _HomeRepository([
+        _catalog(slug: 'sales', name: 'Sales Checklist', itemCount: 10),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserHomeScreen(
+            isActive: true,
+            repository: repository,
+            now: () => DateTime(2026, 9, 15),
+            onOpenChecklists: () {},
+            onOpenProfile: () {},
+            onOpenNotifications: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('September 2026'), findsOneWidget);
+      expect(find.text('Today'), findsNothing);
+
+      // Navigate back one month
+      await tester.tap(find.byTooltip('Previous month'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('August 2026'), findsOneWidget);
+      expect(repository.requestedDates.last, '2026-08-15');
+      expect(find.text('Today'), findsOneWidget);
+
+      // Tap Today to return
+      await tester.tap(find.text('Today'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('September 2026'), findsOneWidget);
+      expect(repository.requestedDates.last, '2026-09-15');
+      expect(find.text('Today'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'week navigation moves backward and forward to previous checklist date',
+    (tester) async {
+      _setViewport(tester);
+      final repository = _HomeRepository([
+        _catalog(slug: 'sales', name: 'Sales Checklist', itemCount: 10),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserHomeScreen(
+            isActive: true,
+            repository: repository,
+            now: () => DateTime(2026, 9, 15),
+            onOpenChecklists: () {},
+            onOpenProfile: () {},
+            onOpenNotifications: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Navigate back one week
+      await tester.tap(find.byTooltip('Previous week'));
+      await tester.pumpAndSettle();
+
+      expect(repository.requestedDates.last, '2026-09-08');
+      expect(find.text('Today'), findsOneWidget);
+
+      // Navigate forward one week
+      await tester.tap(find.byTooltip('Next week'));
+      await tester.pumpAndSettle();
+
+      expect(repository.requestedDates.last, '2026-09-15');
+      expect(find.text('Today'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'strictly prohibits navigating to future dates and disables future day buttons',
+    (tester) async {
+      _setViewport(tester);
+      final repository = _HomeRepository([
+        _catalog(slug: 'sales', name: 'Sales Checklist', itemCount: 10),
+      ]);
+
+      // Wednesday, September 2, 2026
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: GacTheme.light,
+          home: UserHomeScreen(
+            isActive: true,
+            repository: repository,
+            now: () => DateTime(2026, 9, 2),
+            onOpenChecklists: () {},
+            onOpenProfile: () {},
+            onOpenNotifications: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // On today: Next month and Next week are disabled
+      expect(find.byTooltip('Next month'), findsNothing);
+      expect(find.byTooltip('Next week'), findsNothing);
+
+      // Attempting to tap future day in the week (Thursday Sep 3, 2026)
+      final futureDateKey = const ValueKey<String>('home-date-2026-09-03');
+      expect(find.byKey(futureDateKey), findsOneWidget);
+
+      await tester.tap(find.byKey(futureDateKey));
+      await tester.pumpAndSettle();
+
+      // Selected date must still be today (2026-09-02) and NOT the future date
+      expect(repository.requestedDates.last, '2026-09-02');
+      expect(find.text("Today's assigned tasks"), findsOneWidget);
+
+      // Can backtrack to a past day (Tuesday Sep 1, 2026)
+      final pastDateKey = const ValueKey<String>('home-date-2026-09-01');
+      await tester.tap(find.byKey(pastDateKey));
+      await tester.pumpAndSettle();
+
+      expect(repository.requestedDates.last, '2026-09-01');
+      expect(find.text('Today'), findsOneWidget);
+
+      // Now tap Today to return safely
+      await tester.tap(find.text('Today'));
+      await tester.pumpAndSettle();
+
+      expect(repository.requestedDates.last, '2026-09-02');
+    },
+  );
 }
 
 Widget _app(ChecklistRepository repository) {
@@ -860,7 +1127,10 @@ class _HomeRepository implements ChecklistRepository {
   }
 
   @override
-  Future<ChecklistLoadResult> fetchChecklist(String slug, {String? date}) async {
+  Future<ChecklistLoadResult> fetchChecklist(
+    String slug, {
+    String? date,
+  }) async {
     final record = records[slug];
     if (record != null) return record;
     throw UnimplementedError('No record for $slug');
@@ -949,25 +1219,59 @@ ChecklistLoadResult _attentionRecord(String slug, List<String?> statuses) {
       version: 1,
       settings: {
         'validation_mode': hourly ? 'time_slots' : 'yes_no_na',
-        if (hourly) 'time_slots': [{'key': '08:00', 'label': '8 AM'}],
+        if (hourly)
+          'time_slots': [
+            {'key': '08:00', 'label': '8 AM'},
+          ],
       },
-      sections: [ChecklistSectionData(
-        id: 1, key: 'section', title: 'Section', sortOrder: 1, metadata: const {},
-        items: [for (var i = 0; i < statuses.length; i++) ChecklistItemData(
-          id: i + 1, key: 'q$i', prompt: 'Question $i', sortOrder: i, metadata: const {},
-        )],
-      )],
+      sections: [
+        ChecklistSectionData(
+          id: 1,
+          key: 'section',
+          title: 'Section',
+          sortOrder: 1,
+          metadata: const {},
+          items: [
+            for (var i = 0; i < statuses.length; i++)
+              ChecklistItemData(
+                id: i + 1,
+                key: 'q$i',
+                prompt: 'Question $i',
+                sortOrder: i,
+                metadata: const {},
+              ),
+          ],
+        ),
+      ],
     ),
     submission: ChecklistSubmissionData(
-      id: 1, status: 'draft', auditDate: '2026-09-02', templateVersion: 1,
-      scores: const {}, answeredItems: statuses.length, totalItems: statuses.length,
-      completionPercentage: 100, submittedAt: null, issueCount: 99,
-      responses: {for (var i = 0; i < statuses.length; i++) 'q$i': ChecklistResponseData(
-        itemId: i + 1, itemKey: 'q$i', status: hourly ? null : statuses[i],
-        remark: 'Old remark', finding: 'Old finding', actionPlan: 'Old plan',
-        commitmentDate: null,
-        details: hourly ? {'slots': {'08:00': statuses[i]}} : {'has_issue': true},
-      )},
+      id: 1,
+      status: 'draft',
+      auditDate: '2026-09-02',
+      templateVersion: 1,
+      scores: const {},
+      answeredItems: statuses.length,
+      totalItems: statuses.length,
+      completionPercentage: 100,
+      submittedAt: null,
+      issueCount: 99,
+      responses: {
+        for (var i = 0; i < statuses.length; i++)
+          'q$i': ChecklistResponseData(
+            itemId: i + 1,
+            itemKey: 'q$i',
+            status: hourly ? null : statuses[i],
+            remark: 'Old remark',
+            finding: 'Old finding',
+            actionPlan: 'Old plan',
+            commitmentDate: null,
+            details: hourly
+                ? {
+                    'slots': {'08:00': statuses[i]},
+                  }
+                : {'has_issue': true},
+          ),
+      },
     ),
   );
 }

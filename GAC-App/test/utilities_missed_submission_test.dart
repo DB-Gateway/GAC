@@ -8,6 +8,15 @@ import 'package:gac_flutter/services/utilities_missed_checklist_service.dart';
 import 'package:gac_flutter/theme/gac_theme.dart';
 
 class _FakeChecklistRepo implements ChecklistRepository {
+  _FakeChecklistRepo({
+    this.includeTimeSlots = true,
+    this.slugs = const ['restroom'],
+  });
+
+  final bool includeTimeSlots;
+  final List<String> slugs;
+  final Map<String, List<Map<String, dynamic>>> submittedBySlug = {};
+  final Map<String, ChecklistSubmissionData> submissionsBySlug = {};
   String? submittedSlug;
   String? submittedDate;
   List<Map<String, dynamic>> submittedResponses = const [];
@@ -15,57 +24,56 @@ class _FakeChecklistRepo implements ChecklistRepository {
 
   @override
   Future<List<ChecklistCatalogItem>> fetchCatalog({String? date}) async {
-    return [
-      ChecklistCatalogItem(
-        id: 1,
-        slug: 'restroom',
-        name: '5S Utilities Checklist',
-        description: 'Hourly Restroom Inspection',
-        version: 1,
-        settings: const {
-          'validation_mode': 'time_slots',
-          'time_slots': [
-            {'key': '08:00', 'label': '8 AM'},
-            {'key': '09:00', 'label': '9 AM'},
-            {'key': '10:00', 'label': '10 AM'},
-            {'key': '11:00', 'label': '11 AM'},
-            {'key': '13:00', 'label': '1 PM'},
-            {'key': '14:00', 'label': '2 PM'},
-            {'key': '15:00', 'label': '3 PM'},
-            {'key': '16:00', 'label': '4 PM'},
-            {'key': '17:00', 'label': '5 PM'},
-          ],
-        },
-        sectionCount: 1,
-        itemCount: 2,
-        workUnitCount: 18,
-        submission: currentSubmission,
-      ),
-    ];
+    return slugs
+        .map(
+          (slug) => ChecklistCatalogItem(
+            id: 1,
+            slug: slug,
+            name: '5S Utilities Checklist',
+            description: 'Scheduled Restroom Inspection',
+            version: 1,
+            settings: {
+              'validation_mode': 'time_slots',
+              if (includeTimeSlots)
+                'time_slots': const [
+                  {'key': '08:00', 'label': '8 AM'},
+                  {'key': '11:00', 'label': '11 AM'},
+                  {'key': '14:00', 'label': '2 PM'},
+                  {'key': '16:00', 'label': '4 PM'},
+                ],
+            },
+            sectionCount: 1,
+            itemCount: 2,
+            workUnitCount: 8,
+            submission:
+                submissionsBySlug[slug] ??
+                (slug == 'restroom' ? currentSubmission : null),
+          ),
+        )
+        .toList();
   }
 
   @override
-  Future<ChecklistLoadResult> fetchChecklist(String slug, {String? date}) async {
+  Future<ChecklistLoadResult> fetchChecklist(
+    String slug, {
+    String? date,
+  }) async {
     return ChecklistLoadResult(
       template: ChecklistTemplateData(
         id: 1,
         slug: slug,
         name: '5S Utilities Checklist',
-        description: 'Hourly Restroom Inspection',
+        description: 'Scheduled Restroom Inspection',
         version: 1,
-        settings: const {
+        settings: {
           'validation_mode': 'time_slots',
-          'time_slots': [
-            {'key': '08:00', 'label': '8 AM'},
-            {'key': '09:00', 'label': '9 AM'},
-            {'key': '10:00', 'label': '10 AM'},
-            {'key': '11:00', 'label': '11 AM'},
-            {'key': '13:00', 'label': '1 PM'},
-            {'key': '14:00', 'label': '2 PM'},
-            {'key': '15:00', 'label': '3 PM'},
-            {'key': '16:00', 'label': '4 PM'},
-            {'key': '17:00', 'label': '5 PM'},
-          ],
+          if (includeTimeSlots)
+            'time_slots': const [
+              {'key': '08:00', 'label': '8 AM'},
+              {'key': '11:00', 'label': '11 AM'},
+              {'key': '14:00', 'label': '2 PM'},
+              {'key': '16:00', 'label': '4 PM'},
+            ],
         },
         sections: const [
           ChecklistSectionData(
@@ -93,7 +101,9 @@ class _FakeChecklistRepo implements ChecklistRepository {
           ),
         ],
       ),
-      submission: currentSubmission,
+      submission:
+          submissionsBySlug[slug] ??
+          (slug == 'restroom' ? currentSubmission : null),
     );
   }
 
@@ -116,12 +126,14 @@ class _FakeChecklistRepo implements ChecklistRepository {
     submittedSlug = slug;
     submittedDate = date;
     submittedResponses = responses;
+    submittedBySlug[slug] = responses;
     final sub = _createSubmission(
       status: 'submitted',
       date: date,
       responses: responses,
     );
-    currentSubmission = sub;
+    if (slug == 'restroom') currentSubmission = sub;
+    submissionsBySlug[slug] = sub;
     return sub;
   }
 
@@ -131,7 +143,10 @@ class _FakeChecklistRepo implements ChecklistRepository {
     required List<int> bytes,
     required String filename,
   }) async {
-    return {'path': 'attachments/$filename', 'url': 'http://localhost/$filename'};
+    return {
+      'path': 'attachments/$filename',
+      'url': 'http://localhost/$filename',
+    };
   }
 
   ChecklistSubmissionData _createSubmission({
@@ -190,25 +205,145 @@ void main() {
   );
 
   group('UtilitiesMissedChecklistService unit tests', () {
+    test(
+      'marks every office and customer restroom category NO after its deadline',
+      () async {
+        final restroomSlugs = [
+          for (final area in ['office', 'customer-area'])
+            for (final type in ['male', 'female', 'pwd'])
+              'restroom-$area-$type',
+        ];
+        final repo = _FakeChecklistRepo(
+          slugs: [...restroomSlugs, 'utilities', 'sales'],
+        );
+
+        final result =
+            await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+              repository: repo,
+              user: utilitiesUser,
+              now: DateTime(2026, 9, 17, 9, 30),
+            );
+
+        expect(result!.autoSubmitted, isTrue);
+        expect(
+          result.missedSlotsByChecklist.keys,
+          containsAll([...restroomSlugs, 'utilities']),
+        );
+        expect(repo.submittedBySlug.keys, hasLength(7));
+        expect(repo.submittedBySlug, isNot(contains('sales')));
+        for (final responses in repo.submittedBySlug.values) {
+          for (final response in responses) {
+            expect(response['details']['slots']['08:00'], 'not_good');
+            expect(response['details']['submitted_slots'], contains('08:00'));
+            expect(
+              response['remark'],
+              'Failed to conduct the checklist on time.',
+            );
+          }
+        }
+
+        final again =
+            await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+              repository: repo,
+              user: utilitiesUser,
+              now: DateTime(2026, 9, 17, 9, 31),
+            );
+        expect(again!.autoSubmitted, isFalse);
+        expect(again.missedSlotsByChecklist, isEmpty);
+      },
+    );
+
+    test(
+      'fallback records only four scheduled inspections after the day ends',
+      () async {
+        final repo = _FakeChecklistRepo(includeTimeSlots: false);
+        final result =
+            await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+              repository: repo,
+              user: utilitiesUser,
+              now: DateTime(2026, 9, 19, 18),
+            );
+
+        expect(result!.autoSubmitted, isTrue);
+        expect(result.missedSlots, ['08:00', '11:00', '14:00', '16:00']);
+        expect(result.activeDueSlot, isNull);
+        for (final response in repo.submittedResponses) {
+          final slots = response['details']['slots'] as Map;
+          expect(slots, {
+            '08:00': 'not_good',
+            '11:00': 'not_good',
+            '14:00': 'not_good',
+            '16:00': 'not_good',
+          });
+        }
+      },
+    );
+
     test('non-utilities user is ignored', () async {
       final repo = _FakeChecklistRepo();
-      final result = await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
-        repository: repo,
-        user: salesUser,
-        now: DateTime(2026, 9, 17, 9, 30),
-      );
+      final result =
+          await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+            repository: repo,
+            user: salesUser,
+            now: DateTime(2026, 9, 17, 9, 30),
+          );
       expect(result, isNull);
       expect(repo.submittedSlug, isNull);
     });
 
+    test(
+      'an expired draft is recorded as NO even if it contained an unsent YES',
+      () async {
+        final repo = _FakeChecklistRepo();
+        repo.currentSubmission = ChecklistSubmissionData(
+          id: 50,
+          status: 'draft',
+          auditDate: '2026-09-17',
+          templateVersion: 1,
+          scores: const {},
+          responses: {
+            'mirror-clean': const ChecklistResponseData(
+              itemId: 101,
+              itemKey: 'mirror-clean',
+              status: null,
+              remark: null,
+              finding: null,
+              actionPlan: null,
+              commitmentDate: null,
+              details: {
+                'slots': {'08:00': 'good'},
+              },
+            ),
+          },
+          answeredItems: 1,
+          totalItems: 2,
+          completionPercentage: 12.5,
+          submittedAt: null,
+        );
+
+        final result =
+            await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+              repository: repo,
+              user: utilitiesUser,
+              now: DateTime(2026, 9, 17, 9, 30),
+            );
+
+        expect(result!.missedSlots, ['08:00']);
+        for (final response in repo.submittedResponses) {
+          expect(response['details']['slots']['08:00'], 'not_good');
+        }
+      },
+    );
+
     test('user logging in at 8:15 AM does not auto-submit and detects active 8 AM due slot', () async {
       final repo = _FakeChecklistRepo();
-      final result = await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
-        repository: repo,
-        user: utilitiesUser,
-        now: DateTime(2026, 9, 17, 8, 15),
-        date: '2026-09-17',
-      );
+      final result =
+          await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+            repository: repo,
+            user: utilitiesUser,
+            now: DateTime(2026, 9, 17, 8, 15),
+            date: '2026-09-17',
+          );
 
       expect(result, isNotNull);
       expect(result!.autoSubmitted, isFalse);
@@ -219,18 +354,19 @@ void main() {
 
     test('user logging in at 9:30 AM auto-submits missed 8:00 AM slot as NO (not_good)', () async {
       final repo = _FakeChecklistRepo();
-      final result = await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
-        repository: repo,
-        user: utilitiesUser,
-        now: DateTime(2026, 9, 17, 9, 30),
-        date: '2026-09-17',
-      );
+      final result =
+          await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+            repository: repo,
+            user: utilitiesUser,
+            now: DateTime(2026, 9, 17, 9, 30),
+            date: '2026-09-17',
+          );
 
       expect(result, isNotNull);
       expect(result!.autoSubmitted, isTrue);
       expect(result.missedSlots, ['08:00']);
       expect(result.formattedMissedSlots, '8:00 AM');
-      expect(result.activeDueSlot, '09:00');
+      expect(result.activeDueSlot, isNull);
 
       expect(repo.submittedSlug, 'restroom');
       expect(repo.submittedDate, '2026-09-17');
@@ -246,19 +382,20 @@ void main() {
       }
     });
 
-    test('user logging in at 11:30 AM auto-submits all missed slots (8, 9, 10 AM) as NO', () async {
+    test('user logging in at 11:30 AM auto-submits only the missed 8 AM slot as NO', () async {
       final repo = _FakeChecklistRepo();
-      final result = await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
-        repository: repo,
-        user: utilitiesUser,
-        now: DateTime(2026, 9, 17, 11, 30),
-        date: '2026-09-17',
-      );
+      final result =
+          await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+            repository: repo,
+            user: utilitiesUser,
+            now: DateTime(2026, 9, 17, 11, 30),
+            date: '2026-09-17',
+          );
 
       expect(result, isNotNull);
       expect(result!.autoSubmitted, isTrue);
-      expect(result.missedSlots, ['08:00', '09:00', '10:00']);
-      expect(result.formattedMissedSlots, '8:00 AM, 9:00 AM, 10:00 AM');
+      expect(result.missedSlots, ['08:00']);
+      expect(result.formattedMissedSlots, '8:00 AM');
       expect(result.activeDueSlot, '11:00');
 
       for (final r in repo.submittedResponses) {
@@ -267,9 +404,9 @@ void main() {
         final submittedSlots = details['submitted_slots'] as List;
 
         expect(slots['08:00'], 'not_good');
-        expect(slots['09:00'], 'not_good');
-        expect(slots['10:00'], 'not_good');
-        expect(submittedSlots, containsAll(['08:00', '09:00', '10:00']));
+        expect(slots.containsKey('09:00'), isFalse);
+        expect(slots.containsKey('10:00'), isFalse);
+        expect(submittedSlots, containsAll(['08:00']));
       }
     });
 
@@ -316,17 +453,18 @@ void main() {
         submittedAt: null,
       );
 
-      final result = await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
-        repository: repo,
-        user: utilitiesUser,
-        now: DateTime(2026, 9, 17, 10, 30),
-        date: '2026-09-17',
-      );
+      final result =
+          await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+            repository: repo,
+            user: utilitiesUser,
+            now: DateTime(2026, 9, 17, 12, 30),
+            date: '2026-09-17',
+          );
 
       expect(result, isNotNull);
       expect(result!.autoSubmitted, isTrue);
-      // Only 9:00 AM was missed, because 8:00 was already submitted
-      expect(result.missedSlots, ['09:00']);
+      // Only 11:00 AM was missed, because 8:00 was already submitted
+      expect(result.missedSlots, ['11:00']);
 
       for (final r in repo.submittedResponses) {
         final details = r['details'] as Map<String, dynamic>;
@@ -334,16 +472,16 @@ void main() {
         final submittedSlots = details['submitted_slots'] as List;
 
         expect(slots['08:00'], 'good'); // preserved
-        expect(slots['09:00'], 'not_good'); // auto-submitted as NO
-        expect(submittedSlots, containsAll(['08:00', '09:00']));
+        expect(slots['11:00'], 'not_good'); // auto-submitted as NO
+        expect(submittedSlots, containsAll(['08:00', '11:00']));
       }
     });
   });
 
-  group('UserHomeScreen widget tests for 5S Utilities missed and due submissions', () {
-    testWidgets('at 9:30 AM, auto-submits missed 8:00 AM and shows SnackBar', (tester) async {
+  testWidgets(
+    'home has no Utilities due banner and leaves deadlines to the server',
+    (tester) async {
       final repo = _FakeChecklistRepo();
-
       await tester.pumpWidget(
         MaterialApp(
           theme: GacTheme.light,
@@ -361,58 +499,16 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-
-      expect(repo.submittedSlug, 'restroom');
-      expect(
-        find.text('Missed 8:00 AM Utilities inspection was automatically submitted as NO.'),
-        findsOneWidget,
-      );
-    });
-
-    testWidgets('at 8:15 AM, does not auto-submit and displays 8:00 AM INSPECTION DUE banner', (tester) async {
-      final repo = _FakeChecklistRepo();
-      String? openedSlug;
-      String? openedSlot;
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: GacTheme.light,
-          home: Scaffold(
-            body: UserHomeScreen(
-              isActive: true,
-              user: utilitiesUser,
-              repository: repo,
-              now: () => DateTime(2026, 9, 17, 8, 15),
-              onOpenChecklists: () {},
-              onOpenProfile: () {},
-              onOpenNotifications: () {},
-              onOpenChecklistWithSlot: (slug, date, slot, [itemKey]) {
-                openedSlug = slug;
-                openedSlot = slot;
-              },
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // Not auto-submitted
       expect(repo.submittedSlug, isNull);
-
-      // Banner is shown
-      expect(find.byKey(const ValueKey('utilities-active-slot-banner')), findsOneWidget);
-      expect(find.text('8:00 AM INSPECTION DUE'), findsOneWidget);
       expect(
-        find.text('Please complete and submit your 5S Utilities inspection.'),
-        findsOneWidget,
+        find.byKey(const ValueKey('utilities-active-slot-banner')),
+        findsNothing,
       );
-
-      // Tap the SUBMIT button in the banner
-      await tester.tap(find.byKey(const ValueKey('submit-active-slot-button')));
-      await tester.pumpAndSettle();
-
-      expect(openedSlug, 'restroom');
-      expect(openedSlot, '08:00');
-    });
-  });
+      expect(
+        find.byKey(const ValueKey('submit-active-slot-button')),
+        findsNothing,
+      );
+      expect(find.textContaining('INSPECTION DUE'), findsNothing);
+    },
+  );
 }

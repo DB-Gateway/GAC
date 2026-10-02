@@ -97,3 +97,4 @@
 
 @include('partials.findings-register')
 @include('partials.findings-actions')
+@include('partials.finding-detail-modal')

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ChecklistSubmission;
 use App\Models\User;
 use App\Notifications\EscalationFollowUpSubmitted;
 use App\Notifications\FindingFollowUpRequested;
@@ -56,9 +57,15 @@ class TaskNotificationController extends Controller
         $templateSlug = trim((string) data_get($data, 'template_slug'));
         $standardsType = data_get($data, 'standards_type');
         $fiveSArea = data_get($data, 'five_s_area');
+        $submissionId = (int) data_get($data, 'submission_id', 0);
+        $submission = $submissionId > 0
+            ? ChecklistSubmission::query()->find($submissionId)
+            : null;
+        $isRestroom = preg_match('/^restroom-\d+-(male|female|pwd)$/i', $templateSlug) === 1
+            || $submission?->branch_restroom_id !== null;
 
         if (! in_array($standardsType, ['sales', 'aftersales', 'five_s'], true)) {
-            $standardsType = match ($templateSlug) {
+            $standardsType = $isRestroom ? 'five_s' : match ($templateSlug) {
                 'dealer-operations-standards-sales' => 'sales',
                 'dealer-operations-standards' => 'aftersales',
                 'sales', 'service', 'restroom', 'utilities' => 'five_s',
@@ -67,7 +74,7 @@ class TaskNotificationController extends Controller
         }
 
         if ($standardsType === 'five_s' && ! in_array($fiveSArea, ['sales', 'service', 'restroom'], true)) {
-            $fiveSArea = match ($templateSlug) {
+            $fiveSArea = $isRestroom ? 'restroom' : match ($templateSlug) {
                 'sales' => 'sales',
                 'service' => 'service',
                 'restroom', 'utilities' => 'restroom',
@@ -106,6 +113,9 @@ class TaskNotificationController extends Controller
                 'user_id' => data_get($data, 'completed_by_user_id'),
                 'user_type' => data_get($data, 'completed_by_role'),
                 'submission_id' => data_get($data, 'submission_id'),
+                'restroom_area' => $fiveSArea === 'restroom' ? ($submission?->restroom_area ?? data_get($data, 'restroom_area')) : null,
+                'restroom_id' => $fiveSArea === 'restroom' ? ($submission?->branch_restroom_id ?? data_get($data, 'restroom_id')) : null,
+                'restroom_gender' => $fiveSArea === 'restroom' ? ($submission?->restroom_gender ?? data_get($data, 'restroom_gender')) : null,
             ]));
         }
 

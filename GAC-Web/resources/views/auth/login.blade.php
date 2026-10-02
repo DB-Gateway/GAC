@@ -26,7 +26,7 @@
         <section class="login-card" aria-labelledby="loginHeading">
             <header class="login-header">
                 <a class="brand-orb" href="{{ url('/') }}" aria-label="Gateway Audit Compliance home">
-                    <img src="{{ asset('images/G-logo-no-bg.png') }}" alt="Gateway">
+                    <img src="{{ asset('images/no-bg-gateway-logo.png') }}" alt="Gateway">
                 </a>
                 <p class="brand-kicker">Gateway Audit Compliance</p>
                 <h1 id="loginHeading" class="sr-only">Sign in to Gateway Audit Compliance</h1>
@@ -51,23 +51,23 @@
                 @csrf
 
                 <div class="form-group">
-                    <label class="sr-only" for="email">{{ __('Email') }}</label>
-                    <div class="input-shell @error('email') has-error @enderror">
+                    <label class="sr-only" for="username">{{ __('Username') }}</label>
+                    <div class="input-shell @error('username') has-error @enderror">
                         <svg class="field-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"></path><circle cx="12" cy="7" r="4"></circle></svg>
                         <input
-                            id="email"
-                            type="email"
-                            name="email"
-                            value="{{ old('email') }}"
+                            id="username"
+                            type="text"
+                            name="username"
+                            value="{{ old('username') }}"
                             required
                             autofocus
                             autocomplete="username"
-                            placeholder="you@company.com"
-                            @error('email') aria-invalid="true" aria-describedby="emailError" @enderror
+                            placeholder="Enter your username"
+                            @error('username') aria-invalid="true" aria-describedby="usernameError" @enderror
                         >
                     </div>
-                    @error('email')
-                        <p class="field-error" id="emailError">{{ $message }}</p>
+                    @error('username')
+                        <p class="field-error" id="usernameError">{{ $message }}</p>
                     @enderror
                 </div>
 

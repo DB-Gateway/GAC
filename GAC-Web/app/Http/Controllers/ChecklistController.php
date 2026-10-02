@@ -22,6 +22,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -223,12 +224,18 @@ class ChecklistController extends Controller
                     || in_array($template->slug, ['dealer-operations-standards-documentation', 'dos-documentation', 'documentation'], true);
 
                 if ($isHourly || $isDocumentation) {
-                    $existing = ChecklistSubmission::query()
+                    $existingQuery = ChecklistSubmission::query()
                         ->where('checklist_template_id', $template->id)
                         ->whereDate('audit_date', $data['date'])
                         ->where('scope_key', $scopeKey)
-                        ->where('user_id', $request->user()?->id)
-                        ->lockForUpdate()
+                        ->where('user_id', $request->user()?->id);
+
+                    if (isset($template->settings['restroom_id'])) {
+                        $existingQuery->where('branch_restroom_id', $template->settings['restroom_id'])
+                            ->where('restroom_gender', $template->settings['restroom_gender'] ?? 'male');
+                    }
+
+                    $existing = $existingQuery->lockForUpdate()
                         ->latest('id')
                         ->first();
 
@@ -241,13 +248,16 @@ class ChecklistController extends Controller
                     $created = true;
                     $submission = new ChecklistSubmission;
                     $submission->checklist_template_id = $template->id;
+                    $submission->branch_restroom_id = $template->settings['restroom_id'] ?? null;
+                    $submission->restroom_area = $template->settings['restroom_area'] ?? null;
+                    $submission->restroom_gender = $template->settings['restroom_gender'] ?? null;
                     $submission->status = 'draft';
                     $submission->scope_key = $scopeKey;
                     $submission->audit_date = $data['date'];
                 }
             }
 
-            $submission->fill([
+            $fillData = [
                 'user_id' => $request->user()?->id,
                 'branch' => $branch,
                 'template_version' => $template->version,
@@ -259,7 +269,15 @@ class ChecklistController extends Controller
                 'submitted_by_email' => null,
                 'submitted_by_user_type' => null,
                 'submitted_at' => null,
-            ]);
+            ];
+
+            if (isset($template->settings['restroom_id'])) {
+                $fillData['branch_restroom_id'] = $template->settings['restroom_id'];
+                $fillData['restroom_area'] = $template->settings['restroom_area'] ?? 'customer';
+                $fillData['restroom_gender'] = $template->settings['restroom_gender'] ?? 'male';
+            }
+
+            $submission->fill($fillData);
             $submission->save();
 
             // Draft requests may contain only the category currently open in
@@ -350,6 +368,18 @@ class ChecklistController extends Controller
                 ->whereKey($template->id)
                 ->lockForUpdate()
                 ->firstOrFail();
+            if ($template->slug !== $lockedTemplate->slug) {
+                $lockedTemplate->slug = $template->slug;
+                $lockedTemplate->name = $template->name;
+            }
+            if (isset($template->settings['restroom_id'])) {
+                $settings = $lockedTemplate->settings ?? [];
+                $settings['restroom_id'] = $template->settings['restroom_id'];
+                $settings['restroom_area'] = $template->settings['restroom_area'] ?? 'customer';
+                $settings['restroom_gender'] = $template->settings['restroom_gender'] ?? 'male';
+                $settings['time_slots'] = $template->settings['time_slots'] ?? $settings['time_slots'] ?? [];
+                $lockedTemplate->settings = $settings;
+            }
             $this->loadTemplate($lockedTemplate, $request->user());
 
             $scopeKey = $this->scopeKey($branch);
@@ -365,13 +395,19 @@ class ChecklistController extends Controller
                 ->first();
 
             if (! $submission) {
-                $existing = ChecklistSubmission::query()
+                $existingQuery = ChecklistSubmission::query()
                     ->where('checklist_template_id', $lockedTemplate->id)
                     ->whereDate('audit_date', $data['date'])
                     ->where('scope_key', $scopeKey)
                     ->where('user_id', $submitter?->id)
-                    ->where('status', 'submitted')
-                    ->with('responses')
+                    ->where('status', 'submitted');
+
+                if (isset($lockedTemplate->settings['restroom_id'])) {
+                    $existingQuery->where('branch_restroom_id', $lockedTemplate->settings['restroom_id'])
+                        ->where('restroom_gender', $lockedTemplate->settings['restroom_gender'] ?? 'male');
+                }
+
+                $existing = $existingQuery->with('responses')
                     ->latest('submitted_at')
                     ->latest('id')
                     ->first();
@@ -400,6 +436,9 @@ class ChecklistController extends Controller
                 } else {
                     $submission = new ChecklistSubmission([
                         'checklist_template_id' => $lockedTemplate->id,
+                        'branch_restroom_id' => $lockedTemplate->settings['restroom_id'] ?? null,
+                        'restroom_area' => $lockedTemplate->settings['restroom_area'] ?? null,
+                        'restroom_gender' => $lockedTemplate->settings['restroom_gender'] ?? null,
                         'status' => 'draft',
                         'scope_key' => $scopeKey,
                         'audit_date' => $data['date'],
@@ -407,13 +446,21 @@ class ChecklistController extends Controller
                 }
             }
 
-            $submission->fill([
+            $fillSubmitData = [
                 'user_id' => $request->user()?->id,
                 'branch' => $branch,
                 'template_version' => $lockedTemplate->version,
                 'context' => $data['context'] ?? null,
                 'template_snapshot' => $this->templateResource($lockedTemplate),
-            ]);
+            ];
+
+            if (isset($lockedTemplate->settings['restroom_id'])) {
+                $fillSubmitData['branch_restroom_id'] = $lockedTemplate->settings['restroom_id'];
+                $fillSubmitData['restroom_area'] = $lockedTemplate->settings['restroom_area'] ?? 'customer';
+                $fillSubmitData['restroom_gender'] = $lockedTemplate->settings['restroom_gender'] ?? 'male';
+            }
+
+            $submission->fill($fillSubmitData);
             $submission->save();
 
             $responses = $this->syncResponses($submission, $lockedTemplate, $data['responses']);
@@ -421,7 +468,8 @@ class ChecklistController extends Controller
                 ?? data_get($data, 'client_time')
                 ?? data_get($data, 'context.client_time')
                 ?? data_get($data, 'responses.0.details.client_time');
-            $this->validateCompleteSubmission($lockedTemplate, $responses, $submission, $clientTime);
+            $missedSlots = $request->attributes->get('utilities_missed_slots');
+            $this->validateCompleteSubmission($lockedTemplate, $responses, $submission, $clientTime, $missedSlots);
             $scores = $this->calculateScores($lockedTemplate, $responses);
 
             $submission->update([
@@ -464,7 +512,7 @@ class ChecklistController extends Controller
             );
 
             if ($submitter !== null) {
-                $taskCompletionNotifier->send($submission, $submitter);
+                $taskCompletionNotifier->send($submission, $submitter, $missedSlots ?? []);
             }
 
             return [$submission, $report, false];
@@ -555,18 +603,24 @@ class ChecklistController extends Controller
 
     public function debugResetAnswers(Request $request): JsonResponse
     {
+        $this->ensureCanManageTemplates($request);
+
         $validated = Validator::make($request->all(), [
             'template' => ['nullable', 'string'],
             'date' => ['nullable', 'string'],
             'branch' => ['nullable', 'string', 'max:255'],
             'scope' => ['nullable', 'string', Rule::in(['all', 'current', 'template_all'])],
-            'target' => ['nullable', 'string', Rule::in(['all', 'drafts', 'submitted', 'notifications', 'subforms', 'documentation', 'subform_doc'])],
+            'target' => ['nullable', 'string', Rule::in(['all', 'drafts', 'submitted', 'notifications', 'subforms', 'documentation', 'subform_doc', 'database'])],
             'include_notifications' => ['nullable', 'boolean'],
         ])->validate();
 
         $templateInput = trim((string) ($validated['template'] ?? 'all'));
         if ($templateInput === '') {
             $templateInput = 'all';
+        }
+
+        if (($validated['target'] ?? null) === 'database') {
+            return $this->debugResetDatabaseData();
         }
 
         $targetTemplates = collect();
@@ -671,8 +725,6 @@ class ChecklistController extends Controller
                             ->orWhere('scope_key', $scopeKey);
                     });
                 }
-            } elseif ($date !== '' && $date !== 'all') {
-                $submissionQuery->whereDate('audit_date', $date);
             }
 
             $submissions = $submissionQuery->lockForUpdate()->get();
@@ -816,6 +868,45 @@ class ChecklistController extends Controller
         ]);
     }
 
+    private function debugResetDatabaseData(): JsonResponse
+    {
+        // Keep accounts, authentication/device settings, checklist definitions,
+        // and reference data used by the checklist and restroom dropdowns.
+        // Delete child records before their parent submissions.
+        $tables = [
+            'reports',
+            'checklist_responses',
+            'checklist_submissions',
+            'notifications',
+            'user_usage_events',
+            'jobs',
+            'job_batches',
+            'failed_jobs',
+            'cache_locks',
+            'cache',
+        ];
+
+        $deleted = DB::transaction(function () use ($tables): array {
+            $counts = [];
+            foreach ($tables as $table) {
+                if (Schema::hasTable($table)) {
+                    $counts[$table] = DB::table($table)->delete();
+                }
+            }
+
+            return $counts;
+        });
+
+        return response()->json([
+            'message' => 'Database activity and checklist data reset. Users, login and device settings, checklist definitions, and dropdown settings were preserved.',
+            'target' => 'database',
+            'stats' => [
+                'deleted_by_table' => $deleted,
+                'deleted_total' => array_sum($deleted),
+            ],
+        ]);
+    }
+
     private function clearEmbeddedDosSubforms(?string $branch, ?string $date, string $scope): int
     {
         $dosTemplate = ChecklistTemplate::where('slug', 'dealer-operations-standards')->first();
@@ -835,8 +926,6 @@ class ChecklistController extends Controller
                         ->orWhere('scope_key', $scopeKey);
                 });
             }
-        } elseif ($date !== '' && $date !== null && $date !== 'all') {
-            $dosQuery->whereDate('audit_date', $date);
         }
 
         $dosSubmissions = $dosQuery->with(['responses.item'])->get();
@@ -885,8 +974,6 @@ class ChecklistController extends Controller
                         ->orWhere('scope_key', $scopeKey);
                 });
             }
-        } elseif ($date !== '' && $date !== null && $date !== 'all') {
-            $dosQuery->whereDate('audit_date', $date);
         }
 
         $dosSubmissions = $dosQuery->with(['responses.item'])->get();
@@ -1260,6 +1347,18 @@ class ChecklistController extends Controller
             'template' => $this->templateResource($this->loadTemplate($newTemplate)),
             'redirect_url' => route('checklists.index', ['checklist' => $newTemplate->slug]),
         ], 201);
+    }
+
+    public function destroyTemplate(Request $request, ChecklistTemplate $template): JsonResponse
+    {
+        $this->ensureCanManageTemplates($request);
+
+        $template->update(['is_active' => false]);
+
+        return response()->json([
+            'message' => 'Audit form deleted from active use. Historical submissions and reports were preserved.',
+            'redirect_url' => route('checklists.index'),
+        ]);
     }
 
     private function renderPage(Request $request, string $slug, string $view, array $viewData = []): View
@@ -1979,7 +2078,11 @@ class ChecklistController extends Controller
             }
 
             $status = $payload['status'] ?? null;
-            if ($status === null && $template->slug === 'restroom') {
+            if ($status === null && (
+                in_array($template->slug, ['restroom', 'utilities'], true)
+                || str_starts_with((string) $template->slug, 'restroom-')
+                || ($template->settings['validation_mode'] ?? null) === 'time_slots'
+            )) {
                 $status = $this->statusFromSlots($payload['details']['slots'] ?? []);
             }
 
@@ -2161,7 +2264,11 @@ class ChecklistController extends Controller
             }
 
             $status = $payload['status'] ?? null;
-            if ($status === null && $template->slug === 'restroom') {
+            if ($status === null && (
+                in_array($template->slug, ['restroom', 'utilities'], true)
+                || str_starts_with((string) $template->slug, 'restroom-')
+                || ($template->settings['validation_mode'] ?? null) === 'time_slots'
+            )) {
                 $status = $this->statusFromSlots($payload['details']['slots'] ?? []);
             }
 
@@ -2201,7 +2308,8 @@ class ChecklistController extends Controller
         ChecklistTemplate $template,
         Collection $responses,
         ?ChecklistSubmission $submission = null,
-        ?string $clientTime = null
+        ?string $clientTime = null,
+        ?array $requiredSlots = null
     ): void {
         $responses = $responses->keyBy('item_key');
         $errors = [];
@@ -2218,7 +2326,7 @@ class ChecklistController extends Controller
                     ? $response->details['slots']
                     : [];
                 $activeSlots = $item->metadata['active_slots'] ?? null;
-                foreach ($this->timeSlotKeys($template) as $slot) {
+                foreach ($requiredSlots ?? $this->timeSlotKeys($template) as $slot) {
                     if (is_array($activeSlots) && ! in_array($slot, $activeSlots, true)) {
                         continue;
                     }
@@ -2540,8 +2648,7 @@ class ChecklistController extends Controller
         ChecklistTemplate $template,
         ?User $user = null
     ): ChecklistTemplate {
-        $isAdmin = $user?->hasAdministrativeAccess() === true
-            || $user?->roleCode() === User::ROLE_BRANCH_OPERATIONS_MANAGER;
+        $isAdmin = $user?->hasAdministrativeAccess() === true;
 
         $template->load([
             'sections' => fn ($query) => $query
@@ -2566,12 +2673,21 @@ class ChecklistController extends Controller
         string $scopeKey,
         ?int $userId
     ): ?ChecklistSubmission {
-        $base = fn () => ChecklistSubmission::query()
-            ->where('checklist_template_id', $template->id)
-            ->whereDate('audit_date', $date)
-            ->where('scope_key', $scopeKey)
-            ->where('user_id', $userId)
-            ->with('responses');
+        $base = function () use ($template, $date, $scopeKey, $userId) {
+            $query = ChecklistSubmission::query()
+                ->where('checklist_template_id', $template->id)
+                ->whereDate('audit_date', $date)
+                ->where('scope_key', $scopeKey)
+                ->where('user_id', $userId)
+                ->with('responses');
+
+            if (isset($template->settings['restroom_id'])) {
+                $query->where('branch_restroom_id', $template->settings['restroom_id'])
+                    ->where('restroom_gender', $template->settings['restroom_gender'] ?? 'male');
+            }
+
+            return $query;
+        };
 
         return $base()->where('status', 'draft')->latest('updated_at')->first()
             ?? $base()->where('status', 'submitted')->latest('submitted_at')->first();
@@ -2583,12 +2699,19 @@ class ChecklistController extends Controller
         string $scopeKey,
         ?int $userId
     ) {
-        return ChecklistSubmission::query()
+        $query = ChecklistSubmission::query()
             ->where('checklist_template_id', $template->id)
             ->whereDate('audit_date', $date)
             ->where('scope_key', $scopeKey)
             ->where('user_id', $userId)
             ->where('status', 'draft');
+
+        if (isset($template->settings['restroom_id'])) {
+            $query->where('branch_restroom_id', $template->settings['restroom_id'])
+                ->where('restroom_gender', $template->settings['restroom_gender'] ?? 'male');
+        }
+
+        return $query;
     }
 
     private function resolveBranch(Request $request, array $data): ?string
@@ -2645,8 +2768,7 @@ class ChecklistController extends Controller
             return false;
         }
 
-        return $user->hasAdministrativeAccess() === true
-            || $user->roleCode() === User::ROLE_BRANCH_OPERATIONS_MANAGER;
+        return $user->hasAdministrativeAccess() === true;
     }
 
     private function timeSlotKeys(ChecklistTemplate $template): array

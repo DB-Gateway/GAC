@@ -13,7 +13,7 @@ class EnsureUserCanManageUsers
         abort_unless(
             $request->user()?->hasAdministrativeAccess() === true,
             403,
-            'Only a compliance administrator can manage user accounts.'
+            'Only the system administrator can manage user accounts.'
         );
 
         return $next($request);

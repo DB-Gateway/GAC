@@ -18,6 +18,35 @@ class RestroomChecklistModeTest extends TestCase
         $this->seed(ChecklistTemplateSeeder::class);
     }
 
+    public function test_web_and_mobile_load_the_same_four_utilities_inspections(): void
+    {
+        $user = User::factory()->create([
+            'user_type' => User::ROLE_5S_UTILITIES,
+            'account_status' => 'active',
+            'branch' => 'Pasong Tamo',
+        ]);
+        $slots = [
+            ['key' => '08:00', 'label' => '8 AM'],
+            ['key' => '11:00', 'label' => '11 AM'],
+            ['key' => '13:00', 'label' => '1 PM'],
+            ['key' => '16:00', 'label' => '4 PM'],
+        ];
+
+        foreach (['checklists.load', 'api.checklists.show'] as $route) {
+            $this->actingAs($user)
+                ->getJson(route($route, ['template' => 'utilities', 'date' => '2026-09-19']))
+                ->assertOk()
+                ->assertJsonPath('template.time_slots', $slots)
+                ->assertJsonPath('template.settings.time_slots', $slots);
+        }
+
+        $response = $this->getJson(route('api.checklists.index', ['date' => '2026-09-19']))
+            ->assertOk();
+        $this->assertNotEmpty($response->json('checklists'));
+        $this->assertSame($slots, $response->json('checklists.0.settings.time_slots'));
+        $this->assertSame(120, $response->json('checklists.0.work_unit_count'));
+    }
+
     public function test_non_hourly_restroom_template_is_loaded_as_an_editable_standard_checklist(): void
     {
         $template = ChecklistTemplate::query()->where('slug', 'restroom')->firstOrFail();

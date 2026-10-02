@@ -27,10 +27,12 @@ class SecurityService {
       await prefs.reload();
       if (email != null && email.trim().isNotEmpty) {
         final userPin = prefs.getString(_pinKey(email));
-        return userPin != null && userPin.trim().length == 4;
+        return userPin != null &&
+            (userPin.trim().length == 6 || userPin.trim().length == 4);
       }
       final pin = prefs.getString(gacSecurityPinKey);
-      return pin != null && pin.trim().length == 4;
+      return pin != null &&
+          (pin.trim().length == 6 || pin.trim().length == 4);
     } catch (_) {
       return false;
     }
@@ -42,10 +44,18 @@ class SecurityService {
       await prefs.reload();
       if (email != null && email.trim().isNotEmpty) {
         final userPin = prefs.getString(_pinKey(email));
-        if (userPin != null && userPin.trim().length == 4) return userPin;
+        if (userPin != null &&
+            (userPin.trim().length == 6 || userPin.trim().length == 4)) {
+          return userPin;
+        }
         return null;
       }
-      return prefs.getString(gacSecurityPinKey);
+      final pin = prefs.getString(gacSecurityPinKey);
+      if (pin != null &&
+          (pin.trim().length == 6 || pin.trim().length == 4)) {
+        return pin;
+      }
+      return null;
     } catch (_) {
       return null;
     }
@@ -61,7 +71,8 @@ class SecurityService {
   }
 
   Future<bool> savePin(String pin, {String? email}) async {
-    if (pin.trim().length != 4) return false;
+    final len = pin.trim().length;
+    if (len != 6 && len != 4) return false;
     try {
       final prefs = await SharedPreferences.getInstance();
       final trimmed = pin.trim();

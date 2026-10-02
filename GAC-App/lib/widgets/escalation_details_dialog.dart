@@ -1,7 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
+import '../models/authenticated_user.dart';
 import '../models/escalation_follow_up.dart';
 import '../models/user_notification.dart';
 import '../services/escalation_follow_up_service.dart';
@@ -14,6 +18,8 @@ Future<EscalationFollowUp?> showEscalationDetailsDialog(
   EscalationFollowUpRepository? followUpRepository,
   ImagePicker? imagePicker,
   ValueChanged<EscalationFollowUp>? onFollowUpSubmitted,
+  bool? canFollowUp,
+  AuthenticatedUser? currentUser,
 }) => showModalBottomSheet<EscalationFollowUp>(
   context: context,
   isScrollControlled: true,
@@ -26,6 +32,8 @@ Future<EscalationFollowUp?> showEscalationDetailsDialog(
     followUpRepository: followUpRepository,
     imagePicker: imagePicker,
     onFollowUpSubmitted: onFollowUpSubmitted,
+    canFollowUp: canFollowUp,
+    currentUser: currentUser,
   ),
 );
 
@@ -35,6 +43,8 @@ class EscalationDetailsDialog extends StatefulWidget {
     this.followUpRepository,
     this.imagePicker,
     this.onFollowUpSubmitted,
+    this.canFollowUp,
+    this.currentUser,
     super.key,
   });
 
@@ -42,6 +52,8 @@ class EscalationDetailsDialog extends StatefulWidget {
   final EscalationFollowUpRepository? followUpRepository;
   final ImagePicker? imagePicker;
   final ValueChanged<EscalationFollowUp>? onFollowUpSubmitted;
+  final bool? canFollowUp;
+  final AuthenticatedUser? currentUser;
 
   @override
   State<EscalationDetailsDialog> createState() =>
@@ -50,8 +62,36 @@ class EscalationDetailsDialog extends StatefulWidget {
 
 class _EscalationDetailsDialogState extends State<EscalationDetailsDialog> {
   EscalationFollowUp? _latestFollowUp;
+  late bool _canFollowUp;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.canFollowUp != null) {
+      _canFollowUp = widget.canFollowUp!;
+    } else if (widget.currentUser != null) {
+      _canFollowUp = widget.currentUser!.isUtility;
+    } else {
+      _canFollowUp = true;
+      _loadCachedUserRole();
+    }
+  }
+
+  Future<void> _loadCachedUserRole() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userJson = prefs.getString(gacAuthUserKey);
+      if (userJson != null && userJson.isNotEmpty && mounted) {
+        final user = AuthenticatedUser.fromJson(jsonDecode(userJson));
+        setState(() {
+          _canFollowUp = user.isUtility;
+        });
+      }
+    } catch (_) {}
+  }
 
   Future<void> _followUp() async {
+    if (!_canFollowUp) return;
     final result = await showModalBottomSheet<EscalationFollowUp>(
       context: context,
       isScrollControlled: true,
@@ -424,7 +464,7 @@ class _EscalationDetailsDialogState extends State<EscalationDetailsDialog> {
                           ),
                           child: const Text('Close'),
                         ),
-                      ] else ...[
+                      ] else if (_canFollowUp) ...[
                         Row(
                           children: [
                             TextButton(
@@ -450,6 +490,59 @@ class _EscalationDetailsDialogState extends State<EscalationDetailsDialog> {
                               ),
                             ),
                           ],
+                        ),
+                      ] else ...[
+                        Semantics(
+                          child: Container(
+                            key: const ValueKey('escalation-utility-only-banner'),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
+                              color: GacColors.navy700.withValues(alpha: 0.3),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: GacColors.cardBorder,
+                              ),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  color: GacColors.textSecondary,
+                                  size: 18,
+                                ),
+                                SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Only utility personnel can submit a follow-up for this escalation.',
+                                    style: TextStyle(
+                                      color: GacColors.textSecondary,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        FilledButton(
+                          key: const ValueKey('escalation-details-close'),
+                          onPressed: () =>
+                              Navigator.of(context).pop(_latestFollowUp),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 52),
+                            backgroundColor: GacColors.navy800,
+                            foregroundColor: GacColors.textPrimary,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: const BorderSide(color: GacColors.cardBorder),
+                            ),
+                          ),
+                          child: const Text('Close'),
                         ),
                       ],
                     ],

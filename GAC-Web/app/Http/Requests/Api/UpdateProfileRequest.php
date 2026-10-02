@@ -26,6 +26,10 @@ class UpdateProfileRequest extends FormRequest
             $normalized['email'] = strtolower(trim($this->string('email')->toString()));
         }
 
+        if ($this->has('username') && is_string($this->input('username'))) {
+            $normalized['email'] = trim($this->string('username')->toString());
+        }
+
         $this->merge($normalized);
     }
 
@@ -40,7 +44,7 @@ class UpdateProfileRequest extends FormRequest
                 'sometimes',
                 'required',
                 'string',
-                'email',
+                'regex:/^\S+$/',
                 'max:255',
                 Rule::unique(User::class)->ignore($this->user()?->id),
             ],

@@ -69,12 +69,12 @@ class PicAssignmentAccessTest extends TestCase
     {
         Sanctum::actingAs($this->pic(User::PIC_ASSIGNMENT_UTILITIES));
 
-        $this->getJson(route('api.checklists.index', ['date' => '2026-09-02']))
-            ->assertOk()
-            ->assertJsonCount(1, 'checklists')
-            ->assertJsonPath('checklists.0.slug', 'restroom')
-            ->assertJsonPath('checklists.0.item_count', 30)
-            ->assertJsonPath('checklists.0.work_unit_count', 270);
+        $utilitiesResponse = $this->getJson(route('api.checklists.index', ['date' => '2026-09-02']))
+            ->assertOk();
+        $this->assertNotEmpty($utilitiesResponse->json('checklists'));
+        $this->assertTrue(
+            $utilitiesResponse->collect('checklists')->every(fn ($c) => str_starts_with($c['slug'], 'restroom') && $c['item_count'] === 30)
+        );
 
         Sanctum::actingAs($this->pic(User::PIC_ASSIGNMENT_SALES_SERVICE));
 

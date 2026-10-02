@@ -163,9 +163,73 @@ class EscalationFollowUpApiTest extends TestCase
         $this->assertSame(1, Report::where('type', 'escalation_follow_up')->count());
     }
 
+    public function test_non_utility_user_cannot_submit_follow_up(): void
+    {
+        $salesManager = User::factory()->create(['user_type' => User::ROLE_SALES_MANAGER, 'branch' => 'Pasong Tamo', 'account_status' => 'active']);
+        $manager = User::factory()->create(['name' => 'Brenda BOM', 'user_type' => User::ROLE_BRANCH_OPERATIONS_MANAGER, 'branch' => 'Pasong Tamo', 'account_status' => 'active']);
+        $template = ChecklistTemplate::firstOrCreate(['slug' => 'dealer-operations-standards-sales'], ['name' => 'Sales Standards', 'version' => 1, 'is_active' => true]);
+        $submission = ChecklistSubmission::create([
+            'checklist_template_id' => $template->id, 'user_id' => $salesManager->id,
+            'status' => 'submitted', 'branch' => $salesManager->branch, 'scope_key' => hash('sha256', $salesManager->branch),
+            'audit_date' => '2026-09-14', 'template_version' => 1,
+            'template_snapshot' => ['slug' => $template->slug, 'name' => $template->name],
+        ]);
+        $finding = ChecklistResponse::create([
+            'checklist_submission_id' => $submission->id, 'item_key' => 'sales-2', 'status' => 'no',
+            'finding' => 'The sign is damaged.', 'action_plan' => 'Replace the sign.',
+            'item_snapshot' => ['prompt' => 'Is the signage in good condition?'],
+        ]);
+        $salesManager->notify(new FindingEscalated($finding, $manager));
+        $notificationId = $salesManager->notifications()->sole()->id;
+
+        Sanctum::actingAs($salesManager);
+        $this->postJson($this->url($notificationId), $this->payload())
+            ->assertForbidden()
+            ->assertJsonPath('message', 'Only utility personnel can submit an escalation follow-up.');
+        $this->assertSame(0, Report::where('type', 'escalation_follow_up')->count());
+    }
+
+    public function test_utility_follow_up_marks_other_branch_users_notifications_as_followed_up(): void
+    {
+        $salesManager = User::factory()->create(['user_type' => User::ROLE_SALES_MANAGER, 'branch' => 'Pasong Tamo', 'account_status' => 'active']);
+        $utilityUser = User::factory()->create(['user_type' => User::ROLE_5S_UTILITIES, 'branch' => 'Pasong Tamo', 'account_status' => 'active']);
+        $manager = User::factory()->create(['name' => 'Brenda BOM', 'user_type' => User::ROLE_BRANCH_OPERATIONS_MANAGER, 'branch' => 'Pasong Tamo', 'account_status' => 'active']);
+        $template = ChecklistTemplate::firstOrCreate(['slug' => 'dealer-operations-standards-sales'], ['name' => 'Sales Standards', 'version' => 1, 'is_active' => true]);
+        $submission = ChecklistSubmission::create([
+            'checklist_template_id' => $template->id, 'user_id' => $salesManager->id,
+            'status' => 'submitted', 'branch' => $salesManager->branch, 'scope_key' => hash('sha256', $salesManager->branch),
+            'audit_date' => '2026-09-14', 'template_version' => 1,
+            'template_snapshot' => ['slug' => $template->slug, 'name' => $template->name],
+        ]);
+        $finding = ChecklistResponse::create([
+            'checklist_submission_id' => $submission->id, 'item_key' => 'sales-2', 'status' => 'no',
+            'finding' => 'The sign is damaged.', 'action_plan' => 'Replace the sign.',
+            'item_snapshot' => ['prompt' => 'Is the signage in good condition?'],
+        ]);
+        $salesManager->notify(new FindingEscalated($finding, $manager));
+        $utilityUser->notify(new FindingEscalated($finding, $manager));
+
+        // Before follow-up: sales manager notification shows has_follow_up = false
+        Sanctum::actingAs($salesManager);
+        $this->getJson('/api/notifications')
+            ->assertOk()
+            ->assertJsonPath('notifications.0.data.has_follow_up', false);
+
+        // Utility user submits follow-up
+        Sanctum::actingAs($utilityUser);
+        $this->postJson($this->url($utilityUser->notifications()->sole()->id), $this->payload())
+            ->assertCreated();
+
+        // After follow-up: sales manager notification now shows has_follow_up = true
+        Sanctum::actingAs($salesManager);
+        $this->getJson('/api/notifications')
+            ->assertOk()
+            ->assertJsonPath('notifications.0.data.has_follow_up', true);
+    }
+
     private function escalation(): array
     {
-        $checker = User::factory()->create(['user_type' => User::ROLE_SALES_MANAGER, 'branch' => 'Pasong Tamo', 'account_status' => 'active']);
+        $checker = User::factory()->create(['user_type' => User::ROLE_5S_UTILITIES, 'branch' => 'Pasong Tamo', 'account_status' => 'active']);
         $manager = User::factory()->create(['name' => 'Brenda BOM', 'user_type' => User::ROLE_BRANCH_OPERATIONS_MANAGER, 'branch' => 'Pasong Tamo', 'account_status' => 'active']);
         $template = ChecklistTemplate::firstOrCreate(['slug' => 'dealer-operations-standards-sales'], ['name' => 'Sales Standards', 'version' => 1, 'is_active' => true]);
         $submission = ChecklistSubmission::create([

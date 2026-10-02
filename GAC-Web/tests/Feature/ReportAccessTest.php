@@ -67,7 +67,7 @@ class ReportAccessTest extends TestCase
         $first = $this->createSubmission($template, 'Pasong Tamo');
         $second = $this->createSubmission($template, 'Cebu');
 
-        foreach (['ADMIN', 'Compliance Administrator', 'GM', 'General Manager'] as $role) {
+        foreach (['ADMIN', 'Compliance Administrator'] as $role) {
             $manager = User::factory()->create([
                 'branch' => 'Pasong Tamo',
                 'user_type' => $role,
@@ -87,6 +87,34 @@ class ReportAccessTest extends TestCase
                 ->assertViewHas('reportScope', fn (array $scope): bool => $scope === [
                     'type' => 'all_branches',
                     'branch' => null,
+                ]);
+        }
+    }
+
+    public function test_general_manager_role_variants_are_limited_to_their_assigned_branch(): void
+    {
+        $template = ChecklistTemplate::where('slug', 'gateway-5s')->firstOrFail();
+        $ownSubmission = $this->createSubmission($template, 'Pasong Tamo');
+        $otherSubmission = $this->createSubmission($template, 'Cebu');
+
+        foreach (['GM', 'General Manager'] as $role) {
+            $manager = User::factory()->create([
+                'branch' => 'Pasong Tamo',
+                'user_type' => $role,
+                'account_status' => 'active',
+            ]);
+
+            $this->actingAs($manager)
+                ->get(route('reports.index'))
+                ->assertOk()
+                ->assertViewHas('history', function ($history) use ($ownSubmission, $otherSubmission): bool {
+                    return $history->pluck('id')->all() === [$ownSubmission->id]
+                        && ! $history->pluck('id')->contains($otherSubmission->id);
+                })
+                ->assertViewHas('branchOptions', fn ($branches): bool => $branches->values()->all() === ['Pasong Tamo'])
+                ->assertViewHas('reportScope', fn (array $scope): bool => $scope === [
+                    'type' => 'assigned_branch',
+                    'branch' => 'Pasong Tamo',
                 ]);
         }
     }
@@ -374,7 +402,7 @@ class ReportAccessTest extends TestCase
             ->assertSee('Override / Edit');
     }
 
-    public function test_general_manager_can_override_no_answers_across_any_branch(): void
+    public function test_general_manager_cannot_override_no_answers_outside_their_branch(): void
     {
         $template = ChecklistTemplate::where('slug', 'gateway-5s')->firstOrFail();
         $gmUser = User::factory()->create([
@@ -383,7 +411,6 @@ class ReportAccessTest extends TestCase
             'branch' => 'Pasong Tamo',
         ]);
 
-        // Submission is in Cebu, GM is assigned Pasong Tamo but GM has all-branch access
         $submission = $this->createSubmission($template, 'Cebu', withResponse: false, auditDate: '2026-08-12');
         $item = $template->items()->firstOrFail();
 
@@ -431,24 +458,18 @@ class ReportAccessTest extends TestCase
             $overridePayload
         );
 
-        $patchResponse
-            ->assertOk()
-            ->assertJsonPath('status', 'success')
-            ->assertJsonPath('response.status', 'yes')
-            ->assertJsonPath('response.details.override.overridden_by_name', 'George GM');
+        $patchResponse->assertForbidden();
 
         $response->refresh();
-        $this->assertSame('yes', $response->status);
-        $this->assertTrue($response->isOverridden());
-        $this->assertSame('George GM', $response->overrideDetails()['overridden_by_name']);
-        $this->assertSame('Approved replacement during GM inspection walk', $response->overrideDetails()['override_reason']);
+        $this->assertSame('no', $response->status);
+        $this->assertFalse($response->isOverridden());
 
         $submission->refresh();
-        $this->assertSame(1, $submission->scores['yes']);
-        $this->assertSame(0, $submission->scores['no']);
-        $this->assertEquals(100.0, (float) $submission->scores['percentage']);
+        $this->assertSame(0, $submission->scores['yes']);
+        $this->assertSame(1, $submission->scores['no']);
+        $this->assertEquals(0.0, (float) $submission->scores['percentage']);
 
-        $this->assertDatabaseHas('reports', [
+        $this->assertDatabaseMissing('reports', [
             'type' => 'checklist_response_override',
             'generated_by_user_id' => $gmUser->id,
             'checklist_submission_id' => $submission->id,

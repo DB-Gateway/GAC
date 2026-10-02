@@ -53,9 +53,9 @@ class DosDocumentationAndSubformIntegrationTest extends TestCase
         ]);
     }
 
-    public function test_branch_operations_manager_has_editor_access_and_buttons(): void
+    public function test_system_administrator_has_editor_access_and_buttons(): void
     {
-        $bom = $this->branchOperationsManager();
+        $bom = $this->administrator();
 
         $response = $this->actingAs($bom)
             ->get('/checklists?checklist=dealer-operations-standards');
@@ -76,7 +76,7 @@ class DosDocumentationAndSubformIntegrationTest extends TestCase
 
     public function test_editor_renders_user_filter_card_and_badges(): void
     {
-        $bom = $this->branchOperationsManager();
+        $bom = $this->administrator();
 
         $response = $this->actingAs($bom)
             ->get('/checklists?checklist=dealer-operations-standards');
@@ -193,9 +193,9 @@ class DosDocumentationAndSubformIntegrationTest extends TestCase
         $loadResponse->assertJsonPath("submission.responses.{$item61->key}.details.documentation_samples.1.answers.doc-rc-2", 'no');
     }
 
-    public function test_branch_operations_manager_can_update_subform_template(): void
+    public function test_system_administrator_can_update_subform_template(): void
     {
-        $bom = $this->branchOperationsManager();
+        $bom = $this->administrator();
         $subform = ChecklistTemplate::where('slug', 'dealer-operations-standards-subform')->firstOrFail();
         $firstSection = $subform->sections->first();
         $firstItem = $firstSection->items->first();
@@ -238,9 +238,9 @@ class DosDocumentationAndSubformIntegrationTest extends TestCase
         ]);
     }
 
-    public function test_branch_operations_manager_can_update_documentation_template(): void
+    public function test_system_administrator_can_update_documentation_template(): void
     {
-        $bom = $this->branchOperationsManager();
+        $bom = $this->administrator();
         $doc = ChecklistTemplate::where('slug', 'dealer-operations-standards-documentation')->firstOrFail();
         $firstSection = $doc->sections->first();
         $firstItem = $firstSection->items->first();

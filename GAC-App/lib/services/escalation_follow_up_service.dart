@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
+import '../models/authenticated_user.dart';
 import '../models/escalation_follow_up.dart';
 import '../models/user_notification.dart';
 
@@ -68,6 +69,19 @@ class EscalationFollowUpApiService implements EscalationFollowUpRepository {
       throw const EscalationFollowUpException(
         'This escalation belongs to a different account.',
       );
+    }
+    final encodedUser = preferences.getString(gacAuthUserKey);
+    if (encodedUser != null && encodedUser.isNotEmpty) {
+      try {
+        final user = AuthenticatedUser.fromJson(jsonDecode(encodedUser));
+        if (!user.isUtility) {
+          throw const EscalationFollowUpException(
+            'Only utility personnel can submit an escalation follow-up.',
+          );
+        }
+      } on EscalationFollowUpException {
+        rethrow;
+      } catch (_) {}
     }
 
     final base = apiUrl.replaceFirst(RegExp(r'/$'), '');

@@ -15,6 +15,8 @@ class UserResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            'username' => $this->email,
+            // Kept temporarily for older mobile builds that still read `email`.
             'email' => $this->email,
             'branch' => $this->branch,
             'user_type' => $this->user_type,

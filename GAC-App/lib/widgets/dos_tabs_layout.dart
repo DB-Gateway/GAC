@@ -352,7 +352,7 @@ class _DosTabsLayoutState extends State<DosTabsLayout> {
                   : UserChecklistsScreen(
                       isActive: _selectedIndex == 1,
                       key: ValueKey(
-                        'dos_checklists_${_activeTrack}_${_activeAuditSlug}_${_profile.userType}',
+                        'dos_checklists_${_profile.id}_${_profile.branch}_${_activeTrack}_${_activeAuditSlug}_${_profile.userType}',
                       ),
                       user: _profile,
                       repository: _checklistRepository,

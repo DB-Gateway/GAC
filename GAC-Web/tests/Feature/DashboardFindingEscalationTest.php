@@ -37,7 +37,7 @@ class DashboardFindingEscalationTest extends TestCase
         $gm = User::factory()->create([
             'name' => 'George GM',
             'user_type' => 'GM',
-            'branch' => 'Cebu',
+            'branch' => 'Pasong Tamo',
         ]);
 
         $parameters = [
@@ -55,7 +55,9 @@ class DashboardFindingEscalationTest extends TestCase
             ->assertSee('data-request-finding-follow-up', false)
             ->assertSee('Showroom directional sign is damaged.')
             ->assertSee('Sally Checker')
-            ->assertSee('View full photo');
+            ->assertSee('View full photo')
+            ->assertSee('summary-card-badge-row', false)
+            ->assertSee('<strong>1</strong> of 22 answered', false);
 
         $this->actingAs($bom)->get(route('dashboard', $parameters))
             ->assertOk()
@@ -84,9 +86,13 @@ class DashboardFindingEscalationTest extends TestCase
             ->assertSee('Photo Attached')
             ->assertSee('View full photo')
             ->assertDontSee('Workbook Escalation')
-            ->assertSee('value="marketing_purchasing"', false)
-            ->assertSee('value="mmpc_training_team"', false)
-            ->assertDontSee('value="as_brand_head"', false);
+            ->assertSee('value="bom"', false)
+            ->assertSee('value="ce_central"', false)
+            ->assertDontSee('value="marketing_purchasing"', false)
+            ->assertDontSee('value="mmpc_training_team"', false)
+            ->assertDontSee('value="as_brand_head"', false)
+            ->assertSee('summary-card-badge-row', false)
+            ->assertSee('<strong>1</strong> of 22 answered', false);
     }
 
     public function test_follow_up_tab_groups_the_role_specific_gm_and_bom_workflows(): void
@@ -95,7 +101,7 @@ class DashboardFindingEscalationTest extends TestCase
         $gm = User::factory()->create([
             'name' => 'George GM',
             'user_type' => 'GM',
-            'branch' => 'Cebu',
+            'branch' => 'Pasong Tamo',
         ]);
         $bom = User::factory()->create([
             'name' => 'Brenda BOM',
@@ -173,7 +179,7 @@ class DashboardFindingEscalationTest extends TestCase
         $gm = User::factory()->create([
             'name' => 'George GM',
             'user_type' => 'GM',
-            'branch' => 'Cebu',
+            'branch' => 'Pasong Tamo',
         ]);
         $bom = User::factory()->create([
             'name' => 'Brenda BOM',
@@ -275,7 +281,7 @@ class DashboardFindingEscalationTest extends TestCase
         $gm = User::factory()->create([
             'name' => 'George GM',
             'user_type' => 'GM',
-            'branch' => 'Cebu',
+            'branch' => 'Pasong Tamo',
         ]);
         $bom = User::factory()->create([
             'name' => 'Brenda BOM',
@@ -381,20 +387,8 @@ class DashboardFindingEscalationTest extends TestCase
             'bom',
             'ce_central',
             'central_admin',
-            'dnd',
             'general_manager',
-            'general_manager_ce_central',
-            'inventory',
-            'it',
-            'logistic',
-            'marketing',
-            'marketing_purchasing',
-            'marketing_property_management',
-            'mmpc_cs_team',
-            'mmpc_training_team',
-            'n_a',
             'property_management',
-            'purchasing',
         ], array_keys($sales));
         $this->assertSame([
             'as_brand_head',
@@ -427,6 +421,7 @@ class DashboardFindingEscalationTest extends TestCase
                 && $summary['nonCompliantFindings']->isEmpty())
             ->assertDontSee('data-summary-modal-target="summaryFindingsModal"', false)
             ->assertDontSee('data-summary-modal-target="summaryEscalationModal"', false)
+            ->assertDontSee('summary-card-badge-meta', false)
             ->assertDontSee('Showroom directional sign is damaged.');
     }
 
@@ -445,12 +440,12 @@ class DashboardFindingEscalationTest extends TestCase
                 'escalation_target' => 'AS BRAND HEAD',
             ]],
         ])->assertUnprocessable()
-            ->assertJsonPath('message', 'The selected escalation recipient is not available for this checklist.');
+            ->assertJsonPath('message', 'The selected escalation recipient is not available for this checklist finding.');
 
         $result = $this->actingAs($bom)->patchJson(route('reports.responses.escalations'), [
             'responses' => [[
                 'id' => $finding->id,
-                'escalation_target' => 'MARKETING / PURCHASING',
+                'escalation_target' => 'CE CENTRAL',
                 'action_plan' => '  Replace the damaged sign and verify the installation.  ',
                 'commitment_date' => '2026-09-30',
             ]],
@@ -461,16 +456,16 @@ class DashboardFindingEscalationTest extends TestCase
             ->assertJsonPath('status', 'success')
             ->assertJsonPath('updated_count', 1)
             ->assertJsonPath('responses.0.id', $finding->id)
-            ->assertJsonPath('responses.0.escalation_target', 'marketing_purchasing')
+            ->assertJsonPath('responses.0.escalation_target', 'ce_central')
             ->assertJsonPath('responses.0.action_plan', 'Replace the damaged sign and verify the installation.')
             ->assertJsonPath('responses.0.commitment_date', '2026-09-30');
 
         $finding->refresh();
         $this->assertSame('no', $finding->status);
-        $this->assertSame('marketing_purchasing', $finding->escalation_target);
+        $this->assertSame('ce_central', $finding->escalation_target);
         $this->assertSame('Replace the damaged sign and verify the installation.', $finding->action_plan);
         $this->assertSame('2026-09-30', $finding->commitment_date?->format('Y-m-d'));
-        $this->assertSame('marketing_purchasing', data_get($finding->details, 'escalation'));
+        $this->assertSame('ce_central', data_get($finding->details, 'escalation'));
         $this->assertSame('Brenda BOM', data_get($finding->details, 'escalation_assignment.assigned_by_name'));
         $this->assertSame('Brenda BOM', data_get($finding->details, 'bom_follow_up.updated_by_name'));
         $this->assertFalse($finding->isOverridden());
@@ -601,14 +596,16 @@ class DashboardFindingEscalationTest extends TestCase
         $this->assertDatabaseMissing('reports', ['type' => 'checklist_response_escalation']);
     }
 
-    public function test_complete_escalation_notifies_only_the_submission_owner_and_unchanged_saves_do_not_repeat(): void
+    public function test_complete_escalation_notifies_all_branch_users_and_unchanged_saves_do_not_repeat(): void
     {
         [$submission, $finding] = $this->createNoFinding();
         $bom = User::factory()->create(['user_type' => 'BOM', 'branch' => $submission->branch]);
         $otherAuditor = User::factory()->create(['user_type' => User::ROLE_SALES_MANAGER, 'branch' => $submission->branch]);
+        $utilityUser = User::factory()->create(['user_type' => User::ROLE_5S_UTILITIES, 'branch' => $submission->branch]);
+        $otherBranchUser = User::factory()->create(['user_type' => User::ROLE_5S_UTILITIES, 'branch' => 'Other Branch']);
         $payload = ['responses' => [[
             'id' => $finding->id,
-            'escalation_target' => 'IT',
+            'escalation_target' => 'BOM',
             'action_plan' => 'Replace the sign.',
             'commitment_date' => '2026-09-30',
         ]]];
@@ -619,12 +616,18 @@ class DashboardFindingEscalationTest extends TestCase
         $this->assertSame('finding_escalated', $notification->data['event']);
         $this->assertSame($submission->user_id, $notification->data['recipient_user_id']);
         $this->assertSame($finding->id, $notification->data['response_id']);
-        $this->assertSame('IT', $notification->data['escalation_target_label']);
+        $this->assertSame('BOM', $notification->data['escalation_target_label']);
         $this->assertSame('2026-09-30', $notification->data['commitment_date']);
         $this->assertSame('Replace the sign.', $notification->data['action_plan']);
         $this->assertSame('dealer-operations-standards-sales', $notification->data['template_slug']);
-        $this->assertSame(0, $otherAuditor->notifications()->count());
+
+        // All active users in the same branch receive the escalation notification
+        $this->assertSame(1, $otherAuditor->notifications()->count());
+        $this->assertSame(1, $utilityUser->notifications()->count());
+        $this->assertSame(FindingEscalated::class, $utilityUser->notifications()->sole()->type);
+        // Sender and users from other branches do not receive it
         $this->assertSame(0, $bom->notifications()->count());
+        $this->assertSame(0, $otherBranchUser->notifications()->count());
 
         $this->actingAs($bom)->patchJson(route('reports.responses.escalations'), $payload)
             ->assertOk()->assertJsonPath('updated_count', 0);
@@ -632,6 +635,7 @@ class DashboardFindingEscalationTest extends TestCase
         $payload['responses'][0]['action_plan'] = 'Repair the sign and verify.';
         $this->actingAs($bom)->patchJson(route('reports.responses.escalations'), $payload)->assertOk();
         $this->assertSame(2, $submission->user->notifications()->count());
+        $this->assertSame(2, $utilityUser->notifications()->count());
     }
 
     public function test_incomplete_escalations_are_rejected_without_saving_or_notifying(): void
@@ -639,7 +643,7 @@ class DashboardFindingEscalationTest extends TestCase
         [$submission, $finding] = $this->createNoFinding();
         $bom = User::factory()->create(['user_type' => 'BOM', 'branch' => $submission->branch]);
         foreach (['escalation_target', 'action_plan', 'commitment_date'] as $missing) {
-            $update = ['id' => $finding->id, 'escalation_target' => 'IT', 'action_plan' => 'Fix sign', 'commitment_date' => '2026-09-30'];
+            $update = ['id' => $finding->id, 'escalation_target' => 'BOM', 'action_plan' => 'Fix sign', 'commitment_date' => '2026-09-30'];
             $update[$missing] = '  ';
             $this->actingAs($bom)->patchJson(route('reports.responses.escalations'), ['responses' => [$update]])
                 ->assertUnprocessable();
@@ -655,7 +659,7 @@ class DashboardFindingEscalationTest extends TestCase
         $bom = User::factory()->create(['user_type' => 'BOM', 'branch' => $submission->branch]);
         $submission->user->update(['account_status' => 'inactive']);
         $this->actingAs($bom)->patchJson(route('reports.responses.escalations'), ['responses' => [[
-            'id' => $finding->id, 'escalation_target' => 'IT', 'action_plan' => 'Fix sign', 'commitment_date' => '2026-09-30',
+            'id' => $finding->id, 'escalation_target' => 'BOM', 'action_plan' => 'Fix sign', 'commitment_date' => '2026-09-30',
         ]]])->assertOk();
         $this->assertSame(0, $submission->user->notifications()->count());
     }
@@ -712,10 +716,18 @@ class DashboardFindingEscalationTest extends TestCase
             ],
             'submitted_at' => now(),
         ]);
+        $checkerLabel = match ($checker->user_type) {
+            User::ROLE_AFTERSALES_MANAGER => 'ASM',
+            User::ROLE_CE_SERVICE => 'CE SERVICE',
+            User::ROLE_JOB_CONTROLLER => 'JC',
+            User::ROLE_PARTS_SUPERVISOR => 'Parts Supervisor',
+            User::ROLE_WORKSHOP_SUPERVISOR => 'WORSHOP SUP',
+            default => 'SALES MANAGER',
+        };
         $metadata = array_merge($item->metadata ?? [], [
             'number' => 1,
             'coverage' => 'Facilities',
-            'checker' => 'SALES MANAGER',
+            'checker' => $checkerLabel,
             'pic' => 'GM',
             'escalation' => 'MARKETING / PURCHASING',
         ]);
@@ -740,5 +752,247 @@ class DashboardFindingEscalationTest extends TestCase
         ]);
 
         return [$submission, $finding];
+    }
+
+    public function test_utilities_missed_slot_accumulates_in_cards_grid_and_compiles_in_overview_modals(): void
+    {
+        $branch = 'Pasong Tamo';
+        $template = ChecklistTemplate::where('slug', 'restroom')->firstOrFail();
+        $items = $template->items()->orderBy('sort_order')->get();
+        $this->assertCount(30, $items);
+
+        $utilityUser = User::factory()->create([
+            'name' => 'Uriah Utility',
+            'user_type' => User::ROLE_5S_UTILITIES,
+            'branch' => $branch,
+            'account_status' => 'active',
+        ]);
+        $gm = User::factory()->create([
+            'name' => 'George GM',
+            'user_type' => 'GM',
+            'branch' => $branch,
+            'account_status' => 'active',
+        ]);
+        $bom = User::factory()->create([
+            'name' => 'Brenda BOM',
+            'user_type' => User::ROLE_BRANCH_OPERATIONS_MANAGER,
+            'branch' => $branch,
+            'account_status' => 'active',
+        ]);
+
+        $submission = ChecklistSubmission::create([
+            'checklist_template_id' => $template->id,
+            'user_id' => $utilityUser->id,
+            'submitted_by_user_id' => $utilityUser->id,
+            'submitted_by_name' => $utilityUser->name,
+            'submitted_by_user_type' => $utilityUser->user_type,
+            'branch' => $branch,
+            'scope_key' => hash('sha256', mb_strtolower($branch)),
+            'audit_date' => '2026-08-29',
+            'template_version' => $template->version,
+            'status' => 'submitted',
+            'template_snapshot' => [
+                'slug' => 'restroom',
+                'name' => $template->name,
+                'settings' => $template->settings,
+            ],
+            'submitted_at' => now(),
+        ]);
+
+        foreach ($items as $item) {
+            ChecklistResponse::create([
+                'checklist_submission_id' => $submission->id,
+                'checklist_item_id' => $item->id,
+                'item_key' => $item->key,
+                'status' => null,
+                'details' => [
+                    'slots' => [
+                        '08:00' => 'not_good',
+                        '11:00' => 'good',
+                    ],
+                    'submitted_slots' => ['08:00', '11:00'],
+                    'missed_slots' => ['08:00'],
+                ],
+                'item_snapshot' => [
+                    'key' => $item->key,
+                    'prompt' => $item->prompt,
+                    'sort_order' => $item->sort_order,
+                    'section' => [
+                        'title' => $item->section?->title ?? 'General',
+                        'sort_order' => $item->section?->sort_order ?? 1,
+                    ],
+                ],
+            ]);
+        }
+
+        $parameters = [
+            'form' => 'restroom',
+            'branch' => $branch,
+            'submission_id' => $submission->id,
+        ];
+
+        // 1. Verify GM view: Card 3 shows 30 NOs, but modal findings has 1 compiled row
+        $this->actingAs($gm)->get(route('dashboard', $parameters))
+            ->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['cards']['count_no'] === 30
+                    && $summary['nonCompliantFindings']->count() === 1
+                    && $summary['nonCompliantFindings']->first()['is_compiled'] === true
+                    && $summary['nonCompliantFindings']->first()['compiled_count'] === 30
+                    && count($summary['nonCompliantFindings']->first()['compiled_questions']) === 30
+                    && $summary['nonCompliantFindings']->first()['slot'] === '08:00 AM';
+            })
+            ->assertSee('data-summary-modal-target="summaryFindingsModal"', false)
+            ->assertSee('FAILED (30 ITEMS)')
+            ->assertSee('View all 30 checklist questions')
+            ->assertSee('data-request-finding-follow-up', false);
+
+        // 2. Verify BOM view: Card 3 shows 30 NOs, but escalation modal has 1 compiled row
+        $this->actingAs($bom)->get(route('dashboard', $parameters))
+            ->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['cards']['count_no'] === 30
+                    && $summary['nonCompliantFindings']->count() === 1
+                    && $summary['nonCompliantFindings']->first()['is_compiled'] === true
+                    && $summary['nonCompliantFindings']->first()['compiled_count'] === 30;
+            })
+            ->assertSee('data-summary-modal-target="summaryEscalationModal"', false)
+            ->assertSee('FAILED (30 ITEMS)')
+            ->assertSee('View all 30 checklist questions')
+            ->assertSee('data-open-summary-escalation-editor', false);
+
+        // 3. Test BOM saves escalation on the compiled finding
+        $compiledFinding = $submission->responses()->first();
+        $escalateRes = $this->actingAs($bom)->patchJson(route('reports.responses.escalations'), [
+            'responses' => [
+                [
+                    'id' => $compiledFinding->id,
+                    'escalation_target' => 'property_management',
+                    'action_plan' => 'Immediate sanitization and maintenance.',
+                    'commitment_date' => '2026-08-30',
+                ],
+            ],
+        ]);
+
+        $escalateRes->assertOk();
+        $this->assertSame(30, $submission->responses()->where('escalation_target', 'property_management')->count());
+    }
+
+    public function test_utilities_multiple_missed_slots_accumulate_count_and_compile_by_slot_and_filter_by_time(): void
+    {
+        $branch = 'Pasong Tamo';
+        $template = ChecklistTemplate::where('slug', 'restroom')->firstOrFail();
+        $items = $template->items()->orderBy('sort_order')->get();
+        $this->assertCount(30, $items);
+
+        $utilityUser = User::factory()->create([
+            'name' => 'Uriah Utility',
+            'user_type' => User::ROLE_5S_UTILITIES,
+            'branch' => $branch,
+            'account_status' => 'active',
+        ]);
+        $gm = User::factory()->create([
+            'name' => 'George GM',
+            'user_type' => 'GM',
+            'branch' => $branch,
+            'account_status' => 'active',
+        ]);
+        $bom = User::factory()->create([
+            'name' => 'Brenda BOM',
+            'user_type' => User::ROLE_BRANCH_OPERATIONS_MANAGER,
+            'branch' => $branch,
+            'account_status' => 'active',
+        ]);
+
+        $submission = ChecklistSubmission::create([
+            'checklist_template_id' => $template->id,
+            'user_id' => $utilityUser->id,
+            'submitted_by_user_id' => $utilityUser->id,
+            'submitted_by_name' => $utilityUser->name,
+            'submitted_by_user_type' => $utilityUser->user_type,
+            'branch' => $branch,
+            'scope_key' => hash('sha256', mb_strtolower($branch)),
+            'audit_date' => '2026-08-29',
+            'template_version' => $template->version,
+            'status' => 'submitted',
+            'template_snapshot' => [
+                'slug' => 'restroom',
+                'name' => $template->name,
+                'settings' => $template->settings,
+            ],
+            'submitted_at' => now(),
+        ]);
+
+        // Both 08:00 and 11:00 slots failed -> total 60 NOs
+        foreach ($items as $item) {
+            ChecklistResponse::create([
+                'checklist_submission_id' => $submission->id,
+                'checklist_item_id' => $item->id,
+                'item_key' => $item->key,
+                'status' => null,
+                'details' => [
+                    'slots' => [
+                        '08:00' => 'not_good',
+                        '11:00' => 'not_good',
+                        '14:00' => 'good',
+                    ],
+                    'submitted_slots' => ['08:00', '11:00', '14:00'],
+                    'missed_slots' => ['08:00', '11:00'],
+                ],
+                'item_snapshot' => [
+                    'key' => $item->key,
+                    'prompt' => $item->prompt,
+                    'sort_order' => $item->sort_order,
+                    'section' => [
+                        'title' => $item->section?->title ?? 'General',
+                        'sort_order' => $item->section?->sort_order ?? 1,
+                    ],
+                ],
+            ]);
+        }
+
+        // 1. All Times: Card 3 displays accumulated 60 NOs, modals display 2 compiled rows
+        $this->actingAs($gm)->get(route('dashboard', [
+            'form' => 'restroom',
+            'branch' => $branch,
+            'submission_id' => $submission->id,
+        ]))
+            ->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['cards']['count_no'] === 60
+                    && $summary['nonCompliantFindings']->count() === 2
+                    && $summary['nonCompliantFindings']->first()['slot'] === '08:00 AM'
+                    && $summary['nonCompliantFindings']->first()['compiled_count'] === 30
+                    && $summary['nonCompliantFindings']->last()['slot'] === '11:00 AM'
+                    && $summary['nonCompliantFindings']->last()['compiled_count'] === 30;
+            });
+
+        // 2. Filtered by utility_time=08:00: Card 3 displays 30 NOs, modals display 1 compiled row
+        $this->actingAs($gm)->get(route('dashboard', [
+            'form' => 'restroom',
+            'branch' => $branch,
+            'submission_id' => $submission->id,
+            'utility_time' => '08:00',
+        ]))
+            ->assertOk()
+            ->assertViewHas('summarySheet', function (array $summary): bool {
+                return $summary['cards']['count_no'] === 30
+                    && $summary['nonCompliantFindings']->count() === 1
+                    && $summary['nonCompliantFindings']->first()['slot'] === '08:00 AM'
+                    && $summary['nonCompliantFindings']->first()['compiled_count'] === 30;
+            });
+
+        // 3. GM requests follow-up on the 08:00 AM compiled finding
+        $compiled08Finding = $submission->responses()->first();
+        $followUpRes = $this->actingAs($gm)->postJson(route('reports.responses.follow-up', $compiled08Finding->id));
+        $followUpRes->assertOk();
+
+        // BOM receives 1 compiled notification containing all 30 questions
+        $bomNotice = $bom->notifications()
+            ->where('data->event', 'finding_follow_up_requested')
+            ->first();
+        $this->assertNotNull($bomNotice);
+        $this->assertTrue($bomNotice->data['is_compiled'] ?? false);
+        $this->assertCount(30, $bomNotice->data['questions'] ?? []);
     }
 }

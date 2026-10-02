@@ -43,6 +43,8 @@ class EscalationFollowUpController extends Controller
             ->where('data_snapshot->request_id', $request->input('request_id'))
             ->exists(), 409, 'A follow-up has already been submitted for this escalation.');
 
+        abort_unless($user->isUtility(), 403, 'Only utility personnel can submit an escalation follow-up.');
+
         $validated = $request->validate([
             'request_id' => ['required', 'string', 'size:32', 'regex:/^[a-f0-9]+$/'],
             'remark_option' => ['required', Rule::in(array_keys(self::REMARKS))],
@@ -58,10 +60,18 @@ class EscalationFollowUpController extends Controller
         $response = ChecklistResponse::with('submission.template')
             ->findOrFail(data_get($record->data, 'response_id'));
         $submission = $response->submission;
-        $slug = data_get($submission?->template_snapshot, 'slug') ?: $submission?->template?->slug;
-        abort_unless($submission && (int) $submission->user_id === (int) $user->getKey()
-            && mb_strtolower(trim((string) $submission->branch)) === mb_strtolower(trim((string) $user->branch))
-            && $user->canAccessChecklist((string) $slug), 403, 'This finding is no longer assigned to your account.');
+        abort_unless($submission
+            && mb_strtolower(trim((string) $submission->branch)) === mb_strtolower(trim((string) $user->branch)),
+            403, 'This finding is not in your assigned branch.');
+
+        $existingReport = Report::where('type', 'escalation_follow_up')
+            ->where('data_snapshot->response_id', $response->getKey())
+            ->first();
+        if ($existingReport) {
+            $isSameUserAndRequest = (int) $existingReport->generated_by_user_id === (int) $user->getKey()
+                && data_get($existingReport->data_snapshot, 'request_id') === $request->input('request_id');
+            abort_unless($isSameUserAndRequest, 409, 'A follow-up has already been submitted for this escalation.');
+        }
 
         $manager = User::find(data_get($record->data, 'sender_user_id'));
         abort_unless($manager && $manager->account_status === 'active'
@@ -69,15 +79,15 @@ class EscalationFollowUpController extends Controller
 
         $storedPaths = [];
         try {
-            [$report, $created] = DB::transaction(function () use ($user, $record, $validated, $request, $submission, $manager, &$storedPaths): array {
+            [$report, $created] = DB::transaction(function () use ($user, $record, $validated, $request, $submission, $response, $manager, &$storedPaths): array {
                 // Serialize retries before checking the request ID.
                 $record = $user->notifications()->whereKey($record->getKey())->lockForUpdate()->firstOrFail();
                 $existing = Report::where('type', 'escalation_follow_up')
-                    ->where('generated_by_user_id', $user->getKey())
-                    ->where('data_snapshot->source_notification_id', $record->getKey())
+                    ->where('data_snapshot->response_id', $response->getKey())
                     ->first();
                 if ($existing) {
-                    if (data_get($existing->data_snapshot, 'request_id') === $validated['request_id']) {
+                    if (data_get($existing->data_snapshot, 'request_id') === $validated['request_id']
+                        && (int) $existing->generated_by_user_id === (int) $user->getKey()) {
                         return [$existing, false];
                     }
                     abort(409, 'A follow-up has already been submitted for this escalation.');
@@ -134,6 +144,25 @@ class EscalationFollowUpController extends Controller
                     'follow_up_recipient_name' => $manager->name,
                 ]);
                 $record->save();
+
+                // Also update other users' finding_escalated notifications for the same response
+                \Illuminate\Notifications\DatabaseNotification::query()
+                    ->get()
+                    ->filter(function ($n) use ($record, $response): bool {
+                        return (string) $n->getKey() !== (string) $record->getKey()
+                            && (int) data_get($n->data, 'response_id') === (int) $response->getKey();
+                    })
+                    ->each(function ($otherRecord) use ($report, $remarks, $manager): void {
+                        $otherData = is_array($otherRecord->data) ? $otherRecord->data : [];
+                        $otherRecord->data = array_merge($otherData, [
+                            'has_follow_up' => true,
+                            'follow_up_submitted_at' => now()->toISOString(),
+                            'follow_up_report_id' => $report->getKey(),
+                            'follow_up_action_taken' => $remarks,
+                            'follow_up_recipient_name' => $manager->name,
+                        ]);
+                        $otherRecord->save();
+                    });
 
                 return [$report, true];
             });

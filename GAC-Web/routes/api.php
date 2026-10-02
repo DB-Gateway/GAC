@@ -68,6 +68,8 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureInteractiveApiToke
         ->name('api.checklists.reset');
     Route::put('/checklists/{template}', [ChecklistController::class, 'updateTemplate'])
         ->name('api.checklists.update');
+    Route::delete('/checklists/{template}', [ChecklistController::class, 'destroyTemplate'])
+        ->name('api.checklists.destroy');
     Route::post('/checklists/templates', [ChecklistController::class, 'storeTemplate'])
         ->name('api.checklists.template.store');
     Route::post('/checklists/{template}/toggle-item', [ChecklistController::class, 'toggleItem'])

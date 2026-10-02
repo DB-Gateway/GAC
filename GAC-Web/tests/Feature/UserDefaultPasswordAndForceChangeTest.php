@@ -50,7 +50,7 @@ class UserDefaultPasswordAndForceChangeTest extends TestCase
         ]);
 
         $response = $this->postJson('/api/login', [
-            'email' => 'newuser@gateway.com',
+            'username' => 'newuser@gateway.com',
             'password' => UserManagementController::PRESET_PASSWORD,
         ]);
 

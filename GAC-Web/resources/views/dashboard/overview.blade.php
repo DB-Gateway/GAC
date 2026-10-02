@@ -19,7 +19,9 @@
         'user_id' => $summarySheet['selectedUserId'],
         'user_type' => $summarySheet['selectedUserType'],
         'score_view' => $summaryMode,
-        'audit_date' => $summaryMode === 'overall' ? $summarySheet['selectedOverallAuditDate'] : null,
+        'audit_date' => $summaryMode === 'overall'
+            ? $summarySheet['selectedOverallAuditDate']
+            : ($summarySheet['isFiveSDailyChecklist'] ? $summarySheet['selectedFiveSDate'] : null),
         'five_s_area' => $activeForm === 'five_s' ? $summarySheet['fiveSArea'] : null,
     ], static fn ($value) => $value !== null && $value !== '');
     $perUserScoreUrl = route('dashboard', array_filter([
@@ -63,7 +65,7 @@
                     </div>
                 @else
                     <div class="summary-card-badge badge-success">
-                        <i class="fas fa-circle-check"></i> Target Met (&ge;90%)
+                        <i class="fas fa-circle-check"></i> Target Met
                     </div>
                 @endif
                 <div class="summary-card-progress {{ $isBelowTarget ? 'progress-danger' : 'progress-success' }}" role="progressbar" aria-valuenow="{{ $cards['completion_rate'] }}" aria-valuemin="0" aria-valuemax="100">
@@ -82,8 +84,8 @@
         <article class="summary-card card-yes" id="countYesCard">
             <div class="summary-card-top">
                 <div>
-                    <span class="summary-card-label">{{ $summarySheet['isTimeSlotChecklist'] ? 'Yes' : 'Yes' }}</span>
-                    <span class="summary-card-kicker">{{ $summarySheet['isTimeSlotChecklist'] ? 'Yes Answers' : 'Passed Standards' }}</span>
+                    <span class="summary-card-label">Yes</span>
+                    <span class="summary-card-kicker">{{ $summarySheet['isTimeSlotChecklist'] ? 'Yes Answers' : 'Compliant' }}</span>
                 </div>
                 <div class="summary-card-icon" aria-hidden="true">
                     <i class="fas fa-circle-check"></i>
@@ -99,7 +101,9 @@
                 </div>
             </div>
             <div class="summary-card-footer">
-                <span>{{ $summarySheet['isTimeSlotChecklist'] ? 'Marked Yes in the utility worksheet' : 'Evaluated as compliant' }}</span>
+                <span>
+                    <strong>{{ $cards['count_yes'] }}</strong> of {{ $cards['answered'] }} {{ $summarySheet['isTimeSlotChecklist'] ? 'checks' : 'answered' }}
+                </span>
             </div>
         </article>
 
@@ -107,8 +111,8 @@
         <article class="summary-card card-no" id="countNoCard">
             <div class="summary-card-top">
                 <div>
-                    <span class="summary-card-label">{{ $summarySheet['isTimeSlotChecklist'] ? 'No' : 'No' }}</span>
-                    <span class="summary-card-kicker">Action Required</span>
+                    <span class="summary-card-label">No</span>
+                    <span class="summary-card-kicker">{{ $summarySheet['isTimeSlotChecklist'] ? 'No Answers' : 'Non-Compliant' }}</span>
                 </div>
                 <div class="summary-card-icon" aria-hidden="true">
                     <i class="fas fa-circle-xmark"></i>
@@ -116,8 +120,15 @@
             </div>
             <div class="summary-card-body">
                 <div class="summary-card-value">{{ $cards['count_no'] }}</div>
-                <div class="summary-card-badge badge-danger">
-                    <i class="fas fa-triangle-exclamation"></i> {{ $summarySheet['isTimeSlotChecklist'] ? 'No Answers' : 'Findings Recorded' }}
+                <div class="summary-card-badge-row">
+                    <div class="summary-card-badge badge-danger">
+                        <i class="fas fa-triangle-exclamation"></i> {{ $cards['answered'] > 0 ? round(($cards['count_no'] / $cards['answered']) * 100, 1) : 0 }}% of {{ $summarySheet['isTimeSlotChecklist'] ? 'Checks' : 'Answered' }}
+                    </div>
+                    @if ($canManageFindings)
+                        <span class="summary-card-badge-meta">
+                            <strong>{{ $cards['count_no'] }}</strong> of {{ $cards['total_questions'] }} {{ $summarySheet['isTimeSlotChecklist'] ? 'checks' : 'answered' }}
+                        </span>
+                    @endif
                 </div>
                 <div class="summary-card-progress progress-danger">
                     <span style="width: {{ $cards['answered'] > 0 ? round(($cards['count_no'] / $cards['answered']) * 100, 1) : 0 }}%"></span>
@@ -147,14 +158,14 @@
             @elseif ($summaryMode === 'overall')
                 <div class="summary-card-footer">
                     <span>
-                        {{ $summarySheet['selectedOverallAuditDate']
-                            ? 'Combined from Aftersales audits on '.$summarySheet['date']
-                            : "Combined from each user's latest Aftersales audit" }}
+                        <strong>{{ $cards['count_no'] }}</strong> of {{ $cards['answered'] }} answered &middot; {{ $summarySheet['aggregateUserCount'] }} {{ Str::plural('user', $summarySheet['aggregateUserCount']) }}
                     </span>
                 </div>
             @else
                 <div class="summary-card-footer">
-                    <span>Requires action plan &amp; escalation</span>
+                    <span>
+                        <strong>{{ $cards['count_no'] }}</strong> of {{ $cards['answered'] }} {{ $summarySheet['isTimeSlotChecklist'] ? 'checks' : 'answered' }}
+                    </span>
                 </div>
             @endif
         </article>
@@ -164,7 +175,7 @@
             <div class="summary-card-top">
                 <div>
                     <span class="summary-card-label">{{ $summarySheet['isTimeSlotChecklist'] ? 'Checklist Items' : 'Not Applicable (N/A)' }}</span>
-                    <span class="summary-card-kicker">{{ $summarySheet['isTimeSlotChecklist'] ? 'Restroom Standards' : 'Excluded Items' }}</span>
+                    <span class="summary-card-kicker">{{ $summarySheet['isTimeSlotChecklist'] ? 'Restroom Standards' : 'Not Applicable' }}</span>
                 </div>
                 <div class="summary-card-icon" aria-hidden="true">
                     <i class="fas {{ $summarySheet['isTimeSlotChecklist'] ? 'fa-restroom' : 'fa-circle-minus' }}"></i>
@@ -176,7 +187,7 @@
                     @if ($summarySheet['isTimeSlotChecklist'])
                         <i class="fas fa-list-check"></i> {{ $cards['coverage_count'] }} Inspection Areas
                     @else
-                        <i class="fas fa-minus"></i> Excluded Baseline
+                        <i class="fas fa-minus"></i> N/A Items
                     @endif
                 </div>
                 <div class="summary-card-progress" style="background:#e2e8f0;">
@@ -185,11 +196,11 @@
             </div>
             <div class="summary-card-footer">
                 <span>
-                    {{ $summarySheet['isTimeSlotChecklist']
-                        ? ($summarySheet['selectedUtilityTime']
-                            ? $summarySheet['selectedUtilityTimeLabel'].' check per item'
-                            : $summarySheet['timeSlotCount'].' scheduled checks per item')
-                        : 'Excluded from scoring denominator' }}
+                    @if ($summarySheet['isTimeSlotChecklist'])
+                        <strong>{{ $cards['coverage_count'] }}</strong> {{ Str::plural('area', $cards['coverage_count']) }} &middot; {{ $summarySheet['selectedUtilityTime'] ? $summarySheet['selectedUtilityTimeLabel'].' check per item' : $summarySheet['timeSlotCount'].' scheduled checks per item' }}
+                    @else
+                        <strong>{{ $cards['count_na'] }}</strong> of {{ $cards['total_questions'] }} items counted in total
+                    @endif
                 </span>
             </div>
         </article>
@@ -200,15 +211,16 @@
         {{-- Form Switcher Pills: Sales DOS, Aftersales DOS, and 5S --}}
         @php
             $salesTabQuery = array_merge($summaryScopeQuery, ['form' => 'sales']);
-            unset($salesTabQuery['score_view'], $salesTabQuery['five_s_area']);
+            unset($salesTabQuery['score_view'], $salesTabQuery['five_s_area'], $salesTabQuery['audit_date']);
 
             $aftersalesTabQuery = array_merge($summaryScopeQuery, ['form' => 'aftersales']);
-            unset($aftersalesTabQuery['score_view'], $aftersalesTabQuery['five_s_area'], $aftersalesTabQuery['user_id'], $aftersalesTabQuery['user_type']);
+            unset($aftersalesTabQuery['score_view'], $aftersalesTabQuery['five_s_area'], $aftersalesTabQuery['user_id'], $aftersalesTabQuery['user_type'], $aftersalesTabQuery['audit_date']);
 
             $fiveSTabQuery = array_merge($summaryScopeQuery, ['form' => 'five_s', 'five_s_area' => $summarySheet['fiveSArea']]);
             unset($fiveSTabQuery['score_view']);
         @endphp
         <div class="summary-pills-switcher" role="tablist" aria-label="Audit summary type">
+            @if ($summarySheet['summaryFormOptions']->has('sales'))
             <a href="{{ route('dashboard', $salesTabQuery) }}"
                class="summary-pill-btn {{ $activeForm === 'sales' ? 'active' : '' }}"
                role="tab"
@@ -216,6 +228,8 @@
                 <i class="fas fa-car" aria-hidden="true"></i>
                 <span>Sales Standards (FY25)</span>
             </a>
+            @endif
+            @if ($summarySheet['summaryFormOptions']->has('aftersales'))
             <a href="{{ route('dashboard', $aftersalesTabQuery) }}"
                class="summary-pill-btn {{ $activeForm === 'aftersales' ? 'active' : '' }}"
                role="tab"
@@ -223,6 +237,8 @@
                 <i class="fas fa-screwdriver-wrench" aria-hidden="true"></i>
                 <span>Aftersales Standards (FY25)</span>
             </a>
+            @endif
+            @if ($summarySheet['summaryFormOptions']->has('five_s'))
             <a href="{{ route('dashboard', $fiveSTabQuery) }}"
                class="summary-pill-btn {{ $activeForm === 'five_s' ? 'active' : '' }}"
                role="tab"
@@ -230,6 +246,13 @@
                 <i class="fas fa-broom-ball" aria-hidden="true"></i>
                 <span>5S Checklist</span>
             </a>
+            @endif
+            @if ($summarySheet['summaryFormOptions']->isEmpty())
+                <span class="summary-pill-btn" aria-disabled="true">
+                    <i class="fas fa-ban" aria-hidden="true"></i>
+                    <span>No checklists available for this branch</span>
+                </span>
+            @endif
         </div>
 
         @if ($activeForm === 'five_s' && $summarySheet['fiveSAreaOptions']->count() > 1)
@@ -276,7 +299,7 @@
             @if ($isAdministrator)
                 <div class="summary-filter-group">
                     <label for="summaryBranchSelect"><i class="fas fa-location-dot"></i> Outlet:</label>
-                    <select name="branch" id="summaryBranchSelect" class="summary-select" onchange="this.form.submit()">
+                    <select name="branch" id="summaryBranchSelect" class="summary-select" onchange="['summaryUserSelect','summaryRestroomArea','summaryRestroomId','summaryRestroomGender','summaryUtilityMonth','summaryUtilityDay'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; }); this.form.submit()">
                         @foreach ($summarySheet['availableBranches'] as $b)
                             <option value="{{ $b }}" {{ strcasecmp($b, $summarySheet['selectedBranch']) === 0 ? 'selected' : '' }}>
                                 {{ $b }}
@@ -298,7 +321,7 @@
                             <option value="{{ $summaryUser->id }}"
                                     data-user-type="{{ $summaryUser->roleCode() }}"
                                     @selected((int) $summaryUser->id === (int) $summarySheet['selectedUserId'])>
-                                {{ $summaryUser->name }} &mdash; {{ $summaryUser->roleLabel() }} &mdash; {{ trim((string) $summaryUser->branch) ?: 'Unassigned branch' }}
+                                {{ $summaryUser->nameWithRole() }}
                             </option>
                         @endforeach
                     </select>
@@ -307,6 +330,54 @@
 
             @if ($summaryMode === 'user')
                 @if ($summarySheet['isUtilityChecklist'])
+                    <div class="summary-filter-group">
+                        <label for="summaryRestroomArea"><i class="fas fa-restroom"></i> Area:</label>
+                        <select name="restroom_area"
+                                id="summaryRestroomArea"
+                                class="summary-select"
+                                onchange="const restroom = document.getElementById('summaryRestroomId'); if (restroom) restroom.value = ''; document.getElementById('summaryRestroomGender').value = ''; this.form.submit()">
+                            @foreach ($summarySheet['availableRestroomAreas'] as $areaVal => $areaLabel)
+                                <option value="{{ $areaVal }}" @selected($areaVal === ($summarySheet['selectedRestroomArea'] ?? ''))>
+                                    {{ $areaLabel }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    @if ($summarySheet['branchRestrooms']->count() > 1)
+                        <div class="summary-filter-group">
+                            <label for="summaryRestroomId"><i class="fas fa-door-open"></i> Restroom:</label>
+                            <select name="restroom_id"
+                                    id="summaryRestroomId"
+                                    class="summary-select"
+                                    onchange="const areaEl = document.getElementById('summaryRestroomArea'); if (areaEl) areaEl.value = this.selectedOptions[0]?.dataset.areaType || ''; document.getElementById('summaryRestroomGender').value = ''; this.form.submit()">
+                                <option value="" data-area-type="">All Restrooms</option>
+                                @foreach ($summarySheet['branchRestrooms'] as $rItem)
+                                    @if (empty($summarySheet['selectedRestroomArea']) || $rItem->area_type === $summarySheet['selectedRestroomArea'])
+                                        <option value="{{ $rItem->id }}"
+                                                data-area-type="{{ $rItem->area_type }}"
+                                                @selected($rItem->id === ($summarySheet['selectedRestroomId'] ?? null))>
+                                            {{ $rItem->name }} ({{ $rItem->isCustomerArea() ? 'Customer' : 'Office' }})
+                                        </option>
+                                    @endif
+                                @endforeach
+                            </select>
+                        </div>
+                    @endif
+
+                    <div class="summary-filter-group">
+                        <label for="summaryRestroomGender"><i class="fas fa-venus-mars"></i> Type:</label>
+                        <select name="restroom_gender"
+                                id="summaryRestroomGender"
+                                class="summary-select"
+                                onchange="this.form.submit()">
+                            @foreach ($summarySheet['availableGenders'] as $genderVal => $genderLabel)
+                                <option value="{{ $genderVal }}" @selected($genderVal === ($summarySheet['selectedRestroomGender'] ?? ''))>
+                                    {{ $genderLabel }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
                     <div class="summary-filter-group">
                         <label for="summaryUtilityMonth"><i class="fas fa-calendar"></i> Month and Year:</label>
                         <select name="utility_month"
@@ -358,23 +429,57 @@
                     </div>
                 @endif
 
-                @unless ($summarySheet['isUtilityChecklist'])
+                @if ($summarySheet['isStandardsChecklist'])
                     <div class="summary-filter-group">
-                        <label for="summarySubSelect"><i class="fas fa-clock-rotate-left"></i> Audit Date:</label>
+                        <label for="summarySubSelect"><i class="fas fa-calendar"></i> Audit Month:</label>
                         <select name="submission_id" id="summarySubSelect" class="summary-select" onchange="this.form.submit()">
                             @forelse ($summarySheet['availableSubmissions'] as $sub)
                                 <option value="{{ $sub->id }}" {{ $sub->id === $summarySheet['selectedSubmissionId'] ? 'selected' : '' }}>
-                                    {{ $sub->period_label ?? 'September to October' }} &mdash; {{ ucfirst($sub->status) }}
+                                    {{ $sub->audit_month ?? 'September' }}
                                 </option>
                             @empty
                                 <option value="">No recorded audit</option>
                             @endforelse
                         </select>
                     </div>
-                @endunless
+                @elseif (! $summarySheet['isUtilityChecklist'])
+                    <div class="summary-filter-group">
+                        <label for="summaryFiveSMonth"><i class="fas fa-calendar"></i> Month and Year:</label>
+                        <select name="five_s_month"
+                                id="summaryFiveSMonth"
+                                class="summary-select"
+                                onchange="document.getElementById('summaryFiveSDay').value = ''; this.form.submit()">
+                            @forelse ($summarySheet['fiveSAuditMonths'] as $monthOption)
+                                <option value="{{ $monthOption['value'] }}"
+                                        @selected($monthOption['value'] === $summarySheet['selectedFiveSMonth'])>
+                                    {{ $monthOption['label'] }}
+                                </option>
+                            @empty
+                                <option value="">No recorded month</option>
+                            @endforelse
+                        </select>
+                    </div>
+
+                    <div class="summary-filter-group">
+                        <label for="summaryFiveSDay"><i class="fas fa-calendar-day"></i> Day:</label>
+                        <select name="audit_date"
+                                id="summaryFiveSDay"
+                                class="summary-select"
+                                onchange="this.form.submit()">
+                            @forelse ($summarySheet['fiveSAuditDays'] as $dayOption)
+                                <option value="{{ $dayOption['value'] }}"
+                                        @selected($dayOption['value'] === $summarySheet['selectedFiveSDate'])>
+                                    {{ $dayOption['label'] }}
+                                </option>
+                            @empty
+                                <option value="">No recorded day</option>
+                            @endforelse
+                        </select>
+                    </div>
+                @endif
             @else
                 <div class="summary-filter-group">
-                    <label for="summaryOverallAuditDate"><i class="fas fa-calendar-days"></i> Audit Date:</label>
+                    <label for="summaryOverallAuditDate"><i class="fas fa-calendar"></i> {{ $summarySheet['isStandardsChecklist'] ? 'Audit Month:' : 'Audit Date:' }}</label>
                     <select name="audit_date"
                             id="summaryOverallAuditDate"
                             class="summary-select"
@@ -455,12 +560,21 @@
                 <div class="meta-value">{{ $summarySheet['outlet'] }}</div>
             </div>
             <div class="summary-meta-item">
-                <div class="meta-label">{{ $summaryMode === 'overall' ? 'Audit Scope' : 'Audit Date' }}</div>
+                <div class="meta-label">{{ $summarySheet['isStandardsChecklist'] ? 'Audit Month' : ($summaryMode === 'overall' ? 'Audit Scope' : 'Audit Date') }}</div>
                 <div class="meta-value">{{ $summarySheet['date'] }}</div>
             </div>
             <div class="summary-meta-item">
                 <div class="meta-label">{{ $summaryMode === 'overall' ? 'Users Included' : 'Auditor' }}</div>
                 <div class="meta-value">{{ $summarySheet['auditor'] }}</div>
+            </div>
+            <div class="summary-meta-item">
+                @if ($summarySheet['isUtilityChecklist'])
+                    <div class="meta-label">Audit Completion Month</div>
+                    <div class="meta-value" title="{{ $summarySheet['completion_tooltip'] ?? '' }}">{{ $summarySheet['completion_month'] }}</div>
+                @else
+                    <div class="meta-label">Completion Date and Time</div>
+                    <div class="meta-value">{{ $summarySheet['completion_date_time'] }}</div>
+                @endif
             </div>
         </div>
     </section>
@@ -479,18 +593,20 @@
                 <p>
                     @if ($activeForm === 'five_s')
                         @if ($summarySheet['isTimeSlotChecklist'])
+                            <strong>{{ $summarySheet['selectedRestroomScopeLabel'] ?? 'All Restrooms · All Genders' }}</strong>
+                            ({{ $cards['restroom_type_count'] }} {{ Str::plural('restroom type', $cards['restroom_type_count']) }}) &mdash;
                             @if ($summarySheet['selectedUtilityTime'])
                                 Showing the {{ $summarySheet['selectedUtilityTimeLabel'] }} inspection for each restroom item. Yes and No answers determine the score.
                             @else
                                 Each restroom item is checked across the {{ $summarySheet['timeSlotCount'] }} hourly slots from 8 AM to 5 PM. Yes and No answers determine the score.
                             @endif
                         @else
-                            Yes answers are scored against applicable checklist items; N/A responses are excluded from the score.
+                            Total includes all checklist items. N/A items do not count as score.
                         @endif
                     @elseif ($summaryMode === 'overall')
-                        Combined score from the latest visible audit of {{ $summarySheet['aggregateUserCount'] }} Aftersales {{ Str::plural('user', $summarySheet['aggregateUserCount']) }}. Basic and Standard form the base score; when that base is below 80%, earned Beyond points are added as bonus credit, capped at 100%.
+                        {{ $summarySheet['aggregateUserCount'] }} {{ Str::plural('user', $summarySheet['aggregateUserCount']) }} combined. Base score from Basic + Standard; Beyond bonus applied when base &lt; 80%.
                     @else
-                        {{ $summarySheet['scoreContextLabel'] }}@if ($summarySheet['scoreContextRole']) ({{ $summarySheet['scoreContextRole'] }})@endif &mdash; scores use only criteria assigned to this user's checker role.
+                        {{ $summarySheet['scoreContextLabel'] }}@if ($summarySheet['scoreContextRole']) ({{ $summarySheet['scoreContextRole'] }})@endif &mdash; role-assigned criteria only.
                     @endif
                 </p>
             </div>
@@ -502,10 +618,11 @@
                     <tr>
                         <th style="width: 60px;">No.</th>
                         <th>Criteria</th>
-                            <th style="width: 120px; text-align: center;">{{ $summarySheet['isTimeSlotChecklist'] ? 'Slots' : 'Total' }}</th>
-                            <th style="width: 120px; text-align: center;">{{ $summarySheet['isTimeSlotChecklist'] ? 'Yes' : 'Score' }}</th>
-                        <th style="width: 220px;">% Score</th>
-                        <th style="width: 130px; text-align: center;">Rating</th>
+                        <th style="width: 110px; text-align: center;">{{ $summarySheet['isTimeSlotChecklist'] ? 'Slots' : 'Total' }}</th>
+                        <th style="width: 110px; text-align: center;">{{ $summarySheet['isTimeSlotChecklist'] ? 'Yes' : 'Score' }}</th>
+                        <th style="width: 80px; text-align: center;">N/A</th>
+                        <th style="width: 200px;">% Score</th>
+                        <th style="width: 120px; text-align: center;">Rating</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -519,8 +636,8 @@
                                 @elseif ($activeForm === 'five_s')
                                     <span class="table-benchmark-tag table-benchmark-bonus">
                                         {{ $summarySheet['isTimeSlotChecklist']
-                                            ? ($summarySheet['selectedUtilityTimeLabel'].' score · / good · X not good')
-                                            : 'Checklist score · N/A excluded' }}
+                                            ? (($summarySheet['selectedRestroomScopeLabel'] ?? 'All Restrooms').' · '.$summarySheet['selectedUtilityTimeLabel'].' score · / good · X not good')
+                                            : 'Checklist score · N/A in total' }}
                                     </span>
                                 @else
                                     <span class="table-benchmark-tag table-benchmark-bonus">No rating &middot; Bonus credit</span>
@@ -528,6 +645,7 @@
                             </td>
                             <td style="text-align: center;"><strong>{{ $row['total'] }}</strong></td>
                             <td style="text-align: center;"><strong>{{ $row['score'] }}</strong></td>
+                            <td style="text-align: center;">{{ $row['na'] ?? 0 }}</td>
                             <td>
                                 <div class="cell-pct-bar">
                                     <span class="pct-val">{{ number_format($row['percent'], 1) }}%</span>
@@ -559,6 +677,7 @@
                         </td>
                         <td style="text-align: center;">{{ $overallSummary['total'] }}</td>
                         <td style="text-align: center;">{{ $overallSummary['score'] }}</td>
+                        <td style="text-align: center;">{{ $overallSummary['na'] ?? 0 }}</td>
                         <td>
                             <div class="cell-pct-bar">
                                 <span class="pct-val">{{ number_format($overallSummary['percent'], 1) }}%</span>
@@ -595,11 +714,15 @@
                 </h2>
                 <p>
                     @if ($activeForm === 'five_s')
-                        Area breakdown based on the {{ $summarySheet['fiveSArea'] === 'restroom' ? 'Restroom - Utility' : $summarySheet['fiveSAreaLabel'] }} worksheet in the Gateway 5S checklist.
+                        @if ($summarySheet['isUtilityChecklist'])
+                            Restroom - Utility worksheet breakdown &mdash; <strong>{{ $summarySheet['selectedRestroomScopeLabel'] ?? 'All Restrooms · All Genders' }}</strong> &middot; {{ $summarySheet['selectedUtilityTimeLabel'] }}.
+                        @else
+                            {{ $summarySheet['fiveSAreaLabel'] }} worksheet breakdown.
+                        @endif
                     @elseif ($summaryMode === 'overall')
-                        Combined coverage across all {{ count($coverageRows) }} Aftersales operational categories.
+                        {{ count($coverageRows) }} operational categories combined.
                     @else
-                        Category breakdown for {{ $summarySheet['scoreContextLabel'] }}, limited to this user's assigned checklist items.
+                        {{ $summarySheet['scoreContextLabel'] }} &mdash; role-assigned items only.
                     @endif
                 </p>
             </div>
@@ -611,9 +734,10 @@
                     <tr>
                         <th style="width: 60px;">No.</th>
                         <th>Coverage</th>
-                        <th style="width: 140px; text-align: center;">{{ $summarySheet['isTimeSlotChecklist'] ? 'Slots' : 'Total' }}</th>
-                        <th style="width: 140px; text-align: center;">{{ $summarySheet['isTimeSlotChecklist'] ? 'Yes' : 'Score' }}</th>
-                        <th style="width: 260px;">% Score</th>
+                        <th style="width: 110px; text-align: center;">{{ $summarySheet['isTimeSlotChecklist'] ? 'Slots' : 'Total' }}</th>
+                        <th style="width: 110px; text-align: center;">{{ $summarySheet['isTimeSlotChecklist'] ? 'Yes' : 'Score' }}</th>
+                        <th style="width: 80px; text-align: center;">N/A</th>
+                        <th style="width: 240px;">% Score</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -623,6 +747,7 @@
                             <td><strong>{{ $cov['coverage'] }}</strong></td>
                             <td style="text-align: center;">{{ $cov['total'] }}</td>
                             <td style="text-align: center;"><strong>{{ $cov['score'] }}</strong></td>
+                            <td style="text-align: center;">{{ $cov['na'] ?? 0 }}</td>
                             <td>
                                 <div class="cell-pct-bar">
                                     <span class="pct-val">{{ number_format($cov['percent'], 1) }}%</span>
@@ -637,6 +762,7 @@
                         <td colspan="2" style="text-transform: uppercase;">Total:</td>
                         <td style="text-align: center;">{{ $coverageSummary['total'] }}</td>
                         <td style="text-align: center;">{{ $coverageSummary['score'] }}</td>
+                        <td style="text-align: center;">{{ $coverageSummary['na'] ?? 0 }}</td>
                         <td>
                             <div class="cell-pct-bar">
                                 <span class="pct-val">{{ number_format($coverageSummary['percent'], 1) }}%</span>
@@ -682,12 +808,12 @@
                     <div class="summary-modal-empty">
                         <i class="fas fa-circle-check" aria-hidden="true"></i>
                         <strong>No NO findings in this audit.</strong>
-                        <span>Select another audit date to review its findings.</span>
+                        <span>Select another {{ $summarySheet['isStandardsChecklist'] ? 'audit month' : 'audit date' }} to review its findings.</span>
                     </div>
                 @else
                     <div class="summary-modal-callout">
                         <i class="fas fa-circle-info" aria-hidden="true"></i>
-                        <span>Showing {{ $nonCompliantFindings->count() }} specific {{ Str::plural('question', $nonCompliantFindings->count()) }} marked <strong>NO</strong>, including the recorded checker, reason, and photo evidence.</span>
+                        <span><strong>{{ $nonCompliantFindings->count() }}</strong> {{ !empty($isUtilityChecklist) ? Str::plural('inspection slot', $nonCompliantFindings->count()) : Str::plural('item', $nonCompliantFindings->count()) }} marked <strong>NO</strong> with checker details and evidence.</span>
                     </div>
                     <div class="summary-findings-table-wrap">
                         <table class="summary-findings-table">
@@ -705,7 +831,11 @@
                                     <tr>
                                         <td class="summary-question-cell">
                                             <div class="summary-table-tags">
-                                                <span class="summary-table-tag tag-danger">NO</span>
+                                                @if (!empty($finding['is_compiled']))
+                                                    <span class="summary-table-tag tag-danger">FAILED ({{ $finding['compiled_count'] ?? 30 }} ITEMS)</span>
+                                                @else
+                                                    <span class="summary-table-tag tag-danger">NO</span>
+                                                @endif
                                                 @if ($finding['category'])
                                                     <span class="summary-table-tag">{{ $finding['category'] }}</span>
                                                 @endif
@@ -721,6 +851,21 @@
                                                 <small>{{ $finding['subject'] }}</small>
                                             @endif
                                             <small>Item: {{ $finding['item_key'] }}</small>
+                                            @if (!empty($finding['is_compiled']) && !empty($finding['compiled_questions']))
+                                                <details class="compiled-checklist-items-toggle" style="margin-top: 8px; font-size: 11px; background: rgba(15, 38, 66, 0.05); border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px 10px;">
+                                                    <summary style="cursor: pointer; font-weight: 700; color: #0284c7;">
+                                                        <i class="fas fa-list-check" aria-hidden="true"></i> View all {{ $finding['compiled_count'] }} checklist questions
+                                                    </summary>
+                                                    <ol style="margin: 8px 0 4px 18px; padding: 0; line-height: 1.5; color: #334155; max-height: 180px; overflow-y: auto;">
+                                                        @foreach ($finding['compiled_questions'] as $cq)
+                                                            <li>
+                                                                <strong>{{ $cq['area'] ?? '' }}:</strong> {{ $cq['question'] }}
+                                                                <span style="display: inline-block; padding: 1px 5px; font-size: 9px; font-weight: 800; border-radius: 4px; background: #fee2e2; color: #dc2626; margin-left: 4px;">{{ $cq['result'] ?? 'NO' }}</span>
+                                                            </li>
+                                                        @endforeach
+                                                    </ol>
+                                                </details>
+                                            @endif
                                         </td>
                                         <td>
                                             <strong>{{ $finding['checked_by_name'] }}</strong>
@@ -735,7 +880,7 @@
                                         <td class="summary-finding-cell">
                                             <strong>{{ $finding['finding'] }}</strong>
                                             @if ($finding['bom_task'])
-                                                <small><b>BOM task:</b> {{ $finding['bom_task'] }}</small>
+                                                <small><b>Task:</b> {{ $finding['bom_task'] }}</small>
                                             @endif
                                             @if ($finding['action_plan'])
                                                 <small><b>Action plan:</b> {{ $finding['action_plan'] }}</small>
@@ -789,7 +934,7 @@
                  tabindex="-1">
             <header class="modal-header summary-modal-header">
                 <div>
-                    <span class="summary-modal-eyebrow"><i class="fas fa-arrow-up-right-dots" aria-hidden="true"></i> BOM Action</span>
+                    <span class="summary-modal-eyebrow"><i class="fas fa-arrow-up-right-dots" aria-hidden="true"></i> Action Plan</span>
                     <h2 id="summaryEscalationTitle">Escalate non-compliant findings</h2>
                     <small>{{ $summarySheet['activeFormTitle'] }} &middot; {{ $summarySheet['outlet'] }} &middot; {{ $summarySheet['date_with_year'] }}</small>
                 </div>
@@ -808,12 +953,12 @@
                     @if ($followUpResponseId)
                         <div class="summary-follow-up-guidance">
                             <i class="fas fa-location-dot" aria-hidden="true"></i>
-                            <span>The GM requested follow-up on the highlighted finding. Select <strong>Escalate</strong> to complete it.</span>
+                            <span>Follow-up requested on the highlighted finding. Select <strong>Escalate</strong> to complete.</span>
                         </div>
                     @endif
                     <div class="summary-modal-callout">
                         <i class="fas fa-shield-halved" aria-hidden="true"></i>
-                        <span>Choose <strong>Escalate</strong> on a finding to enter its recipient, Action Plan, and Commitment Date Planned.</span>
+                        <span>Select <strong>Escalate</strong> to assign a recipient, action plan, and commitment date.</span>
                     </div>
                     <div class="summary-escalation-status" id="summaryEscalationListStatus" role="status" aria-live="polite"></div>
                     <div class="summary-findings-table-wrap">
@@ -833,13 +978,25 @@
                                         class="{{ (int) $followUpResponseId === (int) $finding['response_id'] ? 'is-follow-up-highlight' : '' }}"
                                         data-summary-escalation-row
                                         data-response-id="{{ $finding['response_id'] }}"
+                                        @if (!empty($finding['is_compiled']) && !empty($finding['response_ids']))
+                                            data-response-ids="{{ implode(',', $finding['response_ids']) }}"
+                                        @endif
+                                        data-is-compiled="{{ !empty($finding['is_compiled']) ? '1' : '0' }}"
+                                        data-template-slug="{{ $finding['template_slug'] ?? $activeSlug ?? '' }}"
+                                        data-auditor-role="{{ $finding['checked_by_role'] ?? '' }}"
+                                        data-checker-role="{{ $finding['checker_role'] ?? '' }}"
+                                        data-is-restroom="{{ !empty($isUtilityChecklist) || !empty($finding['is_restroom']) || ($activeSlug ?? '') === 'restroom' ? '1' : '0' }}"
                                         @if ((int) $followUpResponseId === (int) $finding['response_id'])
                                             data-follow-up-highlight
                                             tabindex="-1"
                                         @endif>
                                         <td class="summary-question-cell">
                                             <div class="summary-table-tags">
-                                                <span class="summary-table-tag tag-danger">NO</span>
+                                                @if (!empty($finding['is_compiled']))
+                                                    <span class="summary-table-tag tag-danger">FAILED ({{ $finding['compiled_count'] ?? 30 }} ITEMS)</span>
+                                                @else
+                                                    <span class="summary-table-tag tag-danger">NO</span>
+                                                @endif
                                                 @if ($finding['category'])
                                                     <span class="summary-table-tag">{{ $finding['category'] }}</span>
                                                 @endif
@@ -854,6 +1011,21 @@
                                                 <small>{{ $finding['subject'] }}</small>
                                             @endif
                                             <small>{{ $finding['area'] }} &middot; <span data-summary-escalation-item-key>{{ $finding['item_key'] }}</span></small>
+                                            @if (!empty($finding['is_compiled']) && !empty($finding['compiled_questions']))
+                                                <details class="compiled-checklist-items-toggle" style="margin-top: 8px; font-size: 11px; background: rgba(15, 38, 66, 0.05); border: 1px solid #cbd5e1; border-radius: 8px; padding: 6px 10px;">
+                                                    <summary style="cursor: pointer; font-weight: 700; color: #0284c7;">
+                                                        <i class="fas fa-list-check" aria-hidden="true"></i> View all {{ $finding['compiled_count'] }} checklist questions
+                                                    </summary>
+                                                    <ol style="margin: 8px 0 4px 18px; padding: 0; line-height: 1.5; color: #334155; max-height: 180px; overflow-y: auto;">
+                                                        @foreach ($finding['compiled_questions'] as $cq)
+                                                            <li>
+                                                                <strong>{{ $cq['area'] ?? '' }}:</strong> {{ $cq['question'] }}
+                                                                <span style="display: inline-block; padding: 1px 5px; font-size: 9px; font-weight: 800; border-radius: 4px; background: #fee2e2; color: #dc2626; margin-left: 4px;">{{ $cq['result'] ?? 'NO' }}</span>
+                                                            </li>
+                                                        @endforeach
+                                                    </ol>
+                                                </details>
+                                            @endif
                                         </td>
                                         <td>
                                             <strong>{{ $finding['checked_by_name'] }}</strong>
@@ -866,7 +1038,7 @@
                                         <td class="summary-finding-cell">
                                             <strong data-summary-escalation-finding>{{ $finding['finding'] }}</strong>
                                             @if ($finding['bom_task'])
-                                                <small><b>BOM task:</b> {{ $finding['bom_task'] }}</small>
+                                                <small><b>Task:</b> {{ $finding['bom_task'] }}</small>
                                             @endif
                                         </td>
                                         <td class="summary-escalation-photo-cell">
@@ -930,7 +1102,7 @@
                  tabindex="-1">
             <header class="modal-header summary-modal-header">
                 <div>
-                    <span class="summary-modal-eyebrow"><i class="fas fa-arrow-up-right-dots" aria-hidden="true"></i> BOM Action</span>
+                    <span class="summary-modal-eyebrow"><i class="fas fa-arrow-up-right-dots" aria-hidden="true"></i> Action Plan</span>
                     <h2 id="summaryEscalationEditorTitle">Escalate finding</h2>
                     <small id="summaryEscalationEditorItem">Select a finding to continue.</small>
                 </div>
@@ -1057,12 +1229,90 @@
 
             const cleanText = (element) => (element?.textContent || '').replace(/\s+/g, ' ').trim();
 
+                        const escalationOptionsMap = @json($escalationOptionsMap ?? \App\Models\ChecklistResponse::contextualEscalationOptionsMap());
+
+            function resolveEscalationOptions(data) {
+                const templateSlug = (data.templateSlug || '').toLowerCase();
+                const auditorRole = (data.auditorRole || '').toLowerCase();
+                const checkerRole = (data.checkerRole || '').toLowerCase();
+                const isRestroom = data.isRestroom === '1' || templateSlug === 'restroom' || templateSlug === 'utilities';
+
+                if (isRestroom || auditorRole.includes('utility') || checkerRole.includes('utility')) {
+                    return escalationOptionsMap.utility || { property_management: 'Property Management (PM)', general_manager: 'General Manager (GM)' };
+                }
+
+                if (templateSlug.includes('sales') && templateSlug.includes('dealer-operations')) {
+                    return escalationOptionsMap.sales || escalationOptionsMap.default;
+                }
+                if (auditorRole.includes('sales manager') || checkerRole.includes('sales manager')) {
+                    return escalationOptionsMap.sales || escalationOptionsMap.default;
+                }
+
+                const isAftersales = templateSlug.includes('dealer-operations') ||
+                    auditorRole.includes('aftersales') || auditorRole.includes('ce') ||
+                    auditorRole.includes('job controller') || auditorRole.includes('parts') ||
+                    auditorRole.includes('workshop');
+
+                if (isAftersales) {
+                    if (checkerRole.includes('jc') || checkerRole.includes('job controller') ||
+                        checkerRole.includes('parts') || checkerRole.includes('workshop') ||
+                        auditorRole.includes('job controller') || auditorRole.includes('parts') ||
+                        auditorRole.includes('workshop')) {
+                        return escalationOptionsMap.aftersales_single_gm || { general_manager: 'General Manager (GM)' };
+                    }
+                    if (checkerRole.includes('asm') || auditorRole.includes('aftersales manager')) {
+                        return escalationOptionsMap.aftersales_asm || escalationOptionsMap.aftersales;
+                    }
+                    if (checkerRole.includes('ce') || auditorRole.includes('ce service')) {
+                        return escalationOptionsMap.aftersales_ce || escalationOptionsMap.aftersales;
+                    }
+                    return escalationOptionsMap.aftersales || escalationOptionsMap.default;
+                }
+
+                if (templateSlug === 'sales' || templateSlug === 'service' || templateSlug === '5s') {
+                    return escalationOptionsMap.five_s || escalationOptionsMap.default;
+                }
+
+                return escalationOptionsMap.default;
+            }
+
+            function populateEscalationSelect(selectElem, options, selectedValue, defaultLabel) {
+                if (!selectElem) return;
+                selectElem.innerHTML = '';
+                const defaultOpt = document.createElement('option');
+                defaultOpt.value = '';
+                defaultOpt.textContent = defaultLabel;
+                selectElem.appendChild(defaultOpt);
+
+                let hasSelected = false;
+                for (const [val, label] of Object.entries(options || {})) {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = label;
+                    if (selectedValue && val === selectedValue) {
+                        opt.selected = true;
+                        hasSelected = true;
+                    }
+                    selectElem.appendChild(opt);
+                }
+
+                if (selectedValue && !hasSelected) {
+                    const opt = document.createElement('option');
+                    opt.value = selectedValue;
+                    opt.textContent = selectedValue.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    opt.selected = true;
+                    selectElem.appendChild(opt);
+                }
+            }
+
             const openEscalationEditor = (button) => {
                 const row = button?.closest('[data-summary-escalation-row]');
                 if (!row || !escalationForm || !escalationEditorModal) return;
 
                 const targetSelect = escalationForm.querySelector('[data-summary-escalation-field="escalation_target"]');
-                targetSelect?.querySelectorAll('[data-temporary-escalation-option]').forEach((option) => option.remove());
+                const rowOptions = resolveEscalationOptions(row.dataset);
+                const currentTargetVal = rowValueField(row, 'escalation_target')?.value || '';
+                populateEscalationSelect(targetSelect, rowOptions, currentTargetVal, 'No escalation selected');
 
                 escalationResponseId.value = row.dataset.responseId || '';
                 escalationFields.forEach((field) => {
@@ -1132,7 +1382,7 @@
                         const data = await response.json().catch(() => ({}));
 
                         if (!response.ok) {
-                            throw new Error(data.message || 'The BOM follow-up notification could not be sent.');
+                            throw new Error(data.message || 'Follow-up notification could not be sent.');
                         }
 
                         button.classList.remove('is-loading');
@@ -1140,7 +1390,7 @@
                         if (label) label.textContent = 'Follow-up Sent';
                         if (status) {
                             status.classList.add('is-success');
-                            status.textContent = data.message || 'Follow-up sent to the BOM user.';
+                            status.textContent = data.message || 'Follow-up sent successfully.';
                         }
                     } catch (error) {
                         button.disabled = false;
@@ -1148,7 +1398,7 @@
                         if (label) label.textContent = 'Follow-up';
                         if (status) {
                             status.classList.add('is-error');
-                            status.textContent = error.message || 'The BOM follow-up notification could not be sent.';
+                            status.textContent = error.message || 'Follow-up notification could not be sent.';
                         }
                     }
                 });

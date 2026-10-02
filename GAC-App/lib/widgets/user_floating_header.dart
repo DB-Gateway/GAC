@@ -41,8 +41,8 @@ class UserFloatingHeader extends StatelessWidget {
         }
 
         final profileIconSize = sizeBetween(44, 32);
-        final logoWidth = sizeBetween(180, 130);
-        final logoHeight = sizeBetween(22, 18);
+        final logoWidth = sizeBetween(150, 100);
+        final logoHeight = sizeBetween(20, 16);
         final subtitleSize = sizeBetween(8, 6.8);
         final notificationIconSize = sizeBetween(32, 24);
         final badgeSize = sizeBetween(18, 15);

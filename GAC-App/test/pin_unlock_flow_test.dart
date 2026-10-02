@@ -99,12 +99,14 @@ void main() {
     testWidgets(
       'login screen shows Remember me checkbox and Forgot password link',
       (tester) async {
-        await tester.pumpWidget(_wrap(const GatewayLoginScreen()));
+        await tester.pumpWidget(
+          _wrap(GatewayLoginScreen(storedSessionValidator: (_) async => true)),
+        );
         await tester.pump();
 
         expect(find.text('Remember me'), findsOneWidget);
         expect(find.text('Forgot password?'), findsOneWidget);
-        expect(find.text('EMAIL ADDRESS'), findsOneWidget);
+        expect(find.text('USERNAME'), findsOneWidget);
         expect(find.text('PASSWORD'), findsOneWidget);
       },
     );
@@ -125,7 +127,9 @@ void main() {
           '${gacSecurityPinKey}_alex@gateway.local': '1234',
         });
 
-        await tester.pumpWidget(_wrap(const GatewayLoginScreen()));
+        await tester.pumpWidget(
+          _wrap(GatewayLoginScreen(storedSessionValidator: (_) async => true)),
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 1500));
 
@@ -152,7 +156,9 @@ void main() {
           '${gacSecurityPinKey}_alex@gateway.local': '1234',
         });
 
-        await tester.pumpWidget(_wrap(const GatewayLoginScreen()));
+        await tester.pumpWidget(
+          _wrap(GatewayLoginScreen(storedSessionValidator: (_) async => true)),
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 1500));
 
@@ -164,6 +170,122 @@ void main() {
 
         expect(find.text('Sign In'), findsOneWidget);
         expect(find.text('Remember me'), findsOneWidget);
+      },
+    );
+
+    testWidgets('server-rejected remembered session cannot enter quick unlock', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({
+        gacRememberMeKey: true,
+        gacRememberEmailKey: 'blocked@gateway.local',
+        gacAuthTokenKey: 'revoked-test-token',
+        gacAuthUserKey:
+            '{"id":3,"name":"Blocked Utility","email":"blocked@gateway.local",'
+            '"branch":"Pasong Tamo","user_type":"5S_UTILITIES",'
+            '"account_status":"active"}',
+        gacSecurityPinKey: '1234',
+        '${gacSecurityPinKey}_blocked@gateway.local': '1234',
+      });
+
+      await tester.pumpWidget(
+        _wrap(GatewayLoginScreen(storedSessionValidator: (_) async => false)),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1500));
+
+      expect(find.text('Welcome Back'), findsNothing);
+      expect(find.text('Sign In'), findsOneWidget);
+    });
+
+    testWidgets(
+      'returns in quick unlock mode with 6-digit PIN when 6-digit PIN is stored',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({
+          gacRememberMeKey: true,
+          gacRememberEmailKey: 'maria@gateway.local',
+          gacAuthTokenKey: 'valid-test-token-6',
+          gacAuthUserKey:
+              '{"id":2,"name":"Maria Santos","email":"maria@gateway.local",'
+              '"branch":"Cebu","user_type":"PIC",'
+              '"pic_assignment_type":"utilities",'
+              '"pic_assignment_label":"Utilities","account_status":"active"}',
+          gacSecurityPinKey: '123456',
+          '${gacSecurityPinKey}_maria@gateway.local': '123456',
+        });
+
+        await tester.pumpWidget(
+          _wrap(GatewayLoginScreen(storedSessionValidator: (_) async => true)),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1500));
+
+        expect(find.text('Welcome Back'), findsOneWidget);
+        expect(find.text('Maria Santos'), findsOneWidget);
+        expect(find.text('Enter your 6-digit PIN to continue'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'shows persistent session timed out notice banner when arrived from timeout',
+      (tester) async {
+        await tester.pumpWidget(
+          _wrap(const GatewayLoginScreen(fromTimeout: true)),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1600));
+
+        expect(find.text('Session Timed Out'), findsOneWidget);
+        expect(
+          find.text('You were logged out after 1 hour of inactivity.'),
+          findsOneWidget,
+        );
+        expect(find.text('Guide'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'tapping Guide on timeout notice opens the Stay Signed In Guide sheet',
+      (tester) async {
+        await tester.pumpWidget(
+          _wrap(const GatewayLoginScreen(fromTimeout: true)),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1600));
+
+        await tester.ensureVisible(find.text('Guide'));
+        await tester.tap(find.text('Guide'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Stay Signed In Guide'), findsOneWidget);
+        expect(find.text('1. Check "Remember me" at Sign In'), findsOneWidget);
+        expect(find.text('2. Set Up a 6-Digit PIN'), findsOneWidget);
+        expect(find.text('GOT IT'), findsOneWidget);
+
+        // Scroll to and tap GOT IT to dismiss
+        await tester.ensureVisible(find.text('GOT IT'));
+        await tester.tap(find.text('GOT IT'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Stay Signed In Guide'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'tapping (i) icon next to Remember me opens the Stay Signed In Guide sheet',
+      (tester) async {
+        await tester.pumpWidget(_wrap(const GatewayLoginScreen()));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 1600));
+
+        final infoIconFinder = find.byIcon(Icons.info_outline_rounded);
+        expect(infoIconFinder, findsOneWidget);
+
+        await tester.tap(infoIconFinder);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Stay Signed In Guide'), findsOneWidget);
+        expect(find.text('1. Check "Remember me" at Sign In'), findsOneWidget);
       },
     );
   });

@@ -23,7 +23,6 @@
             $bootstrapData,
             'can_manage_template',
             Auth::user()?->hasAdministrativeAccess() === true
-                || Auth::user()?->roleCode() === \App\Models\User::ROLE_BRANCH_OPERATIONS_MANAGER
         ));
     $subformTemplateSource = $subformTemplate ?? data_get($bootstrapData, 'subform_template');
     $subformTemplateData = (is_array($subformTemplateSource) ? $subformTemplateSource : json_decode(json_encode($subformTemplateSource), true)) ?: null;
@@ -49,6 +48,7 @@
     $submitUrl = $resolveChecklistRoute(['checklists.submit', 'checklists.submission.store']);
     $resetUrl = $resolveChecklistRoute(['checklists.reset', 'checklists.submission.destroy']);
     $templateUrl = $resolveChecklistRoute(['checklists.template.update', 'checklists.update-template']);
+    $deleteTemplateUrl = $resolveChecklistRoute(['checklists.template.destroy', 'api.checklists.destroy']);
     $subformTemplateUrl = \Illuminate\Support\Facades\Route::has('checklists.template.update')
         ? route('checklists.template.update', ['dealer-operations-standards-subform'])
         : '/checklists/dealer-operations-standards-subform';
@@ -396,6 +396,9 @@
                         <button class="button primary" id="editTemplateButton" type="button">
                             <i class="fas fa-pen-to-square" aria-hidden="true"></i> Edit Master Checklist
                         </button>
+                        <button class="button soft" id="archiveTemplateButton" type="button">
+                            <i class="fas fa-trash-can" aria-hidden="true"></i> Delete Audit Form
+                        </button>
                     @endif
                 </div>
             </section>
@@ -660,7 +663,7 @@
                             <select id="newTemplateVariant">
                                 <option value="dos">Dealer Operations Standards (DOS - Escalation, Levels, Subforms)</option>
                                 <option value="standard">5S Standards (Showroom, Service readiness)</option>
-                                <option value="restroom">Restroom Monitoring (Hourly time slots)</option>
+                                <option value="restroom">Restroom Monitoring (Scheduled time slots)</option>
                             </select>
                         </div>
                         <div class="field">
@@ -701,6 +704,7 @@
                 documentationTemplate: @json($documentationTemplateUrl),
                 toggleItem: @json($toggleItemUrl),
                 createTemplate: @json($createTemplateUrl),
+                deleteTemplate: @json($deleteTemplateUrl),
             });
             const canManageTemplate = {{ \Illuminate\Support\Js::from($canManageTemplate) }};
             const variant = @json($variant);
@@ -2003,7 +2007,7 @@
                     document.getElementById('findingsMeta').textContent = 'Active';
                     document.getElementById('itemCountValue').textContent = totalQuestions;
                     document.getElementById('sectionCountValue').textContent = `${template.sections.length} section${template.sections.length === 1 ? '' : 's'}`;
-                    document.getElementById('footerSummary').innerHTML = '<strong>Hourly schedule active:</strong> Check or uncheck time slots to enable or disable questions for each hour on user checklists.';
+                    document.getElementById('footerSummary').innerHTML = '<strong>Inspection schedule active:</strong> Check or uncheck time slots to enable or disable questions for each inspection on user checklists.';
                     return;
                 }
 
@@ -2078,7 +2082,7 @@
                     firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     firstInvalid.querySelector('input, select, textarea')?.focus({ preventScroll: true });
                     const message = usesRestroomTimeSlots()
-                        ? 'Record every hourly mark before submitting.'
+                        ? 'Record every scheduled mark before submitting.'
                         : (variant === 'dos'
                             ? 'Complete every response and the required findings and corrective actions.'
                             : 'Complete every response and add remarks for NO or N/A items.');
@@ -3110,6 +3114,23 @@
             });
 
             document.getElementById('editTemplateButton')?.addEventListener('click', openTemplateEditor);
+            document.getElementById('archiveTemplateButton')?.addEventListener('click', async (event) => {
+                if (!endpoints.deleteTemplate) return;
+                if (!window.confirm(`Delete "${template.name}" from active use? It will be hidden, while its audit history remains available to the administrator.`)) return;
+
+                const button = event.currentTarget;
+                setBusy(button, true, 'Deleting...');
+                try {
+                    const data = await apiRequest(endpoints.deleteTemplate, { method: 'DELETE' });
+                    showToast('Audit form deleted', data?.message || 'The audit form was removed from active use.', 'success');
+                    window.setTimeout(() => {
+                        window.location.href = data?.redirect_url || '/checklists';
+                    }, 500);
+                } catch (error) {
+                    showToast('Unable to archive audit form', error.message || 'The audit form could not be archived.', 'error');
+                    setBusy(button, false);
+                }
+            });
             document.getElementById('closeTemplateEditor')?.addEventListener('click', closeTemplateEditor);
             document.getElementById('cancelTemplateEditor')?.addEventListener('click', closeTemplateEditor);
             document.getElementById('addEditorSection')?.addEventListener('click', () => {

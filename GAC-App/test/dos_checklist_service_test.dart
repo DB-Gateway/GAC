@@ -85,7 +85,7 @@ void main() {
         expect(service.assignedSlug, roleCase.slug);
         expect(service.assignedItemCount, roleCase.itemCount);
         expect(service.checkerCode, roleCase.checkerCode);
-        expect(delegate.catalogDates, ['2026-09-07']);
+        expect(delegate.catalogDates, ['2026-09-01']);
         expect(catalog, hasLength(1));
         expect(catalog.single.slug, roleCase.slug);
         expect(catalog.single.itemCount, roleCase.itemCount);
@@ -250,7 +250,7 @@ void main() {
     );
 
     test(
-      'delegates authorized load, save, submit, and upload unchanged',
+      'uses one monthly period key for authorized DOS load, save, and submit',
       () async {
         final delegate = _RecordingChecklistRepository(
           catalog: const [],
@@ -275,7 +275,9 @@ void main() {
           DosChecklistService.aftersalesSlug,
           date: '2026-09-07',
           responses: responses,
-          context: const {'draft_position': {'item_key': 'dos-a1'}},
+          context: const {
+            'draft_position': {'item_key': 'dos-a1'},
+          },
         );
         final submitted = await service.submit(
           DosChecklistService.aftersalesSlug,
@@ -288,13 +290,18 @@ void main() {
           filename: 'finding.jpg',
         );
 
-        expect(delegate.loadedSlugs, [DosChecklistService.aftersalesSlug]);
-        expect(delegate.loadedDates, ['2026-09-07']);
+        expect(delegate.loadedSlugs, [
+          DosChecklistService.aftersalesSlug,
+          DosChecklistService.aftersalesSlug,
+        ]);
+        expect(delegate.loadedDates, ['2026-09-01', '2026-09-01']);
         expect(delegate.draftSlug, DosChecklistService.aftersalesSlug);
         expect(delegate.submitSlug, DosChecklistService.aftersalesSlug);
-        expect(delegate.savedDate, '2026-09-07');
+        expect(delegate.savedDate, '2026-09-01');
         expect(delegate.savedResponses, responses);
-        expect(delegate.draftContext, {'draft_position': {'item_key': 'dos-a1'}});
+        expect(delegate.draftContext, {
+          'draft_position': {'item_key': 'dos-a1'},
+        });
         expect(delegate.uploadSlug, DosChecklistService.aftersalesSlug);
         expect(delegate.uploadedBytes, [1, 2, 3]);
         expect(delegate.uploadedFilename, 'finding.jpg');
@@ -302,6 +309,80 @@ void main() {
         expect(loaded.submission!.totalItems, 12);
         expect(drafted.totalItems, 12);
         expect(submitted.totalItems, 12);
+      },
+    );
+
+    test(
+      'all days in a month share a DOS record and a new month gets a new key',
+      () async {
+        final delegate = _RecordingChecklistRepository(catalog: const []);
+        final service = DosChecklistService(
+          user: _user('DOS_AFTERSALES'),
+          delegate: delegate,
+        );
+
+        await service.fetchCatalog(date: '2026-09-02');
+        await service.fetchCatalog(date: '2026-09-30');
+        await service.fetchCatalog(date: '2026-10-01');
+        await service.fetchChecklist(
+          DosChecklistService.aftersalesSlug,
+          date: '2026-10-31',
+        );
+
+        expect(delegate.catalogDates, [
+          '2026-09-01',
+          '2026-09-01',
+          '2026-10-01',
+        ]);
+        expect(delegate.loadedDates, ['2026-10-01']);
+      },
+    );
+
+    test(
+      'blocks a second submission when the monthly DOS record is complete',
+      () async {
+        final delegate = _RecordingChecklistRepository(
+          catalog: const [],
+          loadResult: ChecklistLoadResult(
+            template: _aftersalesTemplate,
+            submission: ChecklistSubmissionData(
+              id: 91,
+              status: 'submitted',
+              auditDate: '2026-09-01',
+              templateVersion: 1,
+              scores: const {'total': 75, 'answered': 75},
+              responses: const {},
+              answeredItems: 75,
+              totalItems: 75,
+              completionPercentage: 100,
+              submittedAt: DateTime(2026, 9, 15, 8),
+              issueCount: 0,
+            ),
+          ),
+        );
+        final service = DosChecklistService(
+          user: _user('DOS_AFTERSALES'),
+          delegate: delegate,
+        );
+
+        await expectLater(
+          service.submit(
+            DosChecklistService.aftersalesSlug,
+            date: '2026-09-30',
+            responses: const [],
+          ),
+          throwsA(
+            isA<ChecklistApiException>()
+                .having((error) => error.status, 'status', 409)
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('already been submitted for this month'),
+                ),
+          ),
+        );
+        expect(delegate.loadedDates, ['2026-09-01']);
+        expect(delegate.submitSlug, isNull);
       },
     );
 

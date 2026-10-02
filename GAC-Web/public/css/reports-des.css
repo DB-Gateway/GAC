@@ -2085,3 +2085,65 @@ tr.is-follow-up-highlight:focus {
         min-width: 0;
     }
 }
+
+/* Override timestamp & proof styles */
+.override-meta-timestamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.6875rem;
+    color: #059669;
+    font-weight: 500;
+    background: #ecfdf5;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    border: 1px solid #d1fae5;
+    margin: 0.15rem 0;
+}
+.override-proof-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.6875rem;
+    color: #2563eb;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: 500;
+    margin-top: 0.2rem;
+    transition: all 0.15s ease;
+}
+.override-proof-chip:hover {
+    background: #dbeafe;
+    color: #1d4ed8;
+    text-decoration: none;
+}
+.finding-override-proof-box {
+    margin-top: 0.45rem;
+    padding-top: 0.4rem;
+    border-top: 1px dashed #e2e8f0;
+}
+.summary-proof-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    color: #0f766e;
+    text-decoration: none;
+    background: #f0fdfa;
+    border: 1px solid #ccfbf1;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+}
+.summary-proof-link img {
+    width: 24px;
+    height: 24px;
+    object-fit: cover;
+    border-radius: 3px;
+}
+.summary-proof-link:hover {
+    background: #ccfbf1;
+    color: #0d9488;
+}

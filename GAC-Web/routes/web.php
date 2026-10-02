@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ChecklistController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DealerChecklistAccessController;
 use App\Http\Controllers\DraftFollowUpController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReportController;
@@ -58,6 +59,8 @@ Route::middleware('auth')->group(function () {
         ->name('debug.checklists.reset-answers');
     Route::put('/checklists/{template}', [ChecklistController::class, 'updateTemplate'])
         ->name('checklists.template.update');
+    Route::delete('/checklists/{template}', [ChecklistController::class, 'destroyTemplate'])
+        ->name('checklists.template.destroy');
     Route::post('/checklists/{template}/toggle-item', [ChecklistController::class, 'toggleItem'])
         ->name('checklists.item.toggle');
 
@@ -81,6 +84,17 @@ Route::middleware(['auth', 'can.manage-users'])->group(function () {
     Route::post('/users/{user}/reset-password', [UserManagementController::class, 'resetPassword'])->name('users.password.reset');
     Route::patch('/users/{user}', [UserManagementController::class, 'update'])->name('users.update');
     Route::patch('/users/{user}/status', [UserManagementController::class, 'updateStatus'])->name('users.status');
+    Route::get('/admin/checklist-access', [DealerChecklistAccessController::class, 'index'])
+        ->name('admin.checklist-access.index');
+    Route::post('/admin/checklist-access/{dealer}/restrooms', [DealerChecklistAccessController::class, 'storeRestroom'])
+        ->name('admin.checklist-access.restrooms.store');
+    Route::patch('/admin/checklist-access/{dealer}/restrooms/{restroom}', [DealerChecklistAccessController::class, 'updateRestroom'])
+        ->name('admin.checklist-access.restrooms.update');
+    Route::delete('/admin/checklist-access/{dealer}/restrooms/{restroom}', [DealerChecklistAccessController::class, 'destroyRestroom'])
+        ->name('admin.checklist-access.restrooms.destroy');
+    Route::patch('/admin/checklist-access/{dealer}', [DealerChecklistAccessController::class, 'update'])
+        ->where('dealer', '.*')
+        ->name('admin.checklist-access.update');
 });
 
 Route::middleware('auth')->group(function () {

@@ -39,37 +39,30 @@ if (!is_array($requestData)) {
     ]);
 }
 
-$email = trim((string) ($requestData['email'] ?? ''));
+$username = trim((string) ($requestData['username'] ?? $requestData['email'] ?? ''));
 $password = (string) ($requestData['password'] ?? '');
 
-if ($email === '' || $password === '') {
+if ($username === '' || $password === '') {
     respond(422, [
         'success' => false,
-        'message' => 'Email and password are required.',
-    ]);
-}
-
-if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-    respond(422, [
-        'success' => false,
-        'message' => 'Enter a valid email address.',
+        'message' => 'Username and password are required.',
     ]);
 }
 
 $statement = $pdo->prepare(
     'SELECT id, name, email, branch, user_type, password
      FROM users
-     WHERE email = :email
+     WHERE LOWER(email) = LOWER(:username)
      LIMIT 1'
 );
 
-$statement->execute(['email' => $email]);
+$statement->execute(['username' => $username]);
 $user = $statement->fetch();
 
 if (!$user || !password_verify($password, $user['password'])) {
     respond(401, [
         'success' => false,
-        'message' => 'Invalid email or password.',
+        'message' => 'Invalid username or password.',
     ]);
 }
 
@@ -79,6 +72,7 @@ respond(200, [
     'user' => [
         'id' => (int) $user['id'],
         'name' => $user['name'],
+        'username' => $user['email'],
         'email' => $user['email'],
         'branch' => $user['branch'],
         'userType' => $user['user_type'],

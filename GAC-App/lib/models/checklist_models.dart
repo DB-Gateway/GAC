@@ -35,15 +35,18 @@ class ChecklistCatalogItem {
     return itemCount;
   }
 
-  String get categoryLabel => switch (slug) {
-    'gateway-5s' => '5S',
-    'sales' => 'SALES',
-    'service' => 'SERVICE',
-    'dealer-operations-standards' ||
-    'dealer-operations-standards-sales' => 'DOS',
-    'restroom' || 'utilities' => 'UTILITIES',
-    _ => 'CHECKLIST',
-  };
+  String get categoryLabel {
+    if (slug.startsWith('restroom')) return 'UTILITIES';
+    return switch (slug) {
+      'gateway-5s' => '5S',
+      'sales' => 'SALES',
+      'service' => 'SERVICE',
+      'dealer-operations-standards' ||
+      'dealer-operations-standards-sales' => 'DOS',
+      'restroom' || 'utilities' => 'UTILITIES',
+      _ => 'CHECKLIST',
+    };
+  }
 
   factory ChecklistCatalogItem.fromJson(Object? value) {
     final data = checklistJsonMap(value, label: 'checklist');

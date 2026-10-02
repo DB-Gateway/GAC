@@ -1,11 +1,12 @@
 <div class="panel-heading">
     <div>
         <span class="section-kicker">{{ $isAdministrator ? 'Administrator access' : $dashboardScope }}</span>
-        <h2>User Usages</h2>
-        <p>{{ $isAdministrator ? 'Account status, role coverage, and branch distribution across the GAC system.' : 'Account status and role coverage for your assigned branch.' }}</p>
+        <h2>User Usage</h2>
+        <p>{{ $isAdministrator ? 'Website and mobile app login activity across the GAC system.' : 'Website and mobile app login activity for your assigned branch.' }}</p>
     </div>
     @if ($isAdministrator)
         <div class="header-actions">
+            <a class="button" href="{{ route('admin.checklist-access.index') }}"><i class="fas fa-toggle-on" aria-hidden="true"></i>Assign Checklists</a>
             <a class="button primary" href="{{ route('users.index') }}"><i class="fas fa-user-gear" aria-hidden="true"></i>Manage User Accounts</a>
         </div>
     @endif
@@ -19,16 +20,22 @@
         <p>{{ $isAdministrator ? 'All stored GAC user records' : 'GAC user records in your assigned branch' }}</p>
     </article>
     <article class="workspace-stat">
-        <div class="workspace-stat-top"><span>Active</span><i class="fas fa-user-check" aria-hidden="true"></i></div>
-        <strong>{{ number_format($userStats['active']) }}</strong>
-        <div class="workspace-meter"><span style="width:{{ $barWidth($userStats['total'] > 0 ? ($userStats['active'] / $userStats['total']) * 100 : 0) }}%"></span></div>
-        <p>Accounts currently allowed to sign in</p>
+        <div class="workspace-stat-top"><span>Website Logins</span><i class="fas fa-globe" aria-hidden="true"></i></div>
+        <strong>{{ number_format($userStats['web_logins_30d']) }}</strong>
+        <div class="workspace-meter"><span style="width:{{ $barWidth($userStats['web_logins_30d'] > 0 ? 100 : 0) }}%"></span></div>
+        <p>Successful website sign-ins in the last 30 days</p>
     </article>
     <article class="workspace-stat">
-        <div class="workspace-stat-top"><span>Inactive</span><i class="fas fa-user-slash" aria-hidden="true"></i></div>
-        <strong>{{ number_format($userStats['inactive']) }}</strong>
-        <div class="workspace-meter"><span style="width:{{ $barWidth($userStats['total'] > 0 ? ($userStats['inactive'] / $userStats['total']) * 100 : 0) }}%"></span></div>
-        <p>Accounts currently blocked from signing in</p>
+        <div class="workspace-stat-top"><span>Mobile App Logins</span><i class="fas fa-mobile-screen-button" aria-hidden="true"></i></div>
+        <strong>{{ number_format($userStats['app_logins_30d']) }}</strong>
+        <div class="workspace-meter"><span style="width:{{ $barWidth($userStats['app_logins_30d'] > 0 ? 100 : 0) }}%"></span></div>
+        <p>Successful app sign-ins in the last 30 days</p>
+    </article>
+    <article class="workspace-stat">
+        <div class="workspace-stat-top"><span>Active Users</span><i class="fas fa-user-clock" aria-hidden="true"></i></div>
+        <strong>{{ number_format($userStats['active_users_30d']) }}</strong>
+        <div class="workspace-meter"><span style="width:{{ $barWidth($userStats['total'] > 0 ? ($userStats['active_users_30d'] / $userStats['total']) * 100 : 0) }}%"></span></div>
+        <p>Unique users seen on either platform in 30 days</p>
     </article>
 </section>
 
@@ -98,32 +105,34 @@
         <div class="role-snapshot-grid">
             <div><i class="fas fa-clipboard-check" aria-hidden="true"></i><strong>{{ number_format($userStats['pic']) }}</strong><span>Person In Charge</span></div>
             <div><i class="fas fa-user-tie" aria-hidden="true"></i><strong>{{ number_format($userStats['bom']) }}</strong><span>Branch Operations Managers</span></div>
-            <div><i class="fas fa-shield-halved" aria-hidden="true"></i><strong>{{ number_format($userStats['admin']) }}</strong><span>Compliance Administrators</span></div>
+            <div><i class="fas fa-shield-halved" aria-hidden="true"></i><strong>{{ number_format($userStats['admin']) }}</strong><span>System Administrators</span></div>
         </div>
     </article>
 </section>
 
-<section class="workspace-table-card" aria-label="Recently created user accounts">
+<section class="workspace-table-card" aria-label="User website and app usage">
     <div class="insight-heading">
-        <div><h3>Recent Accounts</h3><p>{{ $isAdministrator ? 'The 10 most recently created GAC user records.' : 'The 10 most recently created user records in your assigned branch.' }}</p></div>
+        <div><h3>Website &amp; App Usage by User</h3><p>Most recently active accounts, with successful login totals recorded from this release onward.</p></div>
         @if ($isAdministrator)
             <a class="inline-link" href="{{ route('users.index') }}">Open directory <i class="fas fa-arrow-right" aria-hidden="true"></i></a>
         @endif
     </div>
     <div class="table-wrap">
         <table>
-            <thead><tr><th>User</th><th>Role</th><th>Branch</th><th>Status</th><th>Created</th></tr></thead>
+            <thead><tr><th>User</th><th>Role</th><th>Dealer / Brand</th><th>Web</th><th>App</th><th>Last Website Login</th><th>Last App Login</th></tr></thead>
             <tbody>
                 @forelse ($recentUsers as $user)
                     <tr>
                         <td><strong>{{ $user['name'] }}</strong><small class="table-subtext">{{ $user['email'] }}</small></td>
                         <td>{{ $user['role'] }}</td>
                         <td>{{ $user['branch'] }}</td>
-                        <td><span class="status-pill {{ $user['status'] }}">{{ ucfirst($user['status']) }}</span></td>
-                        <td>{{ $user['created_at'] }}</td>
+                        <td>{{ number_format($user['web_logins']) }}</td>
+                        <td>{{ number_format($user['app_logins']) }}</td>
+                        <td>{{ $user['last_web_login'] }}</td>
+                        <td>{{ $user['last_app_login'] }}</td>
                     </tr>
                 @empty
-                    <tr><td class="dashboard-empty" colspan="5">No user accounts are available.</td></tr>
+                    <tr><td class="dashboard-empty" colspan="7">No user accounts are available.</td></tr>
                 @endforelse
             </tbody>
         </table>

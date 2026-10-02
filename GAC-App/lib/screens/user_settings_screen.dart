@@ -182,8 +182,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen>
       });
       _showMessage(
         _hasPin
-            ? '4-Digit PIN updated successfully.'
-            : '4-Digit PIN configured.',
+            ? '6-Digit PIN updated successfully.'
+            : '6-Digit PIN configured.',
       );
     }
   }
@@ -615,7 +615,7 @@ class _UserSettingsScreenState extends State<UserSettingsScreen>
                             ),
                             const SizedBox(height: 6),
                             const Text(
-                              'Manage your 4-digit PIN and biometric unlock preferences.',
+                              'Manage your 6-digit PIN and biometric unlock preferences.',
                               style: TextStyle(
                                 color: GacColors.textSecondary,
                                 fontSize: 11,
@@ -671,7 +671,7 @@ class _UserSettingsScreenState extends State<UserSettingsScreen>
                                               const SizedBox(height: 3),
                                               Text(
                                                 _hasPin
-                                                    ? '4-Digit PIN is active'
+                                                    ? '6-Digit PIN is active'
                                                     : 'Not configured yet',
                                                 style: TextStyle(
                                                   color: _hasPin

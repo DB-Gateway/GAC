@@ -38,6 +38,12 @@ class DosSubmissionContractTest extends TestCase
             'user_type' => User::ROLE_BRANCH_OPERATIONS_MANAGER,
             'account_status' => 'active',
         ]);
+        $otherBranchGm = $this->user(User::ROLE_GENERAL_MANAGER, 'Cebu GM');
+        $otherBranchGm->update(['branch' => 'Cebu']);
+        $otherBranchPurchasing = $this->user(User::ROLE_PURCHASING, 'Cebu Purchasing');
+        $otherBranchPurchasing->update(['branch' => 'Cebu']);
+        $otherBranchAdmin = $this->user(User::ROLE_ADMINISTRATOR, 'Cebu Administrator');
+        $otherBranchAdmin->update(['branch' => 'Cebu']);
         $inactivePurchasing = $this->user(User::ROLE_PURCHASING, 'Inactive Purchasing', 'inactive');
         $template = ChecklistTemplate::query()
             ->where('slug', 'dealer-operations-standards-sales')
@@ -107,6 +113,9 @@ class DosSubmissionContractTest extends TestCase
         $this->assertCount(1, $inventory->notifications()->get());
         $this->assertCount(1, $bom->notifications()->get());
         $this->assertCount(0, $otherBranchBom->notifications()->get());
+        $this->assertCount(0, $otherBranchGm->notifications()->get());
+        $this->assertCount(0, $otherBranchPurchasing->notifications()->get());
+        $this->assertCount(0, $otherBranchAdmin->notifications()->get());
         $this->assertCount(0, $inactivePurchasing->notifications()->get());
         $this->assertSame([], $purchasing->allowedChecklistSlugs());
 
@@ -154,7 +163,8 @@ class DosSubmissionContractTest extends TestCase
                 && count($summary['printCoverageOrder']) === 13
                 && (int) $summary['selectedSubmissionId'] === (int) $first->json('submission.id'))
             ->assertSee('id="summaryUserSelect"', false)
-            ->assertSee('Sales Manager &mdash; Sales Manager &mdash; Pasong Tamo', false)
+            ->assertSee('Sales Manager', false)
+            ->assertDontSee('Sales Manager &mdash; Sales Manager &mdash; Pasong Tamo', false)
             ->assertSee('data-print-template="sales"', false)
             ->assertSee('data-print-scope="user"', false)
             ->assertSee('data-print-user-id="'.$manager->id.'"', false)

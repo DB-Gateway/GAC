@@ -11,7 +11,7 @@ use RuntimeException;
 class BranchPicSeeder extends Seeder
 {
     /**
-     * New accounts use {branch-slug}.{utilities|sales-service}@GAC_PIC_EMAIL_DOMAIN.
+     * New accounts use the canonical {role}.{branch} username format.
      * Their shared initial password comes from GAC_PIC_INITIAL_PASSWORD and must be
      * changed operationally after first login. Re-seeding never resets a password.
      */
@@ -22,15 +22,10 @@ class BranchPicSeeder extends Seeder
             ->unique(fn (string $branch): string => Str::lower(trim($branch)))
             ->values();
         $assignments = array_keys(User::picAssignmentOptions());
-        $emailDomain = Str::lower(trim((string) config('gac.seeded_pic_accounts.email_domain')));
         $initialPassword = (string) config('gac.seeded_pic_accounts.initial_password');
 
         if ($branches->count() !== 49) {
             throw new RuntimeException('The GAC branch configuration must contain exactly 49 unique branches.');
-        }
-
-        if (! filter_var("seed@{$emailDomain}", FILTER_VALIDATE_EMAIL)) {
-            throw new RuntimeException('GAC_PIC_EMAIL_DOMAIN must be a valid email domain.');
         }
 
         if (strlen($initialPassword) < 12) {
@@ -50,6 +45,7 @@ class BranchPicSeeder extends Seeder
 
                 if ($user !== null) {
                     $user->forceFill([
+                        'email' => User::usernameFor(User::ROLE_PERSON_IN_CHARGE, $branch, $assignment),
                         'branch' => $branch,
                         'user_type' => User::ROLE_PERSON_IN_CHARGE,
                         'pic_assignment_type' => $assignment,
@@ -60,10 +56,9 @@ class BranchPicSeeder extends Seeder
                     continue;
                 }
 
-                $assignmentSlug = str_replace('_', '-', $assignment);
                 User::create([
                     'name' => sprintf('%s %s PIC', $branch, User::picAssignmentLabelFor($assignment)),
-                    'email' => sprintf('%s.%s@%s', Str::slug($branch), $assignmentSlug, $emailDomain),
+                    'email' => User::usernameFor(User::ROLE_PERSON_IN_CHARGE, $branch, $assignment),
                     'email_verified_at' => now(),
                     'branch' => $branch,
                     'user_type' => User::ROLE_PERSON_IN_CHARGE,
@@ -76,10 +71,9 @@ class BranchPicSeeder extends Seeder
         }
 
         $this->command?->info(sprintf(
-            'Ensured 98 assigned PIC accounts across 49 branches (%d created, %d reused). New-account emails use {branch}.{assignment}@%s; the initial password came from GAC_PIC_INITIAL_PASSWORD.',
+            'Ensured 98 assigned PIC accounts across 49 branches (%d created, %d reused). Usernames use {role}.{branch}; the initial password came from GAC_PIC_INITIAL_PASSWORD.',
             $created,
-            $reused,
-            $emailDomain
+            $reused
         ));
     }
 

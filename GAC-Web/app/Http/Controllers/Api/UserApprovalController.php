@@ -67,7 +67,7 @@ class UserApprovalController extends Controller
         abort_unless(
             $request->user()?->hasAdministrativeAccess() === true,
             403,
-            'Only a compliance administrator can approve account requests.'
+            'Only the system administrator can approve account requests.'
         );
     }
 }

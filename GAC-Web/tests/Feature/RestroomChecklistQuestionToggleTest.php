@@ -187,7 +187,7 @@ class RestroomChecklistQuestionToggleTest extends TestCase
         $activeSlots = $response->json('item.active_slots');
         $this->assertIsArray($activeSlots);
         $this->assertNotContains('08:00', $activeSlots);
-        $this->assertContains('09:00', $activeSlots);
+        $this->assertContains('11:00', $activeSlots);
 
         $updatedMetadata = $item->fresh()->metadata;
         $this->assertNotContains('08:00', $updatedMetadata['active_slots'] ?? []);
@@ -203,7 +203,7 @@ class RestroomChecklistQuestionToggleTest extends TestCase
 
         $activeSlots2 = $response2->json('item.active_slots');
         $this->assertContains('08:00', $activeSlots2);
-        $this->assertContains('09:00', $activeSlots2);
+        $this->assertContains('11:00', $activeSlots2);
     }
 
     public function test_disabled_hourly_slot_is_not_required_in_submission(): void

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\ChecklistItem;
+use App\Models\ChecklistSubmission;
 use App\Models\ChecklistTemplate;
 use App\Models\User;
 use App\Notifications\PicTaskCompleted;
@@ -66,6 +67,21 @@ class TaskCompletionNotificationTest extends TestCase
     public function test_each_mobile_five_s_user_notifies_the_gm_and_same_branch_bom(): void
     {
         [, $gm, $bom, $otherBranchBom, $inactiveBom] = $this->users();
+        $otherBranchGm = User::factory()->create([
+            'branch' => 'Cebu',
+            'user_type' => User::ROLE_GENERAL_MANAGER,
+            'account_status' => 'active',
+        ]);
+        $otherBranchAdmin = User::factory()->create([
+            'branch' => 'Cebu',
+            'user_type' => User::ROLE_ADMINISTRATOR,
+            'account_status' => 'active',
+        ]);
+        $unassignedAdmin = User::factory()->create([
+            'branch' => null,
+            'user_type' => User::ROLE_ADMINISTRATOR,
+            'account_status' => 'active',
+        ]);
         $this->travelTo('2026-08-29 18:30:00');
 
         $checklists = [
@@ -113,6 +129,9 @@ class TaskCompletionNotificationTest extends TestCase
         }
 
         $this->assertCount(0, $otherBranchBom->notifications()->get());
+        $this->assertCount(0, $otherBranchGm->notifications()->get());
+        $this->assertCount(0, $otherBranchAdmin->notifications()->get());
+        $this->assertCount(0, $unassignedAdmin->notifications()->get());
         $this->assertCount(0, $inactiveBom->notifications()->get());
         $this->assertDatabaseCount('notifications', 6);
     }
@@ -147,6 +166,55 @@ class TaskCompletionNotificationTest extends TestCase
                 'user_type' => User::ROLE_5S_SERVICE,
                 'submission_id' => $submissionResponse->json('submission.id'),
             ]));
+    }
+
+    public function test_utilities_notification_names_the_restroom_category_and_type(): void
+    {
+        $inspector = User::factory()->make([
+            'name' => 'Utilities Inspector',
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_5S_UTILITIES,
+        ]);
+
+        foreach ([
+            ['customer', 'male', 'Customer Area - Male'],
+            ['customer', 'female', 'Customer Area - Female'],
+            ['customer', 'pwd', 'Customer Area - PWD'],
+            ['office', 'male', 'Office - Male'],
+            ['office', 'female', 'Office - Female'],
+        ] as [$category, $type, $label]) {
+            $submission = new ChecklistSubmission([
+                'branch' => 'Pasong Tamo',
+                'restroom_area' => $category,
+                'restroom_gender' => $type,
+                'template_snapshot' => ['slug' => 'restroom-1-'.$type, 'name' => 'Utilities 5S'],
+                'scores' => ['bad' => 0],
+            ]);
+
+            $data = (new PicTaskCompleted($submission, $inspector))->toArray($inspector);
+
+            $this->assertSame("Utilities 5S checklist submitted ({$label})", $data['title']);
+            $this->assertStringContainsString("{$label} Utilities 5S checklist", $data['message']);
+        }
+    }
+
+    public function test_checklist_without_a_branch_does_not_notify_a_manager(): void
+    {
+        $inspector = User::factory()->create([
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_5S_SALES,
+        ]);
+        $manager = User::factory()->create([
+            'branch' => 'Pasong Tamo',
+            'user_type' => User::ROLE_GENERAL_MANAGER,
+        ]);
+        $submission = new ChecklistSubmission([
+            'branch' => null,
+            'template_snapshot' => ['slug' => 'sales', 'name' => 'Sales 5S'],
+        ]);
+
+        $this->assertSame(0, app(\App\Services\TaskCompletionNotifier::class)->send($submission, $inspector));
+        $this->assertCount(0, $manager->notifications()->get());
     }
 
     public function test_view_status_is_isolated_to_the_specific_gm_or_bom_recipient(): void

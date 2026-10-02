@@ -13,6 +13,9 @@ class ChecklistSubmission extends Model
 
     protected $fillable = [
         'checklist_template_id',
+        'branch_restroom_id',
+        'restroom_area',
+        'restroom_gender',
         'user_id',
         'submitted_by_user_id',
         'submitted_by_name',

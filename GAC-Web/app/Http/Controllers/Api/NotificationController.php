@@ -15,6 +15,12 @@ class NotificationController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        // Also catch up during foreground/background mobile inbox polling.
+        try {
+            app(\App\Services\UtilitiesInspectionService::class)->sync($request->user());
+        } catch (\Throwable $error) {
+            report($error); // Keep the inbox usable; the scheduler will retry.
+        }
         $notifications = $request->user()
             ->notifications()
             ->get();
@@ -25,21 +31,29 @@ class NotificationController extends Controller
             ->map(fn ($id) => (string) $id)
             ->all();
 
-        $followedUpIds = ! empty($escalationIds)
+        $reports = ! empty($escalationIds)
             ? \App\Models\Report::where('type', 'escalation_follow_up')
-                ->where('generated_by_user_id', $request->user()->getKey())
                 ->get(['data_snapshot'])
-                ->map(fn ($r) => (string) data_get($r->data_snapshot, 'source_notification_id'))
-                ->filter()
-                ->flip()
-                ->all()
-            : [];
+            : collect();
+
+        $followedUpIds = $reports
+            ->map(fn ($r) => (string) data_get($r->data_snapshot, 'source_notification_id'))
+            ->filter()
+            ->flip()
+            ->all();
+
+        $followedUpResponseIds = $reports
+            ->map(fn ($r) => (int) data_get($r->data_snapshot, 'response_id'))
+            ->filter()
+            ->flip()
+            ->all();
 
         return response()->json([
             'notifications' => $notifications
                 ->map(fn (DatabaseNotification $notification): array => $this->payload(
                     $notification,
                     isset($followedUpIds[(string) $notification->getKey()])
+                        || (data_get($notification->data, 'response_id') && isset($followedUpResponseIds[(int) data_get($notification->data, 'response_id')]))
                 ))
                 ->values(),
             'unread_count' => $notifications
@@ -113,9 +127,14 @@ class NotificationController extends Controller
             if ($hasReportFollowUp !== null) {
                 $data['has_follow_up'] = $hasReportFollowUp;
             } else {
+                $responseId = (int) data_get($data, 'response_id');
                 $data['has_follow_up'] = \App\Models\Report::where('type', 'escalation_follow_up')
-                    ->where('generated_by_user_id', $notification->notifiable_id)
-                    ->where('data_snapshot->source_notification_id', (string) $notification->getKey())
+                    ->where(function ($query) use ($notification, $responseId): void {
+                        $query->where('data_snapshot->source_notification_id', (string) $notification->getKey());
+                        if ($responseId > 0) {
+                            $query->orWhere('data_snapshot->response_id', $responseId);
+                        }
+                    })
                     ->exists();
             }
         }

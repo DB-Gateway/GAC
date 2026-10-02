@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +8,7 @@ import '../data/admin_data.dart';
 import '../models/authenticated_user.dart';
 import '../models/checklist_models.dart';
 import '../services/checklist_service.dart';
+import '../services/utilities_missed_checklist_service.dart';
 import '../theme/gac_theme.dart';
 import '../utils/checklist_time_slot.dart';
 import '../widgets/gac_surfaces.dart';
@@ -89,6 +92,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
   bool _loading = true;
   bool _openedInitialChecklist = false;
   int _requestGeneration = 0;
+  late final Timer _utilitiesDeadlineTimer;
   String? _error;
 
   bool get _isDosWorkspace {
@@ -173,7 +177,10 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       } else if (user.is5sUtilities || user.isUtilities) {
         base = base
             .where(
-              (item) => item.slug == 'restroom' || item.slug == 'utilities',
+              (item) =>
+                  item.slug == 'restroom' ||
+                  item.slug.startsWith('restroom') ||
+                  item.slug == 'utilities',
             )
             .toList(growable: false);
       } else if (user.isSalesService5s) {
@@ -218,7 +225,10 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       _ChecklistFilter.restroom =>
         base
             .where(
-              (item) => item.slug == 'restroom' || item.slug == 'utilities',
+              (item) =>
+                  item.slug == 'restroom' ||
+                  item.slug.startsWith('restroom') ||
+                  item.slug == 'utilities',
             )
             .toList(growable: false),
     };
@@ -227,6 +237,15 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
   @override
   void initState() {
     super.initState();
+    _utilitiesDeadlineTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted &&
+          widget.isActive &&
+          widget.repository == null &&
+          widget.now == null &&
+          UtilitiesMissedChecklistService.isUtilitiesUser(widget.user)) {
+        _load(showSpinner: false);
+      }
+    });
     final user = widget.user;
     if (_isDosWorkspace) {
       _filter = _ChecklistFilter.dos;
@@ -285,6 +304,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
 
   @override
   void dispose() {
+    _utilitiesDeadlineTimer.cancel();
     _requestGeneration++;
     _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
@@ -307,8 +327,24 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     }
     try {
       final dateStr = _dateString((widget.now ?? DateTime.now)());
-      final checklists = await _repository.fetchCatalog(date: dateStr);
+      var checklists = await _repository.fetchCatalog(date: dateStr);
       if (!mounted || generation != _requestGeneration) return;
+      if (widget.repository == null &&
+          widget.isActive &&
+          widget.now == null &&
+          UtilitiesMissedChecklistService.isUtilitiesUser(widget.user) &&
+          dateStr == _dateString(DateTime.now())) {
+        final sync =
+            await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
+              repository: _repository,
+              user: widget.user!,
+              catalog: checklists,
+            );
+        if (sync?.autoSubmitted == true) {
+          checklists = await _repository.fetchCatalog(date: dateStr);
+        }
+        if (!mounted || generation != _requestGeneration) return;
+      }
       final catalog = checklists
           .where((e) => e.slug != 'dealer-operations-standards-subform')
           .toList(growable: false);
@@ -342,8 +378,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
               id: 11,
               slug: 'dealer-operations-standards-documentation',
               name: 'Dealer Operations Standards - Documentation',
-              description:
-                  'FY2025 Aftersales Standards Compliance Audit Documentation Sheet',
+              description: 'FY2025 Aftersales Standards Compliance Audit Documentation Sheet',
               version: 1,
               settings: const {'validation_mode': 'dos_documentation'},
               sectionCount: 3,
@@ -425,9 +460,10 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     int? initialCustomerIndex,
   }) async {
     final submission = checklist.submission;
+    final isSubmitted = _isItemSubmitted(checklist);
     final target =
         submission != null &&
-            !submission.isSubmitted &&
+            !isSubmitted &&
             (submission.effectiveAnsweredItems > 0 ||
                 (submission.completionPercentage ?? 0) > 0)
         ? _latestResumeTarget(_visibleChecklists)
@@ -436,8 +472,8 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     final resolvedSubmission = resolvedChecklist.submission;
     final isContinuing =
         resolvedSubmission != null &&
-        !resolvedSubmission.isSubmitted &&
-        resolvedSubmission.hasStarted;
+        !_isItemSubmitted(resolvedChecklist) &&
+        _isItemStarted(resolvedChecklist);
     final resolvedSlotKey =
         initialSlotKey ??
         (isContinuing
@@ -728,6 +764,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
 
     final total = items.length;
     final answered = items.where(_isItemAnswered).length;
+    final isDosSubmitted = _dosRecord?.submission?.isSubmitted ?? false;
     return _DosCategoryStats(
       category: category,
       title: title,
@@ -736,9 +773,9 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       answered: answered,
       accentColor: accentColor,
       icon: icon,
-      completedLabel: _dosRecord?.submission?.isSubmitted ?? false
-          ? 'Submitted'
-          : 'Completed',
+      completedLabel: isDosSubmitted ? 'Submitted' : 'Completed',
+      isSubmitted: isDosSubmitted,
+      hasStarted: answered > 0 || (_dosRecord?.submission?.hasStarted ?? false),
     );
   }
 
@@ -748,6 +785,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     final answered = allItems.where(_isItemAnswered).length;
     final isAftersales = _effectiveTrack == DosAuditTrack.aftersales;
     final sectionsCount = _getEffectiveDosSections().length;
+    final isDosSubmitted = _dosRecord?.submission?.isSubmitted ?? false;
 
     return _DosCategoryStats(
       category: 'MASTER AUDIT',
@@ -761,14 +799,15 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       answered: answered,
       accentColor: GacColors.primary,
       icon: Icons.assignment_rounded,
-      completedLabel: _dosRecord?.submission?.isSubmitted ?? false
-          ? 'Submitted'
-          : 'Completed',
+      completedLabel: isDosSubmitted ? 'Submitted' : 'Completed',
+      isSubmitted: isDosSubmitted,
+      hasStarted: answered > 0 || (_dosRecord?.submission?.hasStarted ?? false),
     );
   }
 
   List<_DosSectionStats> _computeSectionStats() {
     final sections = _getEffectiveDosSections();
+    final isDosSubmitted = _dosRecord?.submission?.isSubmitted ?? false;
     final stats = <_DosSectionStats>[];
     for (var i = 0; i < sections.length; i++) {
       final sec = sections[i];
@@ -780,6 +819,9 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
           title: sec.title,
           total: total,
           answered: answered,
+          isSubmitted: isDosSubmitted,
+          hasStarted:
+              answered > 0 || (_dosRecord?.submission?.hasStarted ?? false),
         ),
       );
     }
@@ -803,7 +845,10 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       } else if (user.is5sUtilities || user.isUtilities) {
         base = base
             .where(
-              (item) => item.slug == 'restroom' || item.slug == 'utilities',
+              (item) =>
+                  item.slug == 'restroom' ||
+                  item.slug.startsWith('restroom') ||
+                  item.slug == 'utilities',
             )
             .toList(growable: false);
       } else if (user.isSalesService5s) {
@@ -848,7 +893,10 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       _ChecklistFilter.restroom =>
         base
             .where(
-              (item) => item.slug == 'restroom' || item.slug == 'utilities',
+              (item) =>
+                  item.slug == 'restroom' ||
+                  item.slug.startsWith('restroom') ||
+                  item.slug == 'utilities',
             )
             .length,
     };
@@ -858,7 +906,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     final candidates = tasks
         .where((task) {
           final submission = task.submission;
-          if (submission == null || submission.isSubmitted) return false;
+          if (submission == null || _isItemSubmitted(task)) return false;
           final total = (submission.totalItems ?? 0) > 0
               ? submission.totalItems!
               : task.totalWorkUnits;
@@ -1150,6 +1198,8 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
                     validItems[i].submission?.totalItems ??
                     validItems[i].itemCount,
                 answered: validItems[i].submission?.answeredItems ?? 0,
+                isSubmitted: _isItemSubmitted(validItems[i]),
+                hasStarted: _isItemStarted(validItems[i]),
               ),
               onPressed: () => _openChecklist(validItems[i]),
             ),
@@ -1205,7 +1255,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     }
 
     final incomplete = visible.firstWhere(
-      (item) => !(item.submission?.isSubmitted ?? false),
+      (item) => !_isItemSubmitted(item),
       orElse: () => visible.first,
     );
     _openChecklist(incomplete);
@@ -1230,7 +1280,7 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
         Icons.car_repair_rounded,
         item.description ?? 'Service reception, customer waiting lounge, and workshop 5S inspection.',
       ),
-      'restroom' => (
+      'restroom' || _ when item.slug.startsWith('restroom') => (
         'SANITATION',
         const Color(0xFF06B6D4),
         Icons.cleaning_services_rounded,
@@ -1252,6 +1302,8 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
 
     final total = item.submission?.totalItems ?? item.itemCount;
     final answered = item.submission?.answeredItems ?? 0;
+    final isSubmitted = _isItemSubmitted(item);
+    final hasStarted = _isItemStarted(item);
 
     return _DosCategoryStats(
       category: category,
@@ -1261,6 +1313,9 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       answered: answered,
       accentColor: accentColor,
       icon: icon,
+      completedLabel: 'Submitted',
+      isSubmitted: isSubmitted,
+      hasStarted: hasStarted,
     );
   }
 
@@ -1289,6 +1344,8 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
     if (gatewayItem != null) {
       final total = gatewayItem.submission?.totalItems ?? gatewayItem.itemCount;
       final answered = gatewayItem.submission?.answeredItems ?? 0;
+      final isSubmitted = _isItemSubmitted(gatewayItem);
+      final hasStarted = _isItemStarted(gatewayItem);
       return _DosCategoryStats(
         category: 'MASTER CHECKLIST',
         title: gatewayItem.name.isNotEmpty
@@ -1299,6 +1356,9 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
         answered: answered,
         accentColor: GacColors.primary,
         icon: Icons.assignment_turned_in_rounded,
+        completedLabel: 'Submitted',
+        isSubmitted: isSubmitted,
+        hasStarted: hasStarted,
       );
     }
 
@@ -1310,6 +1370,8 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       0,
       (sum, it) => sum + (it.submission?.answeredItems ?? 0),
     );
+    final isSubmitted = items.isNotEmpty && items.every(_isItemSubmitted);
+    final hasStarted = items.any(_isItemStarted);
 
     final String title;
     final String subtitle;
@@ -1343,32 +1405,42 @@ class _UserChecklistsScreenState extends State<UserChecklistsScreen>
       answered: answered,
       accentColor: GacColors.primary,
       icon: Icons.assignment_turned_in_rounded,
+      completedLabel: 'Submitted',
+      isSubmitted: isSubmitted,
+      hasStarted: hasStarted,
     );
   }
 
   _DosCategoryStats _computeDocumentationStats() {
-    final submission = _docRecord?.submission ??
+    final submission =
+        _docRecord?.submission ??
         _checklists
             .where((e) => e.slug == 'dealer-operations-standards-documentation')
             .firstOrNull
             ?.submission;
     final isSubmitted = submission?.isSubmitted ?? false;
-    final total = _docRecord?.template.sections
-            .fold<int>(0, (sum, sec) => sum + sec.items.length) ??
+    final total =
+        _docRecord?.template.sections.fold<int>(
+          0,
+          (sum, sec) => sum + sec.items.length,
+        ) ??
         17;
-    final answered =
-        isSubmitted ? total : (submission?.effectiveAnsweredItems ?? 0);
+    final answered = isSubmitted
+        ? total
+        : (submission?.effectiveAnsweredItems ?? 0);
 
     return _DosCategoryStats(
       category: 'DOCUMENTATION AUDIT (OPTIONAL)',
       title: 'Documentation Sheet — Customer Repair Orders',
-      subtitle:
-          'Multi-customer audit: Rationalized Checksheet (11), Repair Order (3), and Service Invoice (3). Optional audit.',
+      subtitle: 'Multi-customer audit: Rationalized Checksheet (11), Repair Order (3), and Service Invoice (3). Optional audit.',
       total: total,
       answered: answered,
       accentColor: const Color(0xFF06B6D4),
       icon: Icons.description_rounded,
       completedLabel: 'Submitted',
+      isSubmitted: isSubmitted,
+      hasStarted:
+          isSubmitted || answered > 0 || (submission?.hasStarted ?? false),
     );
   }
 
@@ -1558,6 +1630,8 @@ class _DosCategoryStats {
     required this.accentColor,
     required this.icon,
     this.completedLabel = 'Submitted',
+    this.isSubmitted = false,
+    this.hasStarted = false,
   });
 
   final String category;
@@ -1568,12 +1642,17 @@ class _DosCategoryStats {
   final Color accentColor;
   final IconData icon;
   final String completedLabel;
+  final bool isSubmitted;
+  final bool hasStarted;
 
   int get progress =>
       total == 0 ? 0 : ((answered / total) * 100).round().clamp(0, 100);
-  bool get isCompleted => total > 0 && answered >= total;
-  String get status =>
-      isCompleted ? completedLabel : (answered > 0 ? 'Continue' : 'Start');
+  bool get isCompleted => isSubmitted;
+  String get status {
+    if (isSubmitted) return completedLabel;
+    if (hasStarted || answered > 0) return 'In progress';
+    return 'Start';
+  }
 }
 
 class _DosSectionStats {
@@ -1582,18 +1661,25 @@ class _DosSectionStats {
     required this.title,
     required this.total,
     required this.answered,
+    this.isSubmitted = false,
+    this.hasStarted = false,
   });
 
   final int index;
   final String title;
   final int total;
   final int answered;
+  final bool isSubmitted;
+  final bool hasStarted;
 
   int get progress =>
       total == 0 ? 0 : ((answered / total) * 100).round().clamp(0, 100);
-  bool get isCompleted => total > 0 && answered >= total;
-  String get status =>
-      isCompleted ? 'Submitted' : (answered > 0 ? 'Continue' : 'Start');
+  bool get isCompleted => isSubmitted;
+  String get status {
+    if (isSubmitted) return 'Submitted';
+    if (hasStarted || answered > 0) return 'In progress';
+    return 'Start';
+  }
 }
 
 class _DosCategoryCard extends StatelessWidget {
@@ -1732,7 +1818,9 @@ class _DosCategoryCard extends StatelessWidget {
               _ChecklistActionButton(
                 label: submitted
                     ? 'VIEW SUBMISSION'
-                    : '${stats.status.toUpperCase()} CHECKLIST',
+                    : (stats.hasStarted || stats.answered > 0
+                          ? 'CONTINUE CHECKLIST'
+                          : 'START CHECKLIST'),
                 accentColor: stats.accentColor,
                 isSubmitted: submitted,
                 onPressed: onPressed,
@@ -1874,7 +1962,9 @@ class _DosSectionCard extends StatelessWidget {
               _ChecklistActionButton(
                 label: submitted
                     ? 'VIEW SECTION'
-                    : '${stats.status.toUpperCase()} SECTION AUDIT',
+                    : (stats.hasStarted || stats.answered > 0
+                          ? 'CONTINUE SECTION AUDIT'
+                          : 'START SECTION AUDIT'),
                 accentColor: GacColors.primary,
                 isSubmitted: submitted,
                 onPressed: onPressed,
@@ -1986,8 +2076,8 @@ class _ChecklistCard extends StatelessWidget {
   String get _status {
     final submission = checklist.submission;
     if (submission == null) return 'Start';
-    if (submission.isSubmitted) return 'Submitted';
-    if (submission.hasStarted) return 'Continue';
+    if (_isItemSubmitted(checklist)) return 'Submitted';
+    if (_isItemStarted(checklist)) return 'In progress';
     return 'Start';
   }
 
@@ -1998,7 +2088,7 @@ class _ChecklistCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final submitted = checklist.submission?.isSubmitted ?? false;
+    final submitted = _isItemSubmitted(checklist);
     return GacContentPanel(
       width: double.infinity,
       padding: const EdgeInsets.all(17),
@@ -2119,6 +2209,12 @@ class _ChecklistCard extends StatelessWidget {
           _ChecklistActionButton(
             checklist: checklist,
             status: _status,
+            label: submitted
+                ? 'VIEW SUBMISSION'
+                : (_isItemStarted(checklist)
+                      ? 'CONTINUE CHECKLIST'
+                      : 'START CHECKLIST'),
+            isSubmitted: submitted,
             onPressed: onPressed,
           ),
         ],
@@ -2135,16 +2231,33 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isSubmitted = submitted;
+    final isProgress =
+        !isSubmitted && status.toLowerCase().contains('progress');
+
+    final Color bgColor;
+    final Color textColor;
+    if (isSubmitted) {
+      bgColor = GacColors.successContainer;
+      textColor = GacColors.success;
+    } else if (isProgress) {
+      bgColor = GacColors.blue.withValues(alpha: 0.16);
+      textColor = const Color(0xFF60A5FA);
+    } else {
+      bgColor = GacColors.primary;
+      textColor = GacColors.white;
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: submitted ? GacColors.successContainer : GacColors.primary,
+        color: bgColor,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         status.toUpperCase(),
         style: TextStyle(
-          color: submitted ? GacColors.success : GacColors.white,
+          color: textColor,
           fontSize: 7,
           fontWeight: FontWeight.w900,
         ),
@@ -2173,12 +2286,16 @@ class _ChecklistActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final submitted =
-        isSubmitted ?? (checklist?.submission?.isSubmitted ?? false);
+        isSubmitted ??
+        (checklist != null ? _isItemSubmitted(checklist!) : false);
     final effectiveLabel =
         label ??
         (submitted
             ? 'VIEW SUBMISSION'
-            : '${(status ?? "START").toUpperCase()} CHECKLIST');
+            : (status?.toLowerCase().contains('progress') == true ||
+                      status?.toLowerCase() == 'continue'
+                  ? 'CONTINUE CHECKLIST'
+                  : '${(status ?? "START").toUpperCase()} CHECKLIST'));
     final buttonColor = submitted
         ? const Color(0xFF153A56)
         : (accentColor ?? GacColors.primary);
@@ -2294,17 +2411,80 @@ String _filterLabel(_ChecklistFilter filter) => switch (filter) {
   _ChecklistFilter.restroom => '5S UTILITIES',
 };
 
-IconData _categoryIcon(String slug) => switch (slug) {
-  'gateway-5s' => Icons.auto_awesome_outlined,
-  'dealer-operations-standards' ||
-  'dealer-operations-standards-sales' => Icons.assignment_outlined,
-  'dealer-operations-standards-documentation' => Icons.description_rounded,
-  'restroom' || 'utilities' => Icons.cleaning_services_rounded,
-  _ => Icons.checklist_rounded,
-};
+IconData _categoryIcon(String slug) {
+  if (slug.startsWith('restroom')) return Icons.cleaning_services_rounded;
+  return switch (slug) {
+    'gateway-5s' => Icons.auto_awesome_outlined,
+    'dealer-operations-standards' ||
+    'dealer-operations-standards-sales' => Icons.assignment_outlined,
+    'dealer-operations-standards-documentation' => Icons.description_rounded,
+    'restroom' || 'utilities' => Icons.cleaning_services_rounded,
+    _ => Icons.checklist_rounded,
+  };
+}
 
 String _dateString(DateTime value) {
   return '${value.year.toString().padLeft(4, '0')}-'
       '${value.month.toString().padLeft(2, '0')}-'
       '${value.day.toString().padLeft(2, '0')}';
+}
+
+bool _isUtilitiesChecklist(ChecklistCatalogItem task) {
+  return task.slug == 'restroom' ||
+      task.slug.startsWith('restroom') ||
+      task.slug == 'utilities' ||
+      task.settings['validation_mode'] == 'time_slots' ||
+      task.settings['schedule_type'] == 'time_slots';
+}
+
+int _totalSlotsFor(ChecklistCatalogItem task) {
+  final schedule = task.settings['schedule'];
+  if (schedule is Map) {
+    final slots = schedule['slots'];
+    if (slots is List && slots.isNotEmpty) return slots.length;
+  }
+  return UtilitiesMissedChecklistService.defaultUtilitiesSlots.length;
+}
+
+int _completedSlotsFor(ChecklistCatalogItem task) {
+  final submission = task.submission;
+  if (submission == null) return 0;
+  final totalSlots = _totalSlotsFor(task);
+  final scores = submission.scores;
+  if (scores['completed_slots'] is int) {
+    return (scores['completed_slots'] as int).clamp(0, totalSlots);
+  }
+  final answered = submission.effectiveAnsweredItems;
+  if (task.itemCount > 0 && answered > 0) {
+    return (answered / task.itemCount).floor().clamp(0, totalSlots);
+  }
+  if (submission.isSubmitted) return totalSlots;
+  return 0;
+}
+
+bool _isUtilitiesAllFinished(ChecklistCatalogItem task) {
+  final totalSlots = _totalSlotsFor(task);
+  final completedSlots = _completedSlotsFor(task);
+  return completedSlots >= totalSlots && totalSlots > 0;
+}
+
+bool _isItemSubmitted(ChecklistCatalogItem task) {
+  final submission = task.submission;
+  if (submission == null) return false;
+  if (_isUtilitiesChecklist(task)) {
+    return _isUtilitiesAllFinished(task);
+  }
+  final status = submission.status.trim().toLowerCase();
+  return submission.isSubmitted ||
+      status == 'submitted' ||
+      status == 'completed';
+}
+
+bool _isItemStarted(ChecklistCatalogItem task) {
+  final submission = task.submission;
+  if (submission == null) return false;
+  if (_isUtilitiesChecklist(task)) {
+    return _completedSlotsFor(task) > 0 || submission.hasStarted;
+  }
+  return submission.hasStarted || (submission.answeredItems ?? 0) > 0;
 }

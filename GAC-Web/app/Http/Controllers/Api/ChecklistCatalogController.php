@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\BranchRestroom;
 use App\Models\ChecklistSubmission;
 use App\Models\ChecklistTemplate;
 use Illuminate\Http\JsonResponse;
@@ -39,6 +40,7 @@ class ChecklistCatalogController extends Controller
             ])
             ->orderBy('id')
             ->get()
+            ->filter(fn (ChecklistTemplate $template): bool => $user->canAccessChecklist($template->slug))
             ->reject(fn (ChecklistTemplate $template): bool => (bool) data_get(
                 $template->settings,
                 'workspace_hidden',
@@ -57,39 +59,103 @@ class ChecklistCatalogController extends Controller
             ->where('user_id', $user->id)
             ->whereIn('status', ['draft', 'submitted'])
             ->latest('updated_at')
-            ->get()
-            ->groupBy('checklist_template_id');
+            ->get();
+
+        $branchRestrooms = BranchRestroom::query()
+            ->whereRaw('LOWER(TRIM(branch)) = ?', [Str::lower($branch ?? '')])
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        $catalogItems = collect();
+
+        foreach ($templates as $template) {
+            $records = $submissions->where('checklist_template_id', $template->id);
+            $itemCount = $template->sections->sum(fn ($section): int => $section->items->count());
+            $usesTimeSlots = ($template->settings['validation_mode'] ?? null) === 'time_slots';
+
+            if ($template->slug === 'restroom' && $branchRestrooms->isNotEmpty()) {
+                foreach ($branchRestrooms as $restroom) {
+                    foreach ($restroom->enabledGenders() as $gender) {
+                        $genderSlug = $restroom->slugForGender($gender);
+                        if (! $user->canAccessChecklist($genderSlug)) {
+                            continue;
+                        }
+
+                        $restroomSubmission = $records
+                            ->filter(fn ($s) => (int) $s->branch_restroom_id === (int) $restroom->id && strtolower((string) $s->restroom_gender) === $gender)
+                            ->sortByDesc('updated_at')
+                            ->first(fn ($s) => $s->status === 'draft')
+                            ?? $records
+                                ->filter(fn ($s) => (int) $s->branch_restroom_id === (int) $restroom->id && strtolower((string) $s->restroom_gender) === $gender)
+                                ->sortByDesc('updated_at')
+                                ->first();
+
+                        $timeSlots = [
+                            ['key' => '08:00', 'label' => '8 AM'],
+                            ['key' => '11:00', 'label' => '11 AM'],
+                            ['key' => '13:00', 'label' => '1 PM'],
+                            ['key' => '16:00', 'label' => '4 PM'],
+                        ];
+                        $workUnitCount = $itemCount * count($timeSlots);
+
+                        $catalogItems->push([
+                            'id' => $template->id,
+                            'slug' => $genderSlug,
+                            'name' => $restroom->titleForGender($gender),
+                            'description' => "Hourly {$restroom->name} condition and orderliness inspection (" . BranchRestroom::genderLabel($gender) . ').',
+                            'version' => $template->version,
+                            'settings' => array_merge($template->settings, [
+                                'restroom_id' => $restroom->id,
+                                'restroom_name' => $restroom->name,
+                                'restroom_area' => $restroom->area_type,
+                                'restroom_gender' => $gender,
+                                'time_slots' => $timeSlots,
+                            ]),
+                            'section_count' => $template->sections->count(),
+                            'item_count' => $itemCount,
+                            'work_unit_count' => $workUnitCount,
+                            'updated_at' => $template->updated_at?->toISOString(),
+                            'submission' => $restroomSubmission ? $this->submissionSummary(
+                                $restroomSubmission,
+                                $itemCount,
+                                $usesTimeSlots
+                            ) : null,
+                        ]);
+                    }
+                }
+                continue;
+            }
+
+            $submission = $records->firstWhere('status', 'draft') ?? $records->first();
+            $workUnitCount = $usesTimeSlots
+                ? $itemCount * count($template->settings['time_slots'] ?? [])
+                : $itemCount;
+
+            $catalogItems->push([
+                'id' => $template->id,
+                'slug' => $template->slug,
+                'name' => $template->name,
+                'description' => $template->description,
+                'version' => $template->version,
+                'settings' => $template->settings,
+                'section_count' => $template->sections->count(),
+                'item_count' => $itemCount,
+                'work_unit_count' => $workUnitCount,
+                'updated_at' => $template->updated_at?->toISOString(),
+                'submission' => $submission ? $this->submissionSummary(
+                    $submission,
+                    $itemCount,
+                    $usesTimeSlots
+                ) : null,
+            ]);
+        }
 
         return response()->json([
             'date' => $date,
             'branch' => $branch,
-            'checklists' => $templates->map(function (ChecklistTemplate $template) use ($submissions): array {
-                $records = $submissions->get($template->id, collect());
-                $submission = $records->firstWhere('status', 'draft') ?? $records->first();
-                $itemCount = $template->sections->sum(fn ($section): int => $section->items->count());
-                $usesTimeSlots = ($template->settings['validation_mode'] ?? null) === 'time_slots';
-                $workUnitCount = $usesTimeSlots
-                    ? $itemCount * count($template->settings['time_slots'] ?? [])
-                    : $itemCount;
-
-                return [
-                    'id' => $template->id,
-                    'slug' => $template->slug,
-                    'name' => $template->name,
-                    'description' => $template->description,
-                    'version' => $template->version,
-                    'settings' => $template->settings,
-                    'section_count' => $template->sections->count(),
-                    'item_count' => $itemCount,
-                    'work_unit_count' => $workUnitCount,
-                    'updated_at' => $template->updated_at?->toISOString(),
-                    'submission' => $submission ? $this->submissionSummary(
-                        $submission,
-                        $itemCount,
-                        $usesTimeSlots
-                    ) : null,
-                ];
-            })->values(),
+            'checklists' => $catalogItems->values(),
         ]);
     }
 

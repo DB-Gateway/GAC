@@ -10,6 +10,7 @@ import '../config/api_config.dart';
 import '../platform/browser_history_stub.dart'
     if (dart.library.js_interop) '../platform/browser_history_web.dart';
 import '../models/authenticated_user.dart';
+import '../models/user_notification.dart';
 import '../screens/user_checklist_detail_screen.dart';
 import '../screens/user_checklists_screen.dart';
 import '../screens/user_home_screen.dart';
@@ -111,6 +112,7 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
         widget.notificationController ?? UserNotificationController();
     _ownsNotificationController = widget.notificationController == null;
     _notificationController.addListener(_handleNotificationChange);
+    _notificationController.onMissedInspection = _showMissedInspectionAlert;
     if (_ownsNotificationController) _notificationController.startPolling();
     unawaited(_loadCachedProfile());
     if (!_notificationController.initialized) {
@@ -132,6 +134,7 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
 
   @override
   void dispose() {
+    _notificationController.onMissedInspection = null;
     _notificationController.removeListener(_handleNotificationChange);
     if (_ownsNotificationController) _notificationController.dispose();
     if (identical(_userTabRouteObserver.handler, _browserRouteHandler)) {
@@ -174,6 +177,141 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
 
   void _handleNotificationChange() {
     if (mounted) setState(() {});
+  }
+
+  void _showMissedInspectionAlert(UserNotification notification) {
+    if (!mounted) return;
+
+    // Queue the dialog for the next frame so it doesn't fire mid-build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      const accentColor = Color(0xFFD92D20); // GAC Error Red
+
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: const Color(0xFF0F2642),
+          elevation: 24,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide(
+              color: accentColor.withValues(alpha: 0.35),
+              width: 1.5,
+            ),
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(24, 26, 24, 16),
+          actionsPadding: const EdgeInsets.fromLTRB(22, 0, 22, 22),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accentColor.withValues(alpha: 0.12),
+                  border: Border.all(
+                    color: accentColor.withValues(alpha: 0.28),
+                    width: 2,
+                  ),
+                ),
+                child: Center(
+                  child: Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: accentColor,
+                      boxShadow: [
+                        BoxShadow(
+                          color: accentColor.withValues(alpha: 0.42),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.warning_amber_rounded,
+                      color: GacColors.white,
+                      size: 30,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  'MISSED INSPECTION',
+                  style: TextStyle(
+                    color: accentColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.9,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                notification.title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: GacColors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.3,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                notification.message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFFCBD5E1),
+                  fontSize: 13,
+                  height: 1.45,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const ValueKey('missed-inspection-alert-ok'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: accentColor,
+                  foregroundColor: GacColors.white,
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  elevation: 0,
+                ),
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                icon: const Icon(Icons.close_rounded, size: 18),
+                label: const Text(
+                  'OK',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   void _handleProfileUpdated(AuthenticatedUser profile) {
@@ -338,6 +476,7 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
             index: _selectedIndex,
             children: [
               UserHomeScreen(
+                key: ValueKey('user_home_${_profile.id}_${_profile.branch}'),
                 isActive: _selectedIndex == 0,
                 onOpenChecklists: () => _selectTab(1),
                 onOpenChecklistWithSlot: _openChecklistFromHome,
@@ -351,7 +490,7 @@ class _UserTabsLayoutState extends State<UserTabsLayout> {
               UserChecklistsScreen(
                 isActive: _selectedIndex == 1,
                 key: ValueKey(
-                  'user_checklists_${_profile.userType}_${_profile.picAssignmentType}',
+                  'user_checklists_${_profile.id}_${_profile.branch}_${_profile.userType}_${_profile.picAssignmentType}',
                 ),
                 user: _profile,
                 repository: widget.checklistRepository,

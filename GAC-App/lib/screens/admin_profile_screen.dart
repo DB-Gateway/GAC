@@ -81,9 +81,9 @@ class AdminProfileScreen extends StatelessWidget {
             child: Column(
               children: const [
                 _ProfileDetailRow(
-                  icon: Icons.mail_outline_rounded,
-                  label: 'Email address',
-                  value: 'gm@gateway.local',
+                  icon: Icons.person_outline_rounded,
+                  label: 'Username',
+                  value: 'GM.SuzukiPasongTamo',
                 ),
                 Divider(height: 1, thickness: 1, color: GacColors.lightGray),
                 _ProfileDetailRow(

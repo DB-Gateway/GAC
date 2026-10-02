@@ -12,6 +12,7 @@ String? checklistSlotForLocalTime(
   final usesTimeSlots =
       checklist.settings['validation_mode'] == 'time_slots' ||
       checklist.slug == 'restroom' ||
+      checklist.slug.startsWith('restroom') ||
       checklist.slug == 'utilities';
   if (!usesTimeSlots) return null;
 

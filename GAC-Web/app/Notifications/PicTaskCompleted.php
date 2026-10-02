@@ -14,7 +14,8 @@ class PicTaskCompleted extends Notification
 
     public function __construct(
         private readonly ChecklistSubmission $submission,
-        private readonly User $completedBy
+        private readonly User $completedBy,
+        private readonly array $missedSlots = []
     ) {}
 
     /**
@@ -109,11 +110,87 @@ class PicTaskCompleted extends Notification
         };
         $issueCount = $this->fiveSIssueCount($area);
         $issueSummary = $issueCount === 1 ? '1 issue' : "{$issueCount} issues";
+        $missed = $area === 'restroom' && $this->missedSlots !== [];
+        $slotLabels = implode(', ', $this->missedSlots);
+        $restroomArea = strtolower(trim((string) ($this->submission->restroom_area
+            ?: data_get($this->submission->template_snapshot, 'settings.restroom_area'))));
+        $restroomGender = strtolower(trim((string) ($this->submission->restroom_gender
+            ?: data_get($this->submission->template_snapshot, 'settings.restroom_gender'))));
+        $restroomCategory = match ($restroomArea) {
+            'customer' => 'Customer Area',
+            'office' => 'Office',
+            default => null,
+        };
+        $restroomType = in_array($restroomGender, ['male', 'female', 'pwd'], true)
+            ? \App\Models\BranchRestroom::genderLabel($restroomGender)
+            : null;
+        $restroomDetail = $area === 'restroom'
+            ? implode(' - ', array_filter([$restroomCategory, $restroomType]))
+            : '';
+        $restroomName = trim((string) data_get($this->submission->template_snapshot, 'settings.restroom_name'));
+        $restroomLabel = $restroomDetail !== ''
+            ? $restroomDetail.' Utilities 5S checklist'.($restroomName !== '' ? " ({$restroomName})" : '')
+            : ($area === 'restroom' && $restroomName !== ''
+                ? $restroomName.' Utilities 5S checklist'
+                : $areaLabel.' 5S checklist');
+        $inspectionLabel = $restroomDetail !== ''
+            ? $restroomDetail.' Utilities inspection'
+            : 'Utilities inspection';
+
+        $compiledQuestions = [];
+        if ($missed) {
+            $this->submission->loadMissing(['responses.item.section', 'template.sections.items']);
+            $responses = $this->submission->responses->keyBy('item_key');
+            $items = $this->submission->template?->sections->flatMap->items
+                ?? $this->submission->responses->map->item->filter();
+
+            $index = 1;
+            foreach ($items as $item) {
+                if (! $item) {
+                    continue;
+                }
+                $resp = $responses->get($item->key);
+                $metadata = is_array($item->metadata) ? $item->metadata : [];
+                $activeSlots = $metadata['active_slots'] ?? null;
+                $isActiveForMissed = ! is_array($activeSlots)
+                    || collect($this->missedSlots)->contains(fn ($s) => in_array($s, $activeSlots, true));
+                if (! $isActiveForMissed) {
+                    continue;
+                }
+
+                $sectionTitle = $item->section?->title
+                    ?? data_get($item->metadata, 'coverage')
+                    ?? 'General';
+
+                $compiledQuestions[] = [
+                    'number' => data_get($metadata, 'number', $index),
+                    'item_key' => $item->key,
+                    'question' => $item->prompt ?: $item->key,
+                    'area' => $sectionTitle,
+                    'status' => 'not_good',
+                    'result' => 'X',
+                    'response_id' => $resp?->getKey(),
+                    'slots' => $this->missedSlots,
+                ];
+                $index++;
+            }
+        }
+
+        $compiledCount = count($compiledQuestions);
 
         return [
-            'event' => 'five_s_checklist_submitted',
-            'title' => "{$areaLabel} 5S checklist submitted",
-            'message' => "{$completedByName} submitted the {$areaLabel} 5S checklist for {$branch} with {$issueSummary}.",
+            'event' => $missed ? 'utilities_inspection_missed' : 'five_s_checklist_submitted',
+            'title' => $missed
+                ? 'Missed Utilities inspection'.($restroomDetail !== '' ? " ({$restroomDetail})" : '').' — failed checklist'
+                : "{$areaLabel} 5S checklist submitted".($restroomDetail !== '' ? " ({$restroomDetail})" : ''),
+            'message' => $missed
+                ? "{$completedByName} missed the {$slotLabels} {$inspectionLabel} for {$branch}. The failed checklist was automatically submitted for GM and BOM review."
+                : "{$completedByName} submitted the {$restroomLabel} for {$branch} with {$issueSummary}.",
+            'is_compiled' => $missed,
+            'compiled_count' => $missed ? $compiledCount : null,
+            'questions' => $missed ? $compiledQuestions : null,
+            'missed_slots' => $this->missedSlots,
+            'slot_key' => $this->missedSlots[0] ?? null,
             'submission_id' => $this->submission->getKey(),
             'template_name' => $templateName,
             'template_slug' => $templateSlug,
@@ -125,6 +202,9 @@ class PicTaskCompleted extends Notification
             'completed_by_branch' => $completedByBranch,
             'standards_type' => 'five_s',
             'five_s_area' => $area,
+            'restroom_id' => $area === 'restroom' ? $this->submission->branch_restroom_id : null,
+            'restroom_area' => $area === 'restroom' ? $this->submission->restroom_area : null,
+            'restroom_gender' => $area === 'restroom' ? $this->submission->restroom_gender : null,
             'finding_count' => $issueCount,
             'completed_at' => $this->submission->submitted_at?->toISOString(),
         ];
@@ -262,6 +342,10 @@ class PicTaskCompleted extends Notification
 
     private function fiveSArea(string $templateSlug): ?string
     {
+        if (preg_match('/^restroom-\d+-(male|female|pwd)$/', $templateSlug) === 1) {
+            return 'restroom';
+        }
+
         return match ($templateSlug) {
             'sales' => 'sales',
             'service' => 'service',

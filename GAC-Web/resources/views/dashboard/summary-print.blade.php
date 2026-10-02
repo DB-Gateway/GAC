@@ -124,7 +124,7 @@
             <span class="workbook-meta-spacer" aria-hidden="true"></span>
             <span class="workbook-meta-label">Dealer:</span>
             <span class="workbook-meta-value">{{ $summarySheet['dealer'] }}</span>
-            <span class="workbook-meta-label">Date:</span>
+            <span class="workbook-meta-label">{{ $summarySheet['isStandardsChecklist'] ? 'Audit Month:' : 'Date:' }}</span>
             <span class="workbook-meta-value {{ $printIsAftersales ? 'is-input' : '' }}">{{ $summarySheet['date'] }}</span>
 
             <span class="workbook-meta-spacer" aria-hidden="true"></span>
@@ -145,6 +145,7 @@
                 <col class="workbook-col-number">
                 <col class="workbook-col-number">
                 <col class="workbook-col-number">
+                <col class="workbook-col-number">
             </colgroup>
             <thead>
                 <tr>
@@ -152,6 +153,7 @@
                     <th>Category</th>
                     <th>{{ $printIsTimeSlots ? 'Slots' : 'Total' }}</th>
                     <th>{{ $printIsTimeSlots ? 'Good' : 'Score' }}</th>
+                    <th>N/A</th>
                     <th>% Score</th>
                     <th>Rating</th>
                 </tr>
@@ -164,6 +166,7 @@
                         <td>{{ $row['category'] }}</td>
                         <td>{{ $row['total'] }}</td>
                         <td>{{ $row['score'] }}</td>
+                        <td>{{ $row['na'] ?? 0 }}</td>
                         <td>{{ $printPercent($row['percent']) }}</td>
                         <td class="workbook-rating-cell {{ $row['rating'] === 'PASS' ? 'is-pass' : ($row['rating'] === 'FAIL' ? 'is-fail' : 'is-neutral') }}">
                             {{ in_array($row['rating'], ['PASS', 'FAIL'], true) ? $row['rating'] : '' }}
@@ -174,6 +177,7 @@
                     <td colspan="2">TOTAL:</td>
                     <td>{{ $overallSummary['total'] }}</td>
                     <td>{{ $overallSummary['score'] }}</td>
+                    <td>{{ $overallSummary['na'] ?? 0 }}</td>
                     <td>{{ $printPercent($overallSummary['percent']) }}</td>
                     <td class="workbook-rating-cell {{ $overallSummary['rating'] === 'PASS' ? 'is-pass' : ($overallSummary['rating'] === 'FAIL' ? 'is-fail' : 'is-neutral') }}">
                         {{ in_array($overallSummary['rating'], ['PASS', 'FAIL'], true) ? $overallSummary['rating'] : '' }}
@@ -191,6 +195,7 @@
                 <col class="workbook-col-category">
                 <col class="workbook-col-number">
                 <col class="workbook-col-number">
+                <col class="workbook-col-number">
                 <col class="workbook-col-double">
             </colgroup>
             <thead>
@@ -199,6 +204,7 @@
                     <th>Coverage</th>
                     <th>{{ $printIsTimeSlots ? 'Slots' : 'Total' }}</th>
                     <th>{{ $printIsTimeSlots ? 'Good' : 'Score' }}</th>
+                    <th>N/A</th>
                     <th>% Score</th>
                 </tr>
             </thead>
@@ -215,6 +221,7 @@
                         </td>
                         <td>{{ $row['total'] }}</td>
                         <td>{{ $row['score'] }}</td>
+                        <td>{{ $row['na'] ?? 0 }}</td>
                         <td class="workbook-percent-cell {{ $row['_has_score'] ? ($row['percent'] >= 80 ? 'is-pass' : 'is-fail') : 'is-unassigned' }}">
                             {{ $row['_has_score'] ? $printPercent($row['percent']) : '' }}
                         </td>
@@ -227,12 +234,14 @@
                         <td></td>
                         <td></td>
                         <td></td>
+                        <td></td>
                     </tr>
                 @endfor
                 <tr class="workbook-total-row">
                     <td colspan="2">Total:</td>
                     <td>{{ $coverageSummary['total'] }}</td>
                     <td>{{ $coverageSummary['score'] }}</td>
+                    <td>{{ $coverageSummary['na'] ?? 0 }}</td>
                     <td class="workbook-percent-cell {{ $coverageSummary['percent'] >= 80 ? 'is-pass' : 'is-fail' }}">
                         {{ $printPercent($coverageSummary['percent']) }}
                     </td>

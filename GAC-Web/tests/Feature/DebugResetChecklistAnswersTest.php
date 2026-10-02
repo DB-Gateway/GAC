@@ -7,6 +7,9 @@ use App\Models\ChecklistResponse;
 use App\Models\ChecklistSection;
 use App\Models\ChecklistSubmission;
 use App\Models\ChecklistTemplate;
+use App\Models\BranchRestroom;
+use App\Models\DealerChecklistSetting;
+use App\Models\Report;
 use App\Models\User;
 use App\Notifications\ChecklistDraftReminder;
 use App\Notifications\FindingFollowUpRequested;
@@ -41,6 +44,8 @@ class DebugResetChecklistAnswersTest extends TestCase
         $response->assertSee('id="debugDropdown"', false);
         $response->assertSee('Debug', false);
         $response->assertSee('id="sidebarDebugResetBtn"', false);
+        $response->assertSee('id="sidebarDebugResetDatabaseBtn"', false);
+        $response->assertSee('Reset Database Data', false);
         $response->assertSee('Reset Checklist', false);
         $response->assertSee('id="sidebarDebugResetDraftsBtn"', false);
         $response->assertSee('Reset Drafts', false);
@@ -55,12 +60,19 @@ class DebugResetChecklistAnswersTest extends TestCase
         $response->assertSee('value="subforms"', false);
         $response->assertSee('value="documentation"', false);
         $response->assertSee('value="notifications"', false);
+        $response->assertSee('value="database"', false);
         $response->assertSee('name="include_notifications"', false);
         $response->assertSee('dealer-operations-standards-subform', false);
         $response->assertSee('dealer-operations-standards-documentation', false);
         $response->assertSee('id="debugResetModalOverlay"', false);
         $response->assertSee('Debug: Reset Checklist Answers', false);
         $response->assertSee('Only checklist answers', false);
+
+        $this->actingAs($user)
+            ->get(route('checklists.index', ['checklist' => 'sales']))
+            ->assertOk()
+            ->assertSee('<option value="all" selected>All Checklists (All Types)</option>', false)
+            ->assertSee('<option value="sales">Current Checklist (Sales)</option>', false);
     }
 
     public function test_debug_reset_clears_only_answers_for_specific_checklist_and_preserves_templates_and_items(): void
@@ -226,6 +238,157 @@ class DebugResetChecklistAnswersTest extends TestCase
         $this->assertSame($initialSectionsCount, ChecklistSection::count());
         $this->assertSame($initialItemsCount, ChecklistItem::count());
         $this->assertSame($initialUsersCount, User::count());
+    }
+
+    public function test_debug_reset_all_ignores_page_date_and_clears_every_5s_checklist(): void
+    {
+        $user = User::factory()->create([
+            'user_type' => User::ROLE_ADMINISTRATOR,
+            'account_status' => 'active',
+        ]);
+
+        $submissions = collect(['gateway-5s', 'sales', 'service', 'restroom'])
+            ->map(function (string $slug) use ($user): ChecklistSubmission {
+                $template = ChecklistTemplate::where('slug', $slug)->firstOrFail();
+                $item = $template->items()->firstOrFail();
+                $submission = ChecklistSubmission::create([
+                    'checklist_template_id' => $template->id,
+                    'user_id' => $user->id,
+                    'branch' => 'Pasong Tamo',
+                    'scope_key' => 'pasong-tamo',
+                    'audit_date' => $slug === 'sales' ? '2026-09-25' : '2026-09-24',
+                    'status' => 'submitted',
+                    'template_version' => $template->version,
+                    'template_snapshot' => [],
+                ]);
+
+                ChecklistResponse::create([
+                    'checklist_submission_id' => $submission->id,
+                    'checklist_item_id' => $item->id,
+                    'item_key' => $item->key,
+                    'status' => 'yes',
+                    'item_snapshot' => [],
+                ]);
+
+                return $submission;
+            });
+
+        $this->actingAs($user)->postJson(route('debug.checklists.reset-answers'), [
+            'template' => 'all',
+            'scope' => 'all',
+            'target' => 'all',
+            'date' => '2026-09-25',
+            'branch' => 'Pasong Tamo',
+        ])->assertOk()
+            ->assertJsonPath('stats.deleted_submissions', 4)
+            ->assertJsonPath('stats.deleted_responses', 4);
+
+        foreach ($submissions as $submission) {
+            $this->assertDatabaseMissing('checklist_submissions', ['id' => $submission->id]);
+        }
+    }
+
+    public function test_debug_database_reset_clears_operational_tables_and_preserves_users_and_dropdown_data(): void
+    {
+        $user = User::factory()->create([
+            'user_type' => User::ROLE_ADMINISTRATOR,
+            'account_status' => 'active',
+        ]);
+        $template = ChecklistTemplate::where('slug', 'sales')->firstOrFail();
+        $item = $template->items()->firstOrFail();
+        $submission = ChecklistSubmission::create([
+            'checklist_template_id' => $template->id,
+            'user_id' => $user->id,
+            'branch' => 'Pasong Tamo',
+            'scope_key' => 'pasong-tamo',
+            'audit_date' => '2026-09-25',
+            'status' => 'submitted',
+            'template_version' => $template->version,
+            'template_snapshot' => [],
+        ]);
+        ChecklistResponse::create([
+            'checklist_submission_id' => $submission->id,
+            'checklist_item_id' => $item->id,
+            'item_key' => $item->key,
+            'status' => 'yes',
+            'item_snapshot' => [],
+        ]);
+        Report::create([
+            'type' => 'export',
+            'title' => 'Detached historical export',
+            'data_snapshot' => [],
+            'generated_at' => now(),
+        ]);
+        DB::table('notifications')->insert([
+            'id' => (string) Str::uuid(),
+            'type' => 'OtherSystemNotification',
+            'notifiable_type' => User::class,
+            'notifiable_id' => $user->id,
+            'data' => '{}',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('user_usage_events')->insert([
+            'user_id' => $user->id,
+            'channel' => 'web',
+            'event' => 'login',
+            'occurred_at' => now(),
+        ]);
+        DB::table('jobs')->insert([
+            'queue' => 'default', 'payload' => '{}', 'attempts' => 0,
+            'available_at' => time(), 'created_at' => time(),
+        ]);
+        DB::table('job_batches')->insert([
+            'id' => 'test-batch', 'name' => 'test', 'total_jobs' => 1,
+            'pending_jobs' => 1, 'failed_jobs' => 0,
+            'failed_job_ids' => '[]', 'created_at' => time(),
+        ]);
+        DB::table('failed_jobs')->insert([
+            'uuid' => (string) Str::uuid(), 'connection' => 'database',
+            'queue' => 'default', 'payload' => '{}', 'exception' => 'test',
+        ]);
+        DB::table('cache')->insert(['key' => 'test', 'value' => 'cached', 'expiration' => time() + 3600]);
+        DB::table('cache_locks')->insert(['key' => 'test', 'owner' => 'test', 'expiration' => time() + 3600]);
+        DB::table('sessions')->insert([
+            'id' => 'preserved-session', 'user_id' => $user->id,
+            'payload' => 'test', 'last_activity' => time(),
+        ]);
+
+        $restroom = BranchRestroom::create([
+            'branch' => 'Pasong Tamo', 'name' => 'Test Restroom',
+        ]);
+        $setting = DealerChecklistSetting::create([
+            'dealer' => 'Pasong Tamo',
+            'category' => DealerChecklistSetting::CATEGORY_5S_SALES,
+            'is_enabled' => true,
+            'updated_by_user_id' => $user->id,
+        ]);
+        $templateCount = ChecklistTemplate::count();
+        $sectionCount = ChecklistSection::count();
+        $itemCount = ChecklistItem::count();
+
+        $this->actingAs($user)->postJson(route('debug.checklists.reset-answers'), [
+            'target' => 'database',
+            'template' => 'sales',
+            'scope' => 'current',
+            'date' => '2026-09-25',
+        ])->assertOk()
+            ->assertJsonPath('stats.deleted_by_table.checklist_submissions', 1)
+            ->assertJsonPath('stats.deleted_by_table.reports', 1)
+            ->assertJsonPath('stats.deleted_by_table.notifications', 1);
+
+        foreach (['reports', 'checklist_responses', 'checklist_submissions', 'notifications',
+            'user_usage_events', 'jobs', 'job_batches', 'failed_jobs', 'cache_locks', 'cache'] as $table) {
+            $this->assertSame(0, DB::table($table)->count(), $table);
+        }
+
+        $this->assertDatabaseHas('users', ['id' => $user->id]);
+        $this->assertDatabaseHas('sessions', ['id' => 'preserved-session']);
+        $this->assertDatabaseHas('branch_restrooms', ['id' => $restroom->id]);
+        $this->assertDatabaseHas('dealer_checklist_settings', ['id' => $setting->id]);
+        $this->assertSame($templateCount, ChecklistTemplate::count());
+        $this->assertSame($sectionCount, ChecklistSection::count());
+        $this->assertSame($itemCount, ChecklistItem::count());
     }
 
     public function test_debug_reset_scoped_to_current_branch_and_date_only_deletes_matching_submission(): void

@@ -38,6 +38,7 @@ class MobileProfileApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('user.id', $user->id)
             ->assertJsonPath('user.name', 'Gateway PIC')
+            ->assertJsonPath('user.username', 'pic@example.com')
             ->assertJsonPath('user.email', 'pic@example.com')
             ->assertJsonPath('user.branch', 'Pasong Tamo')
             ->assertJsonPath('user.user_type', User::ROLE_PERSON_IN_CHARGE)

@@ -28,6 +28,7 @@ List<ChecklistAttentionTarget> checklistAttentionTargets(
   final hourly =
       template.validationMode == 'time_slots' ||
       template.slug == 'restroom' ||
+      template.slug.startsWith('restroom') ||
       template.slug == 'utilities';
   final documentation =
       template.validationMode == 'dos_documentation' ||
@@ -78,7 +79,6 @@ List<ChecklistAttentionTarget> checklistAttentionTargets(
 
 bool checklistResponseNeedsAttention(Object? value) => const {
   'no',
-  'na',
   'not_good',
   'bad',
   'non_compliant',

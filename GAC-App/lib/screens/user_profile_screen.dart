@@ -301,7 +301,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       edgeOffset: UserProfileFloatingHeader.extent,
                       onRefresh: _loadProfile,
                       child: ListView(
-                        key: const PageStorageKey<String>('user-profile-scroll'),
+                        key: const PageStorageKey<String>(
+                          'user-profile-scroll',
+                        ),
                         controller: _scrollController,
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
@@ -347,7 +349,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   _DetailsCard(profile: _profile),
                                   const SizedBox(height: 14),
                                   _ActionCard(
-                                    key: const ValueKey('change-password-action'),
+                                    key: const ValueKey(
+                                      'change-password-action',
+                                    ),
                                     title: 'Change password',
                                     description: 'Verify your current password and create a new one',
                                     icon: Icons.lock_reset_rounded,
@@ -641,7 +645,7 @@ class _DetailsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final details = [
-      _DetailData('Email address', profile.email, Icons.mail_outline_rounded),
+      _DetailData('Username', profile.email, Icons.person_outline_rounded),
       _DetailData(
         'Assigned branch',
         profile.branch ?? 'Not assigned',
@@ -894,18 +898,18 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
           TextFormField(
             key: const ValueKey('profile-email-field'),
             controller: _emailController,
-            keyboardType: TextInputType.emailAddress,
-            autofillHints: const [AutofillHints.email],
+            keyboardType: TextInputType.text,
+            autofillHints: const [AutofillHints.username],
             autocorrect: false,
             decoration: const InputDecoration(
-              labelText: 'Email address',
-              prefixIcon: Icon(Icons.mail_outline_rounded),
+              labelText: 'Username',
+              prefixIcon: Icon(Icons.person_outline_rounded),
             ),
             validator: (value) {
-              final email = value?.trim() ?? '';
-              if (email.isEmpty) return 'Enter your email address.';
-              if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
-                return 'Enter a valid email address.';
+              final username = value?.trim() ?? '';
+              if (username.isEmpty) return 'Enter your username.';
+              if (RegExp(r'\s').hasMatch(username)) {
+                return 'Enter a valid username without spaces.';
               }
               return null;
             },

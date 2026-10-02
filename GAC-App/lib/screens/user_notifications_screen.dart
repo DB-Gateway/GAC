@@ -105,9 +105,13 @@ class _UserNotificationsScreenState extends State<UserNotificationsScreen> {
           }
         }),
       );
+      final canFollowUp =
+          widget.profile.is5sUtilities || widget.profile.isUtilities;
       final followUp = await showEscalationDetailsDialog(
         context,
         notification,
+        canFollowUp: canFollowUp,
+        currentUser: widget.profile,
         onFollowUpSubmitted: (submitted) {
           _controller.updateNotificationData(notification.id, {
             'has_follow_up': true,
@@ -134,7 +138,8 @@ class _UserNotificationsScreenState extends State<UserNotificationsScreen> {
       return;
     }
     if (!mounted) return;
-    if (notification.type == 'checklist_draft_reminder') {
+    final isDraftReminder = notification.type == 'checklist_draft_reminder';
+    if (isDraftReminder || notification.isUtilitiesInspectionNotice) {
       final slug = notification.data['template_slug'];
       final date = notification.data['audit_date'];
       final draftId = notification.data['submission_id'];
@@ -142,7 +147,7 @@ class _UserNotificationsScreenState extends State<UserNotificationsScreen> {
           slug.isEmpty ||
           date is! String ||
           DateTime.tryParse(date) == null ||
-          draftId is! num) {
+          (isDraftReminder && draftId is! num)) {
         _showError('This reminder does not contain a valid checklist.');
         return;
       }
@@ -153,7 +158,7 @@ class _UserNotificationsScreenState extends State<UserNotificationsScreen> {
             repository: widget.checklistRepository ?? ChecklistApiService(),
             user: widget.profile.id > 0 ? widget.profile : null,
             auditDate: date,
-            expectedDraftId: draftId.toInt(),
+            expectedDraftId: isDraftReminder ? (draftId as num).toInt() : null,
             onOpenNotifications: () => Navigator.of(context).pop(),
             unreadNotifications: _controller.unreadCount,
             initialItemKey: notification.data['item_key'] as String?,
@@ -1038,6 +1043,17 @@ class _NotificationCard extends StatelessWidget {
                           ),
                         ],
                         const SizedBox(height: 8),
+                        if (notification.isUtilitiesInspectionNotice) ...[
+                          const Text(
+                            'Open Utilities inspection',
+                            style: TextStyle(
+                              color: GacColors.primary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         if (notification.type ==
                             'checklist_draft_reminder') ...[
                           const Text(
@@ -1253,6 +1269,7 @@ IconData _iconFor(String type) {
     return Icons.task_alt_rounded;
   }
   if (value.contains('assigned')) return Icons.assignment_rounded;
+  if (value.contains('missed')) return Icons.warning_amber_rounded;
   if (value.contains('warning') || value.contains('finding')) {
     return Icons.error_outline_rounded;
   }
@@ -1267,7 +1284,8 @@ Color _toneFor(String type) {
   if (value.contains('completed') || value.contains('accepted')) {
     return GacColors.green600;
   }
-  if (value.contains('warning') || value.contains('finding')) {
+  if (value.contains('warning') || value.contains('finding') ||
+      value.contains('missed')) {
     return GacColors.brandRed;
   }
   return GacColors.navy800;

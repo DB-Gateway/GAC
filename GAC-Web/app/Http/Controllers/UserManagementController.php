@@ -75,7 +75,7 @@ class UserManagementController extends Controller
         ]);
     }
 
-    /** The default password assigned to every new account created by the GM. */
+    /** The default password assigned to every new account created by the system administrator. */
     public const PRESET_PASSWORD = 'Gateway@2026';
 
     public function store(Request $request): RedirectResponse
@@ -171,7 +171,7 @@ class UserManagementController extends Controller
         abort_unless(
             $request->user()?->hasAdministrativeAccess() === true,
             403,
-            'Only a compliance administrator can manage user accounts.'
+            'Only the system administrator can manage user accounts.'
         );
     }
 
@@ -186,13 +186,14 @@ class UserManagementController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => [
                 'required',
-                'email',
+                'string',
+                'regex:/^\S+$/',
                 'max:255',
                 $user === null
                     ? Rule::unique('users', 'email')
                     : Rule::unique('users', 'email')->ignore($user),
             ],
-            'branch' => ['required', 'string', Rule::in($this->availableBranches()->all())],
+            'branch' => ['nullable', 'string', Rule::in($this->availableBranches()->all())],
             'user_type' => ['required', Rule::in(User::acceptedRoleValues())],
             'pic_assignment_type' => ['nullable', 'string', Rule::in(array_keys(User::picAssignmentOptions()))],
             'account_status' => [$user === null ? 'nullable' : 'required', Rule::in(['active', 'pending', 'inactive', 'rejected'])],
@@ -221,6 +222,10 @@ class UserManagementController extends Controller
 
             if ($role !== User::ROLE_PERSON_IN_CHARGE && filled($assignment)) {
                 $validator->errors()->add('pic_assignment_type', 'Only PIC accounts can have a PIC assignment type.');
+            }
+
+            if ($role !== User::ROLE_ADMINISTRATOR && blank($input['branch'] ?? null)) {
+                $validator->errors()->add('branch', 'Select a dealer / branch for this account.');
             }
         });
 

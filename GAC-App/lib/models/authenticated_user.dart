@@ -188,7 +188,8 @@ class AuthenticatedUser {
     final assignment = (picAssignmentType ?? '').trim().toLowerCase();
     if (assignment == 'utilities' ||
         assignment == 'utility' ||
-        assignment == 'restroom') {
+        assignment == 'restroom' ||
+        assignment.startsWith('restroom')) {
       return true;
     }
 
@@ -202,6 +203,9 @@ class AuthenticatedUser {
 
   /// Alias for is5sUtilities to maintain compatibility
   bool get isUtilities => is5sUtilities;
+
+  /// Returns true if the user has a utility role or assignment
+  bool get isUtility => is5sUtilities || isUtilities;
 
   /// Returns true if the user is assigned to 5S Service inspection.
   bool get is5sService {
@@ -398,7 +402,7 @@ class AuthenticatedUser {
     };
     final id = data['id'];
     final name = data['name'];
-    final email = data['email'];
+    final email = data['username'] ?? data['email'];
     final userType = data['user_type'];
     if (id is! num ||
         name is! String ||
@@ -434,6 +438,7 @@ class AuthenticatedUser {
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
+    'username': email,
     'email': email,
     'branch': branch,
     'user_type': canonicalUserType,

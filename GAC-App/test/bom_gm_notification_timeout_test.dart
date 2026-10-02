@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gac_flutter/config/api_config.dart';
+import 'package:gac_flutter/main.dart';
 import 'package:gac_flutter/models/authenticated_user.dart';
 import 'package:gac_flutter/models/user_notification.dart';
 import 'package:gac_flutter/services/local_notification_service.dart';
@@ -354,6 +355,63 @@ void main() {
           repository: fakeRepo,
         );
         expect(count, greaterThanOrEqualTo(0));
+      },
+    );
+  });
+
+  group('openNotificationPayload session handling', () {
+    test(
+      'notification tap when session is active preserves session and does not log out',
+      () async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(gacAuthTokenKey, 'active-token');
+        await prefs.setString(
+          gacAuthUserKey,
+          '{"id":1,"name":"Test User","email":"test@gateway.local","user_type":"PIC","pic_assignment_type":"utilities"}',
+        );
+        await prefs.setBool(gacRememberMeKey, false);
+        final recent = DateTime.now().subtract(const Duration(minutes: 15));
+        await prefs.setString(gacLastActivityTimeKey, recent.toIso8601String());
+
+        bool timeoutTriggered = false;
+        SessionManager.instance.onTimeout = () {
+          timeoutTriggered = true;
+        };
+
+        const payload =
+            '{"event":"pic_task_reminder","template_slug":"utilities","slot_key":"morning"}';
+        await openNotificationPayload(payload);
+
+        expect(timeoutTriggered, isFalse);
+        expect(prefs.getString(gacAuthTokenKey), 'active-token');
+        expect(prefs.getString(gacAuthUserKey), isNotNull);
+      },
+    );
+
+    test(
+      'notification tap when session expired (>1 hour) triggers timeout',
+      () async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(gacAuthTokenKey, 'expired-token');
+        await prefs.setString(
+          gacAuthUserKey,
+          '{"id":1,"name":"Test User","email":"test@gateway.local","user_type":"PIC","pic_assignment_type":"utilities"}',
+        );
+        await prefs.setBool(gacRememberMeKey, false);
+        final past = DateTime.now().subtract(const Duration(minutes: 70));
+        await prefs.setString(gacLastActivityTimeKey, past.toIso8601String());
+
+        bool timeoutTriggered = false;
+        SessionManager.instance.onTimeout = () {
+          timeoutTriggered = true;
+        };
+
+        const payload =
+            '{"event":"pic_task_reminder","template_slug":"utilities","slot_key":"morning"}';
+        await openNotificationPayload(payload);
+
+        expect(timeoutTriggered, isTrue);
+        expect(prefs.getString(gacAuthTokenKey), isNull);
       },
     );
   });

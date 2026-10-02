@@ -7,13 +7,16 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
-    public const ROLE_ADMINISTRATOR = 'ADMIN';
+    public const ROLE_ADMINISTRATOR = 'SYSTEM_ADMIN';
+
+    public const ROLE_GENERAL_MANAGER = 'GM';
 
     public const ROLE_BRANCH_OPERATIONS_MANAGER = 'BOM';
 
@@ -110,6 +113,8 @@ class User extends Authenticatable
     public static function roleOptions(): array
     {
         return [
+            self::ROLE_ADMINISTRATOR => 'System Administrator',
+            self::ROLE_GENERAL_MANAGER => 'General Manager',
             self::ROLE_5S_UTILITIES => '5S Utilities',
             self::ROLE_5S_SERVICE => '5S Service',
             self::ROLE_5S_SALES => '5S Sales',
@@ -124,7 +129,6 @@ class User extends Authenticatable
             self::ROLE_INVENTORY => 'Inventory',
             self::ROLE_PERSON_IN_CHARGE => 'Person In Charge',
             self::ROLE_BRANCH_OPERATIONS_MANAGER => 'Branch Operations Manager',
-            self::ROLE_ADMINISTRATOR => 'Compliance Administrator',
         ];
     }
 
@@ -141,8 +145,10 @@ class User extends Authenticatable
             'PIC',
             'Person In Charge',
             'Administrator',
+            'System Administrator',
             'GAC Administrator',
             'Gateway Administrator',
+            'Compliance Administrator',
             'GM',
             'General Manager',
             'SM',
@@ -194,8 +200,10 @@ class User extends Authenticatable
     public static function roleCodeFor(?string $role): string
     {
         return match (strtolower(trim((string) $role))) {
-            'admin', 'administrator', 'compliance administrator', 'gac administrator',
-            'gateway administrator', 'gm', 'general manager' => self::ROLE_ADMINISTRATOR,
+            'system_admin', 'system administrator', 'admin', 'administrator',
+            'compliance administrator', 'gac administrator',
+            'gateway administrator' => self::ROLE_ADMINISTRATOR,
+            'gm', 'general manager' => self::ROLE_GENERAL_MANAGER,
             'bom', 'branch operations manager' => self::ROLE_BRANCH_OPERATIONS_MANAGER,
             '5s_utilities', '5s utilities', '5s-utilities', 'utilities', 'utility', 'restroom' => self::ROLE_5S_UTILITIES,
             '5s_service', '5s service', '5s-service', 'service 5s' => self::ROLE_5S_SERVICE,
@@ -238,6 +246,87 @@ class User extends Authenticatable
     public function roleLabel(): string
     {
         return self::roleLabelFor($this->user_type);
+    }
+
+    public static function usernameFor(
+        ?string $role,
+        ?string $branch,
+        ?string $picAssignmentType = null,
+        ?string $name = null
+    ): string {
+        $normalizedRole = self::roleCodeFor($role);
+        $normalizedAssignment = self::picAssignmentTypeFor($picAssignmentType);
+
+        $roleToken = match ($normalizedRole) {
+            self::ROLE_ADMINISTRATOR => 'Admin',
+            self::ROLE_GENERAL_MANAGER => 'GM',
+            self::ROLE_BRANCH_OPERATIONS_MANAGER => 'BOM',
+            self::ROLE_5S_UTILITIES => '5SUtilities',
+            self::ROLE_5S_SERVICE => '5SService',
+            self::ROLE_5S_SALES => '5SSales',
+            self::ROLE_PERSON_IN_CHARGE => match ($normalizedAssignment) {
+                self::PIC_ASSIGNMENT_UTILITIES => '5SUtilities',
+                self::PIC_ASSIGNMENT_SALES_SERVICE => '5SSalesService',
+                default => 'PIC',
+            },
+            self::ROLE_SALES_MANAGER => 'SalesManager',
+            self::ROLE_AFTERSALES_MANAGER => 'ASM',
+            self::ROLE_CE_SERVICE => 'CEService',
+            self::ROLE_JOB_CONTROLLER => 'JobController',
+            self::ROLE_PARTS_SUPERVISOR => 'PartsSupervisor',
+            self::ROLE_WORKSHOP_SUPERVISOR => 'WorkshopSup',
+            self::ROLE_PURCHASING => 'Purchasing',
+            self::ROLE_PROPERTY_MANAGEMENT => 'PropertyManagement',
+            self::ROLE_INVENTORY => 'Inventory',
+            default => self::usernameToken($normalizedRole ?: 'User'),
+        };
+
+        return $roleToken.'.'.self::usernameToken($branch ?: 'Unassigned');
+    }
+
+    public function suggestedUsername(): string
+    {
+        return self::usernameFor(
+            $this->user_type,
+            $this->branch,
+            $this->pic_assignment_type,
+            $this->name
+        );
+    }
+
+    private static function usernameToken(string $value): string
+    {
+        $acronyms = ['BRP', 'GM', 'KIA', 'MG'];
+        $words = preg_split('/[^A-Za-z0-9]+/', Str::ascii(trim($value))) ?: [];
+
+        return collect($words)
+            ->filter()
+            ->map(function (string $word) use ($acronyms): string {
+                $upper = strtoupper($word);
+
+                if (in_array($upper, $acronyms, true)) {
+                    return $upper;
+                }
+
+                return ucfirst(strtolower($word));
+            })
+            ->implode('');
+    }
+
+    public function nameWithRole(): string
+    {
+        $name = trim((string) $this->name);
+        $role = $this->roleLabel();
+
+        if ($name === '') {
+            return $role;
+        }
+
+        if ($role === '' || str_contains($name, '(') || stripos($name, $role) !== false) {
+            return $name;
+        }
+
+        return "{$name} ({$role})";
     }
 
     /**
@@ -313,6 +402,7 @@ class User extends Authenticatable
 
         return in_array($role, [
             self::ROLE_ADMINISTRATOR,
+            self::ROLE_GENERAL_MANAGER,
             self::ROLE_BRANCH_OPERATIONS_MANAGER,
         ], true) ? null : [];
     }
@@ -363,42 +453,96 @@ class User extends Authenticatable
 
         $allowed = $this->allowedChecklistSlugs();
 
-        if ($allowed === null
+        $roleAllowsAccess = $allowed === null
             || in_array($normalized, $allowed, true)
-            || in_array($slug, $allowed, true)) {
-            return true;
-        }
+            || in_array($slug, $allowed, true);
 
-        if ($this->isDosOperationalRole()) {
+        if (! $roleAllowsAccess && $this->isDosOperationalRole()) {
             $role = $this->roleCode();
             if ($normalized === 'dealer-operations-standards-subform') {
-                return in_array($role, [
+                $roleAllowsAccess = in_array($role, [
                     self::ROLE_AFTERSALES_MANAGER,
                     self::ROLE_CE_SERVICE,
                     self::ROLE_WORKSHOP_SUPERVISOR,
                 ], true);
             }
             if ($normalized === 'dealer-operations-standards-documentation') {
-                return in_array($role, [
+                $roleAllowsAccess = in_array($role, [
                     self::ROLE_AFTERSALES_MANAGER,
                     self::ROLE_CE_SERVICE,
                 ], true);
             }
         }
 
-        return false;
+        if (! $roleAllowsAccess) {
+            return false;
+        }
+
+        if (preg_match('/^restroom-(\d+)-(male|female|pwd)$/i', trim($slug), $matches)) {
+            $restroomId = (int) $matches[1];
+            $gender = strtolower($matches[2]);
+            $restroom = BranchRestroom::find($restroomId);
+            if (! $restroom || ! $restroom->is_active) {
+                return false;
+            }
+            if (! $this->hasAdministrativeAccess()
+                && (trim((string) $this->branch) === ''
+                    || Str::lower(trim($restroom->branch)) !== Str::lower(trim($this->branch)))) {
+                return false;
+            }
+            if ($gender === 'male' && ! $restroom->has_male) {
+                return false;
+            }
+            if ($gender === 'female' && ! $restroom->has_female) {
+                return false;
+            }
+            if ($gender === 'pwd' && (! $restroom->has_pwd || ! $restroom->isCustomerArea())) {
+                return false;
+            }
+        }
+
+        if ($this->hasAdministrativeAccess()) {
+            return true;
+        }
+
+        return DealerChecklistSetting::isChecklistEnabled($this->branch, $normalized);
+    }
+
+    public function hasAssignedChecklists(): bool
+    {
+        $allowed = $this->allowedChecklistSlugs();
+
+        return is_array($allowed) && $allowed !== [];
+    }
+
+    public function hasAnyAvailableAssignedChecklist(): bool
+    {
+        $allowed = $this->allowedChecklistSlugs();
+
+        if ($allowed === null) {
+            return true;
+        }
+
+        return collect($allowed)->contains(
+            fn (string $slug): bool => $this->canAccessChecklist($slug)
+        );
     }
 
     private function normalizedChecklistSlug(string $slug): string
     {
-        return match (strtolower(trim($slug))) {
+        $lower = strtolower(trim($slug));
+        if (str_starts_with($lower, 'restroom')) {
+            return 'restroom';
+        }
+
+        return match ($lower) {
             'utilities' => 'restroom',
             '5s', 'gateway-5s' => 'sales',
             'dos', 'dealer-operations' => 'dealer-operations-standards',
             'dos-sales', 'dealer-operations-sales' => 'dealer-operations-standards-sales',
             'dos-subform', 'subform' => 'dealer-operations-standards-subform',
             'dos-documentation', 'documentation' => 'dealer-operations-standards-documentation',
-            default => strtolower(trim($slug)),
+            default => $lower,
         };
     }
 
@@ -407,10 +551,19 @@ class User extends Authenticatable
         return $this->roleCode() === self::ROLE_ADMINISTRATOR;
     }
 
+    public function isUtility(): bool
+    {
+        $role = $this->roleCode();
+
+        return $role === self::ROLE_5S_UTILITIES
+            || ($role === self::ROLE_PERSON_IN_CHARGE && $this->picAssignmentType() === self::PIC_ASSIGNMENT_UTILITIES);
+    }
+
     public function canOverrideChecklistResponses(): bool
     {
         return in_array($this->roleCode(), [
             self::ROLE_ADMINISTRATOR,
+            self::ROLE_GENERAL_MANAGER,
             self::ROLE_BRANCH_OPERATIONS_MANAGER,
         ], true);
     }
@@ -443,6 +596,7 @@ class User extends Authenticatable
     {
         return in_array($this->roleCode(), [
             self::ROLE_ADMINISTRATOR,
+            self::ROLE_GENERAL_MANAGER,
             self::ROLE_BRANCH_OPERATIONS_MANAGER,
         ], true);
     }

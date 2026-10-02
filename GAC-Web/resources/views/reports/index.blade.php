@@ -13,6 +13,8 @@
     $overriddenCount = (int) ($summary['overridden_count'] ?? 0);
     $canViewFindings = $canViewFindings ?? false;
     $canManageEscalations = $canManageEscalations ?? false;
+    $canOverrideAny = $canOverrideAny ?? false;
+    $showOverrideActions = $showOverrideActions ?? $canOverrideAny;
     $followUpResponseId = (int) ($followUpResponseId ?? 0);
 @endphp
 <!DOCTYPE html>
@@ -175,7 +177,7 @@
                         <option value="all" @selected(($filters['findings_filter'] ?? 'all') === 'all')>All Flagged Findings</option>
                         <option value="no" @selected(($filters['findings_filter'] ?? '') === 'no')>NO Answers Only</option>
                         <option value="overdue" @selected(($filters['findings_filter'] ?? '') === 'overdue')>Overdue Commitments</option>
-                        <option value="escalated" @selected(($filters['findings_filter'] ?? '') === 'escalated')>With BOM Escalation</option>
+                        <option value="escalated" @selected(($filters['findings_filter'] ?? '') === 'escalated')>With Escalation</option>
                         <option value="overridden" @selected(($filters['findings_filter'] ?? '') === 'overridden')>Overridden / Resolved</option>
                     </select>
                 </div>
@@ -217,10 +219,10 @@
                 </article>
 
                 <article class="stat-card">
-                    <div class="stat-top"><span class="stat-label">BOM Escalations</span><span class="stat-icon"><i class="fas fa-share-nodes" aria-hidden="true"></i></span></div>
+                    <div class="stat-top"><span class="stat-label">Escalations</span><span class="stat-icon"><i class="fas fa-share-nodes" aria-hidden="true"></i></span></div>
                     <div class="stat-value text-purple" id="statEscalationCount">{{ number_format($escalationCount) }}</div>
                     <div class="stat-track"><span class="track-purple" style="width:{{ $noCount > 0 ? min(100, ($escalationCount / $noCount) * 100) : 0 }}%"></span></div>
-                    <div class="stat-meta">Suggested for GM, Property Management (PM), Purchasing, or Inventory</div>
+                    <div class="stat-meta">Assigned to management, purchasing, inventory, or property</div>
                 </article>
 
                 <article class="stat-card {{ $overdueCount > 0 ? 'stat-overdue' : '' }}">
@@ -231,7 +233,7 @@
                 </article>
             </section>
 
-            <!-- DEDICATED NO ANSWERS & ESCALATIONS REGISTER (BOM & GM Overhaul) -->
+            <!-- DEDICATED NO ANSWERS & ESCALATIONS REGISTER -->
             <section class="panel no-answers-register-panel" id="noAnswersSection" aria-label="NO Answers and Action Plan Register">
                 <div class="register-header">
                     <div class="register-title">
@@ -239,16 +241,16 @@
                             <span class="section-tag"><i class="fas fa-clipboard-list" aria-hidden="true"></i> Action Item Register</span>
                             @if ($canOverrideAny)
                                 <span class="authority-badge" title="You are authorized to override and edit checklist responses">
-                                    <i class="fas fa-shield-check" aria-hidden="true"></i> BOM / GM Override Active
+                                    <i class="fas fa-shield-check" aria-hidden="true"></i> Override Active
                                 </span>
                             @else
-                                <span class="authority-badge locked" title="Only BOM and GM users may override NO responses">
+                                <span class="authority-badge locked" title="Only authorized users may override NO responses">
                                     <i class="fas fa-lock" aria-hidden="true"></i> View Only
                                 </span>
                             @endif
                         </div>
                         <h3>Checklist NO Answers &amp; Escalations</h3>
-                        <p>Comprehensive register of non-compliant checklist responses. Review what the BOM suggests the escalation to whom is, commitment date and time, and exercise authorized overrides.</p>
+                        <p>Comprehensive register of non-compliant checklist responses. Review corrective actions, commitment dates, and exercise authorized overrides.</p>
                     </div>
 
                     <div class="register-actions">
@@ -265,7 +267,7 @@
                 @if ($followUpResponseId)
                     <div class="summary-follow-up-guidance">
                         <i class="fas fa-location-dot" aria-hidden="true"></i>
-                        <span>The GM requested follow-up on the highlighted finding. Complete its escalation details below.</span>
+                        <span>Follow-up requested on the highlighted finding. Complete its escalation details below.</span>
                     </div>
                 @endif
 
@@ -276,7 +278,7 @@
                                 <th>Date &amp; Branch</th>
                                 <th>Checklist &amp; Item</th>
                                 <th>Deficiency &amp; Action Plan</th>
-                                <th>BOM Suggested Escalation</th>
+                                <th>Suggested Escalation</th>
                                 <th>Commitment Date &amp; Time</th>
                                 <th>Status / Resolution</th>
                                 <th class="actions-col">Action</th>
@@ -359,7 +361,7 @@
                                         </div>
                                         @if (!empty($finding['bom_task']))
                                             <div class="finding-bom-task">
-                                                <span class="detail-label"><i class="fas fa-list-check" aria-hidden="true"></i> BOM Task:</span>
+                                                <span class="detail-label"><i class="fas fa-list-check" aria-hidden="true"></i> Task:</span>
                                                 <p>{{ $finding['bom_task'] }}</p>
                                             </div>
                                         @endif
@@ -384,9 +386,28 @@
                                         @else
                                             <span class="summary-no-photo"><i class="fas fa-image" aria-hidden="true"></i> No photo attached</span>
                                         @endif
+                                        @if (!empty($finding['override_details']['attachment_url']))
+                                            <div class="finding-override-proof-box">
+                                                <span class="detail-label"><i class="fas fa-shield-check text-success" aria-hidden="true"></i> Override Proof:</span>
+                                                <a href="{{ $finding['override_details']['attachment_url'] }}"
+                                                   target="_blank"
+                                                   rel="noopener noreferrer"
+                                                   class="summary-photo-link summary-proof-link"
+                                                   title="View override proof attachment">
+                                                    @if ($finding['override_details']['is_image'] ?? true)
+                                                        <img src="{{ $finding['override_details']['attachment_url'] }}"
+                                                             alt="Override proof for {{ $finding['item_key'] }}"
+                                                             loading="lazy">
+                                                    @else
+                                                        <span class="proof-pdf-icon"><i class="fas fa-file-pdf text-danger" aria-hidden="true"></i> PDF Proof</span>
+                                                    @endif
+                                                    <span><i class="fas fa-up-right-from-square" aria-hidden="true"></i> View proof</span>
+                                                </a>
+                                            </div>
+                                        @endif
                                     </td>
 
-                                    <!-- BOM Suggested Escalation -->
+                                    <!-- Suggested Escalation -->
                                     <td class="escalation-cell">
                                         @if (!empty($finding['recommended_escalation']))
                                             <div class="workbook-target-label" title="Workbook recommended recipient">
@@ -394,49 +415,53 @@
                                                 <span class="summary-workbook-target">{{ $finding['recommended_escalation'] }}</span>
                                             </div>
                                         @endif
-                                        @if ($finding['escalation_target'])
-                                            <div class="escalation-badge {{ strtolower(str_replace('_', '-', $finding['escalation_target'])) }}">
-                                                <i class="fas {{ match ($finding['escalation_target']) {
-                                                    'general_manager', 'general_manager_ce_central' => 'fa-shield-halved',
-                                                    'purchasing', 'marketing_purchasing' => 'fa-cart-shopping',
-                                                    'property_management', 'marketing_property_management' => 'fa-user-tie',
-                                                    'inventory' => 'fa-boxes-stacked',
-                                                    'bom' => 'fa-user-gear',
-                                                    'ce_central' => 'fa-building-shield',
-                                                    'central_admin' => 'fa-landmark',
-                                                    'dnd' => 'fa-compass',
-                                                    'as_brand_head', 'brand_head' => 'fa-user-tie',
-                                                    'as_head' => 'fa-wrench',
-                                                    'it' => 'fa-laptop-code',
-                                                    'marketing' => 'fa-bullhorn',
-                                                    'logistic' => 'fa-truck',
-                                                    'mmpc_cs_team', 'mmpc_training_team' => 'fa-users',
-                                                    default => 'fa-arrow-up-right-from-square',
-                                                } }}" aria-hidden="true"></i>
-                                                <span>{{ $finding['escalation_target_label'] }}</span>
-                                            </div>
-                                            <small class="bom-escalated-note">BOM Target</small>
-                                        @else
-                                            <span class="no-escalation-text"><i class="fas fa-minus" aria-hidden="true"></i> None specified</span>
-                                        @endif
+                                        <div class="escalation-badge-wrap">
+                                            @if ($finding['escalation_target'])
+                                                <div class="escalation-badge {{ strtolower(str_replace('_', '-', $finding['escalation_target'])) }}">
+                                                    <i class="fas {{ match ($finding['escalation_target']) {
+                                                        'general_manager', 'general_manager_ce_central' => 'fa-shield-halved',
+                                                        'purchasing', 'marketing_purchasing' => 'fa-cart-shopping',
+                                                        'property_management', 'marketing_property_management' => 'fa-user-tie',
+                                                        'inventory' => 'fa-boxes-stacked',
+                                                        'bom' => 'fa-user-gear',
+                                                        'ce_central' => 'fa-building-shield',
+                                                        'central_admin' => 'fa-landmark',
+                                                        'dnd' => 'fa-compass',
+                                                        'as_brand_head', 'brand_head' => 'fa-user-tie',
+                                                        'as_head' => 'fa-wrench',
+                                                        'it' => 'fa-laptop-code',
+                                                        'marketing' => 'fa-bullhorn',
+                                                        'logistic' => 'fa-truck',
+                                                        'mmpc_cs_team', 'mmpc_training_team' => 'fa-users',
+                                                        default => 'fa-arrow-up-right-from-square',
+                                                    } }}" aria-hidden="true"></i>
+                                                    <span>{{ $finding['escalation_target_label'] }}</span>
+                                                </div>
+                                                <small class="bom-escalated-note">Target</small>
+                                            @else
+                                                <span class="no-escalation-text"><i class="fas fa-minus" aria-hidden="true"></i> None specified</span>
+                                            @endif
+                                        </div>
                                     </td>
 
                                     <!-- Commitment Date & Time -->
                                     <td class="commitment-cell">
-                                        @if ($finding['commitment_date'])
-                                            <div class="commitment-datetime-badge">
-                                                <i class="fas fa-calendar-check" aria-hidden="true"></i>
-                                                <strong>{{ $finding['commitment_date_formatted'] }}</strong>
-                                            </div>
-                                            @if ($finding['due_status'])
-                                                <div class="urgency-tag {{ $finding['is_overdue'] ? 'tag-overdue' : 'tag-upcoming' }}">
-                                                    <i class="fas {{ $finding['is_overdue'] ? 'fa-triangle-exclamation' : 'fa-hourglass-half' }}" aria-hidden="true"></i>
-                                                    {{ $finding['due_status'] }}
+                                        <div class="commitment-badge-wrap">
+                                            @if ($finding['commitment_date'])
+                                                <div class="commitment-datetime-badge">
+                                                    <i class="fas fa-calendar-check" aria-hidden="true"></i>
+                                                    <strong class="commitment-date-text">{{ $finding['commitment_date_formatted'] }}</strong>
                                                 </div>
+                                                @if ($finding['due_status'])
+                                                    <div class="urgency-tag {{ $finding['is_overdue'] ? 'tag-overdue' : 'tag-upcoming' }}">
+                                                        <i class="fas {{ $finding['is_overdue'] ? 'fa-triangle-exclamation' : 'fa-hourglass-half' }}" aria-hidden="true"></i>
+                                                        {{ $finding['due_status'] }}
+                                                    </div>
+                                                @endif
+                                            @else
+                                                <span class="no-commitment-text"><i class="fas fa-clock" aria-hidden="true"></i> No date &amp; time committed</span>
                                             @endif
-                                        @else
-                                            <span class="no-commitment-text"><i class="fas fa-clock" aria-hidden="true"></i> No date &amp; time committed</span>
-                                        @endif
+                                        </div>
                                     </td>
 
                                     <!-- Status / Resolution -->
@@ -447,9 +472,23 @@
                                                     <i class="fas fa-check-double" aria-hidden="true"></i> {{ $finding['result'] }}
                                                 </span>
                                                 <div class="override-meta-note">
-                                                    <span>By {{ $finding['override_details']['overridden_by_name'] ?? 'Manager' }} ({{ $finding['override_details']['overridden_by_role'] ?? 'BOM' }})</span>
+                                                    <span class="override-meta-actor">By {{ $finding['override_details']['overridden_by_name'] ?? 'Manager' }} ({{ $finding['override_details']['overridden_by_role'] ?? 'BOM' }})</span>
+                                                    @if (!empty($finding['override_details']['overridden_at_formatted']))
+                                                        <span class="override-meta-timestamp" title="Date and time when override was submitted">
+                                                            <i class="fas fa-clock" aria-hidden="true"></i> {{ $finding['override_details']['overridden_at_formatted'] }}
+                                                        </span>
+                                                    @endif
                                                     @if (!empty($finding['override_details']['reason']))
                                                         <small title="{{ $finding['override_details']['reason'] }}">“{{ Str::limit($finding['override_details']['reason'], 35) }}”</small>
+                                                    @endif
+                                                    @if (!empty($finding['override_details']['attachment_url']))
+                                                        <a href="{{ $finding['override_details']['attachment_url'] }}"
+                                                           target="_blank"
+                                                           rel="noopener noreferrer"
+                                                           class="override-proof-chip"
+                                                           title="View attached proof document">
+                                                            <i class="fas fa-paperclip" aria-hidden="true"></i> Proof Attached
+                                                        </a>
                                                     @endif
                                                 </div>
                                             @else
@@ -461,7 +500,7 @@
                                         </div>
                                     </td>
 
-                                    <!-- BOM / GM Actions -->
+                                    <!-- Follow-up & Override Actions -->
                                     <td class="actions-cell">
                                         <div class="actions-stack">
                                             @if ($canViewFindings && $isNo)
@@ -470,7 +509,7 @@
                                                             class="button button-sm summary-follow-up-btn"
                                                             data-request-finding-follow-up
                                                             data-endpoint="{{ route('reports.responses.follow-up', $finding['response_id']) }}"
-                                                            title="Request follow-up from the assigned BOM">
+                                                            title="Request follow-up on this finding">
                                                         <i class="fas fa-bell" aria-hidden="true"></i>
                                                         <span>Follow-up</span>
                                                     </button>
@@ -483,6 +522,10 @@
                                                         data-action="open-escalate"
                                                         data-response-id="{{ $finding['response_id'] }}"
                                                         data-template="{{ $finding['template_name'] }}"
+                                                        data-template-slug="{{ $finding['template_slug'] ?? '' }}"
+                                                        data-auditor-role="{{ $finding['auditor_role'] ?? '' }}"
+                                                        data-checker-role="{{ $finding['checker_role'] ?? '' }}"
+                                                        data-is-restroom="{{ !empty($finding['is_restroom']) ? '1' : '0' }}"
                                                         data-branch="{{ $finding['branch'] }}"
                                                         data-item-key="{{ $finding['item_key'] }}"
                                                         data-item-prompt="{{ $finding['item'] }}"
@@ -499,8 +542,13 @@
                                             @if ($finding['can_override'])
                                                 <button type="button" class="button button-sm button-override"
                                                         data-action="open-override"
+                                                        data-endpoint="{{ route('reports.responses.override', $finding['response_id']) }}"
                                                         data-response-id="{{ $finding['response_id'] }}"
                                                         data-template="{{ $finding['template_name'] }}"
+                                                        data-template-slug="{{ $finding['template_slug'] ?? '' }}"
+                                                        data-auditor-role="{{ $finding['auditor_role'] ?? '' }}"
+                                                        data-checker-role="{{ $finding['checker_role'] ?? '' }}"
+                                                        data-is-restroom="{{ !empty($finding['is_restroom']) ? '1' : '0' }}"
                                                         data-branch="{{ $finding['branch'] }}"
                                                         data-item-key="{{ $finding['item_key'] }}"
                                                         data-item-prompt="{{ $finding['item'] }}"
@@ -509,11 +557,19 @@
                                                         data-commitment="{{ $finding['commitment_date_local'] }}"
                                                         data-action-plan="{{ $finding['action_plan'] }}"
                                                         data-finding="{{ $finding['detail'] }}"
+                                                        data-is-overridden="{{ $finding['is_overridden'] ? '1' : '0' }}"
+                                                        data-overridden-at="{{ $finding['override_details']['overridden_at'] ?? '' }}"
+                                                        data-overridden-at-formatted="{{ $finding['override_details']['overridden_at_formatted'] ?? '' }}"
+                                                        data-overridden-by="{{ $finding['override_details']['overridden_by_name'] ?? '' }}"
+                                                        data-overridden-role="{{ $finding['override_details']['overridden_by_role'] ?? '' }}"
+                                                        data-override-reason="{{ $finding['override_details']['reason'] ?? '' }}"
+                                                        data-override-attachment-url="{{ $finding['override_details']['attachment_url'] ?? '' }}"
+                                                        data-override-attachment-name="{{ $finding['override_details']['attachment_name'] ?? '' }}"
                                                         title="Override checklist finding status with justification">
                                                     <i class="fas fa-pen-to-square" aria-hidden="true"></i> Override / Edit
                                                 </button>
                                             @elseif (! $canViewFindings && ! $canManageEscalations)
-                                                <span class="locked-badge" title="Only BOM &amp; GM users are authorized to manage or override NO answers in the checklist">
+                                                <span class="locked-badge" title="Only authorized users may manage or override NO answers in the checklist">
                                                     <i class="fas fa-lock" aria-hidden="true"></i> View Only
                                                 </span>
                                             @endif
@@ -724,12 +780,12 @@
 
             <!-- Legal & Compliance Footnote -->
             <section class="panel source-note">
-                <strong>Compliance basis:</strong> All analytics and findings are queried from verified MariaDB audit records. Reports are scoped strictly per calendar month (preset to current month {{ $selectedMonthLabel }}). NO answers and bad time slots are subject to authorized override exclusively by Branch Operations Managers (BOM) and General Managers (GM). Every override action is permanently recorded in the system audit log.
+                <strong>Compliance basis:</strong> All analytics and findings are queried from verified MariaDB audit records. Reports are scoped strictly per calendar month (preset to current month {{ $selectedMonthLabel }}). NO answers and bad time slots are subject to authorized override by designated managers. Every override action is permanently recorded in the system audit log.
             </section>
         </main>
     </div>
 
-    <!-- BOM & GM EXCLUSIVE OVERRIDE MODAL -->
+    <!-- AUTHORIZED OVERRIDE MODAL -->
     <div class="override-modal-backdrop" id="overrideModalBackdrop" aria-hidden="true">
         <div class="override-modal" id="overrideModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
             <div class="modal-header">
@@ -783,10 +839,10 @@
                         </div>
                     </div>
 
-                    <!-- BOM Escalation Target -->
+                    <!-- Escalation Target -->
                     <div class="form-group span-half">
                         <label for="modalEscalation" class="form-label">
-                            <i class="fas fa-share-nodes"></i> BOM Suggested Escalation To
+                            <i class="fas fa-share-nodes"></i> Suggested Escalation To
                         </label>
                         <select id="modalEscalation" name="escalation_target" class="form-select">
                             <option value="">No Escalation Required</option>
@@ -794,7 +850,7 @@
                                 <option value="{{ $escKey }}">{{ $escLabel }}</option>
                             @endforeach
                         </select>
-                        <span class="field-hint">Identify who the BOM recommends this deficiency be escalated to.</span>
+                        <span class="field-hint">Identify who this deficiency should be escalated to.</span>
                     </div>
 
                     <!-- Commitment Date and Time -->
@@ -841,13 +897,13 @@
         </div>
     </div>
 
-    <!-- BOM EXCLUSIVE ESCALATION / ACTION PLAN MODAL -->
+    <!-- ESCALATION / ACTION PLAN MODAL -->
     @if ($canManageEscalations)
     <div class="override-modal-backdrop" id="escalateModalBackdrop" aria-hidden="true">
         <div class="override-modal" id="escalateModal" role="dialog" aria-modal="true" aria-labelledby="escalateModalTitle">
             <div class="modal-header">
                 <div class="modal-title-wrap">
-                    <span class="modal-eyebrow"><i class="fas fa-arrow-up-right-dots"></i> BOM Action</span>
+                    <span class="modal-eyebrow"><i class="fas fa-arrow-up-right-dots"></i> Action Plan</span>
                     <h3 id="escalateModalTitle">Escalate Finding &amp; Set Action Plan</h3>
                 </div>
                 <button type="button" class="modal-close-btn" id="closeEscalateModal" aria-label="Close dialog">&times;</button>
@@ -880,7 +936,7 @@
                     </div>
 
                     <div class="form-group span-full" id="escalateBomTaskGroup" style="display:none;">
-                        <label class="form-label"><i class="fas fa-list-check"></i> BOM Task</label>
+                        <label class="form-label"><i class="fas fa-list-check"></i> Task</label>
                         <div class="finding-static-box bom-task-box" id="escalateBomTask"></div>
                     </div>
 
@@ -1030,7 +1086,7 @@
                         const data = await response.json().catch(() => ({}));
 
                         if (!response.ok) {
-                            throw new Error(data.message || 'The BOM follow-up notification could not be sent.');
+                            throw new Error(data.message || 'Follow-up notification could not be sent.');
                         }
 
                         button.classList.remove('is-loading');
@@ -1038,7 +1094,7 @@
                         if (label) label.textContent = 'Follow-up Sent';
                         if (status) {
                             status.classList.add('is-success');
-                            status.textContent = data.message || 'Follow-up sent to the BOM user.';
+                            status.textContent = data.message || 'Follow-up sent successfully.';
                         }
                     } catch (error) {
                         button.disabled = false;
@@ -1046,11 +1102,89 @@
                         if (label) label.textContent = 'Follow-up';
                         if (status) {
                             status.classList.add('is-error');
-                            status.textContent = error.message || 'The BOM follow-up notification could not be sent.';
+                            status.textContent = error.message || 'Follow-up notification could not be sent.';
                         }
                     }
                 });
             });
+            @endif
+
+            @if ($canManageEscalations || $showOverrideActions)
+            const escalationOptionsMap = @json($escalationOptionsMap ?? \App\Models\ChecklistResponse::contextualEscalationOptionsMap());
+
+            function resolveEscalationOptions(data) {
+                const templateSlug = (data.templateSlug || '').toLowerCase();
+                const auditorRole = (data.auditorRole || '').toLowerCase();
+                const checkerRole = (data.checkerRole || '').toLowerCase();
+                const isRestroom = data.isRestroom === '1' || templateSlug === 'restroom' || templateSlug === 'utilities';
+
+                if (isRestroom || auditorRole.includes('utility') || checkerRole.includes('utility')) {
+                    return escalationOptionsMap.utility || { property_management: 'Property Management (PM)', general_manager: 'General Manager (GM)' };
+                }
+
+                if (templateSlug.includes('sales') && templateSlug.includes('dealer-operations')) {
+                    return escalationOptionsMap.sales || escalationOptionsMap.default;
+                }
+                if (auditorRole.includes('sales manager') || checkerRole.includes('sales manager')) {
+                    return escalationOptionsMap.sales || escalationOptionsMap.default;
+                }
+
+                const isAftersales = templateSlug.includes('dealer-operations') ||
+                    auditorRole.includes('aftersales') || auditorRole.includes('ce') ||
+                    auditorRole.includes('job controller') || auditorRole.includes('parts') ||
+                    auditorRole.includes('workshop');
+
+                if (isAftersales) {
+                    if (checkerRole.includes('jc') || checkerRole.includes('job controller') ||
+                        checkerRole.includes('parts') || checkerRole.includes('workshop') ||
+                        auditorRole.includes('job controller') || auditorRole.includes('parts') ||
+                        auditorRole.includes('workshop')) {
+                        return escalationOptionsMap.aftersales_single_gm || { general_manager: 'General Manager (GM)' };
+                    }
+                    if (checkerRole.includes('asm') || auditorRole.includes('aftersales manager')) {
+                        return escalationOptionsMap.aftersales_asm || escalationOptionsMap.aftersales;
+                    }
+                    if (checkerRole.includes('ce') || auditorRole.includes('ce service')) {
+                        return escalationOptionsMap.aftersales_ce || escalationOptionsMap.aftersales;
+                    }
+                    return escalationOptionsMap.aftersales || escalationOptionsMap.default;
+                }
+
+                if (templateSlug === 'sales' || templateSlug === 'service' || templateSlug === '5s') {
+                    return escalationOptionsMap.five_s || escalationOptionsMap.default;
+                }
+
+                return escalationOptionsMap.default;
+            }
+
+            function populateEscalationSelect(selectElem, options, selectedValue, defaultLabel) {
+                if (!selectElem) return;
+                selectElem.innerHTML = '';
+                const defaultOpt = document.createElement('option');
+                defaultOpt.value = '';
+                defaultOpt.textContent = defaultLabel;
+                selectElem.appendChild(defaultOpt);
+
+                let hasSelected = false;
+                for (const [val, label] of Object.entries(options || {})) {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = label;
+                    if (selectedValue && val === selectedValue) {
+                        opt.selected = true;
+                        hasSelected = true;
+                    }
+                    selectElem.appendChild(opt);
+                }
+
+                if (selectedValue && !hasSelected) {
+                    const opt = document.createElement('option');
+                    opt.value = selectedValue;
+                    opt.textContent = selectedValue.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    opt.selected = true;
+                    selectElem.appendChild(opt);
+                }
+            }
             @endif
 
             // BOM Escalation & Action Plan Modal
@@ -1080,7 +1214,8 @@
                     bomTaskGroup.style.display = 'none';
                 }
 
-                document.getElementById('escalateSelectTarget').value = data.escalation || '';
+                const options = resolveEscalationOptions(data);
+                populateEscalationSelect(document.getElementById('escalateSelectTarget'), options, data.escalation || '', 'Select a recipient');
                 document.getElementById('escalateCommitmentDate').value = data.commitment || '';
                 document.getElementById('escalateActionPlan').value = data.actionPlan || '';
 
@@ -1103,6 +1238,10 @@
                     openEscalateModal({
                         responseId: btn.dataset.responseId,
                         template: btn.dataset.template,
+                        templateSlug: btn.dataset.templateSlug,
+                        auditorRole: btn.dataset.auditorRole,
+                        checkerRole: btn.dataset.checkerRole,
+                        isRestroom: btn.dataset.isRestroom,
                         branch: btn.dataset.branch,
                         itemKey: btn.dataset.itemKey,
                         itemPrompt: btn.dataset.itemPrompt,
@@ -1201,7 +1340,8 @@
                     document.getElementById('radioStatusNo').checked = true;
                 }
 
-                document.getElementById('modalEscalation').value = data.escalation || '';
+                const options = resolveEscalationOptions(data);
+                populateEscalationSelect(document.getElementById('modalEscalation'), options, data.escalation || '', 'No Escalation Required');
                 document.getElementById('modalCommitmentDate').value = data.commitment || '';
                 document.getElementById('modalActionPlan').value = data.actionPlan || '';
                 document.getElementById('modalFinding').value = data.finding || '';
@@ -1221,6 +1361,10 @@
                     openModal({
                         responseId: btn.dataset.responseId,
                         template: btn.dataset.template,
+                        templateSlug: btn.dataset.templateSlug,
+                        auditorRole: btn.dataset.auditorRole,
+                        checkerRole: btn.dataset.checkerRole,
+                        isRestroom: btn.dataset.isRestroom,
                         branch: btn.dataset.branch,
                         itemKey: btn.dataset.itemKey,
                         itemPrompt: btn.dataset.itemPrompt,

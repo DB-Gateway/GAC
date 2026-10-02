@@ -19,6 +19,12 @@ class UserNotification {
   final DateTime? readAt;
   final DateTime? createdAt;
 
+  bool get isUtilitiesInspectionNotice => const {
+    'utilities_due_soon',
+    'utilities_due_now',
+    'utilities_inspection_missed',
+  }.contains(type);
+
   factory UserNotification.fromJson(Object? value) {
     if (value is! Map) {
       throw const FormatException('Server returned an invalid notification.');

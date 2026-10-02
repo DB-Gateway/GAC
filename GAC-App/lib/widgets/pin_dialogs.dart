@@ -6,11 +6,11 @@ import 'package:flutter/services.dart';
 import '../services/security_service.dart';
 import '../theme/gac_theme.dart';
 
-/// Animated PIN indicator dots (4 digits)
+/// Animated PIN indicator dots (6 digits default)
 class PinDots extends StatelessWidget {
   const PinDots({
     required this.length,
-    this.total = 4,
+    this.total = 6,
     this.hasError = false,
     super.key,
   });
@@ -30,7 +30,7 @@ class PinDots extends StatelessWidget {
           // Overshooting curves can make an outgoing BoxShadow's interpolated
           // blur radius negative, which is rejected by dart:ui while painting.
           curve: Curves.easeOutCubic,
-          margin: const EdgeInsets.symmetric(horizontal: 10),
+          margin: const EdgeInsets.symmetric(horizontal: 6),
           width: isFilled ? 18 : 14,
           height: isFilled ? 18 : 14,
           decoration: BoxDecoration(
@@ -240,6 +240,7 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
   // 2: confirm new PIN
   // 3: success / biometrics option
   late int _step;
+  int _expectedCurrentPinLength = 6;
   String _currentPin = '';
   String _newPin = '';
   String _confirmPin = '';
@@ -252,6 +253,18 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
     super.initState();
     _step = widget.isChanging ? 0 : 1;
     _checkBiometrics();
+    _checkCurrentPinLength();
+  }
+
+  Future<void> _checkCurrentPinLength() async {
+    final stored = await SecurityService.instance.getStoredPin(
+      email: widget.email,
+    );
+    if (mounted && stored != null && stored.trim().isNotEmpty) {
+      setState(() {
+        _expectedCurrentPinLength = stored.trim().length;
+      });
+    }
   }
 
   Future<void> _checkBiometrics() async {
@@ -279,22 +292,25 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
   }
 
   void _onDigit(String digit) {
-    if (_activePin.length >= 4) return;
+    final maxLen = _step == 0 ? _expectedCurrentPinLength : 6;
+    if (_activePin.length >= maxLen) return;
     setState(() {
       _errorMessage = null;
       if (_step == 0) {
         _currentPin += digit;
-        if (_currentPin.length == 4) _handleCurrentPinEntered();
+        if (_currentPin.length == _expectedCurrentPinLength) {
+          _handleCurrentPinEntered();
+        }
       } else if (_step == 1) {
         _newPin += digit;
-        if (_newPin.length == 4) {
+        if (_newPin.length == 6) {
           Future.delayed(const Duration(milliseconds: 150), () {
             if (mounted) setState(() => _step = 2);
           });
         }
       } else if (_step == 2) {
         _confirmPin += digit;
-        if (_confirmPin.length == 4) _handleConfirmPinEntered();
+        if (_confirmPin.length == 6) _handleConfirmPinEntered();
       }
     });
   }
@@ -366,17 +382,17 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
   Widget build(BuildContext context) {
     final title = switch (_step) {
       0 => 'Enter Current PIN',
-      1 => widget.isChanging ? 'Create New 4-Digit PIN' : 'Create 4-Digit PIN',
-      2 => 'Confirm 4-Digit PIN',
+      1 => widget.isChanging ? 'Create New 6-Digit PIN' : 'Create 6-Digit PIN',
+      2 => 'Confirm 6-Digit PIN',
       3 => 'Quick Access Ready',
       _ => 'Security PIN',
     };
 
     final subtitle = switch (_step) {
-      0 => 'Enter your current 4-digit PIN to authorize change',
-      1 => 'Set a 4-digit PIN to quickly get back into Gateway',
-      2 => 'Re-enter your 4-digit PIN to confirm',
-      3 => 'Your 4-digit PIN has been configured successfully',
+      0 => 'Enter your current PIN to authorize change',
+      1 => 'Set a 6-digit PIN to quickly get back into Gateway',
+      2 => 'Re-enter your 6-digit PIN to confirm',
+      3 => 'Your 6-digit PIN has been configured successfully',
       _ => '',
     };
 
@@ -446,7 +462,11 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
           const SizedBox(height: 24),
 
           if (_step != 3) ...[
-            PinDots(length: _activePin.length, hasError: _errorMessage != null),
+            PinDots(
+              length: _activePin.length,
+              total: _step == 0 ? _expectedCurrentPinLength : 6,
+              hasError: _errorMessage != null,
+            ),
             const SizedBox(height: 12),
             if (_errorMessage != null)
               Text(
@@ -549,6 +569,197 @@ class _PinSetupSheetState extends State<_PinSetupSheet> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Displays an informational guide explaining how "Remember Me" and 6-digit PIN setup work.
+Future<void> showRememberMeGuideDialog(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    isDismissible: true,
+    enableDrag: true,
+    builder: (modalContext) => const _RememberMeGuideSheet(),
+  );
+}
+
+class _RememberMeGuideSheet extends StatelessWidget {
+  const _RememberMeGuideSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0F172A),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border(top: BorderSide(color: Color(0xFF334155), width: 1.5)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        24,
+        18,
+        24,
+        MediaQuery.of(context).viewInsets.bottom + 28,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF334155),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Center(
+              child: Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E293B),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFF334155)),
+                ),
+                child: const Icon(
+                  Icons.shield_outlined,
+                  color: GacColors.cyan,
+                  size: 28,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Stay Signed In Guide',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: GacColors.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'How Remember Me & 6-Digit PIN keep your workflow uninterrupted',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: GacColors.textSecondary,
+                fontSize: 12.5,
+                height: 1.3,
+              ),
+            ),
+            const SizedBox(height: 20),
+            _buildGuideCard(
+              icon: Icons.check_box_outlined,
+              iconColor: GacColors.cyan,
+              title: '1. Check "Remember me" at Sign In',
+              description: 'When checked, the app disables the standard 1-hour inactivity timeout. You stay continuously signed in without re-entering your username and password.',
+            ),
+            const SizedBox(height: 12),
+            _buildGuideCard(
+              icon: Icons.dialpad_rounded,
+              iconColor: GacColors.cyan,
+              title: '2. Set Up a 6-Digit PIN',
+              description: 'The first time you check "Remember me", the app prompts you to create a 6-digit PIN. You can also enable your device fingerprint scanner for faster unlock.',
+            ),
+            const SizedBox(height: 12),
+            _buildGuideCard(
+              icon: Icons.notifications_active_outlined,
+              iconColor: const Color(0xFF4CAF50),
+              title: '3. Instant Notification & App Access',
+              description: 'When opening the app or tapping notification reminders (e.g. task alerts, missed checklists), you will never be logged out. Enter your 6-digit PIN or scan fingerprint to jump right in.',
+            ),
+            const SizedBox(height: 12),
+            _buildGuideCard(
+              icon: Icons.timer_outlined,
+              iconColor: const Color(0xFFF59E0B),
+              title: 'Standard 1-Hour Timeout (Without Remember Me)',
+              description: 'If "Remember me" is unchecked, the app securely logs you out after 1 hour of inactivity. Remember Me prevents this timeout.',
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              height: 48,
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: GacColors.brandBlue,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: const Text(
+                  'GOT IT',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Widget _buildGuideCard({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String description,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF334155), width: 1),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: iconColor, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: GacColors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  description,
+                  style: const TextStyle(
+                    color: GacColors.textSecondary,
+                    fontSize: 11.5,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

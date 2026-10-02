@@ -37,7 +37,7 @@ class RegisteredUserController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
+            'email' => ['required', 'string', 'regex:/^\S+$/', 'max:255', 'unique:'.User::class],
             'branch' => ['required', 'string', Rule::in(config('gac.branches', []))],
             'user_type' => ['required', 'string', Rule::in(config('gac.registration_roles', []))],
             'pic_assignment_type' => ['nullable', 'string', Rule::in(array_keys(User::picAssignmentOptions()))],
@@ -74,6 +74,6 @@ class RegisteredUserController extends Controller
 
         return redirect()
             ->route('login')
-            ->with('status', 'Registration submitted. A compliance administrator must activate your account before you can sign in.');
+            ->with('status', 'Registration submitted. The system administrator must activate your account before you can sign in.');
     }
 }

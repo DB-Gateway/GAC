@@ -17,7 +17,7 @@ import '../utils/checklist_attention.dart';
 import 'dos_dashboard_screen.dart';
 import 'user_checklist_detail_screen.dart';
 
-enum _TaskFilter { all, todo, inProgress, completed, attention }
+enum _TaskFilter { all, inProgress, attention }
 
 enum _TaskStatus { todo, inProgress, completed }
 
@@ -129,6 +129,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   late final ScrollController _scrollController;
   late DateTime _today;
   late DateTime _selectedDate;
+  late DateTime _weekAnchor;
 
   List<ChecklistCatalogItem> _tasks = const [];
   bool _attentionUnavailable = false;
@@ -137,8 +138,8 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   bool _topBarExpanded = true;
   String? _error;
   int _requestGeneration = 0;
+  late final Timer _utilitiesDeadlineTimer;
   DosAuditTrack? _internalTrack;
-  String? _activeDueSlotKey;
 
   bool get _isDos {
     if (widget.user.is5sUtilities ||
@@ -158,6 +159,14 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
               task.slug == 'dealer-operations-standards' ||
               task.slug == 'dealer-operations-standards-sales',
         );
+  }
+
+  bool get _is5sChecklistUser {
+    final user = widget.user;
+    return user.is5sUtilities ||
+        user.is5sService ||
+        user.is5sSales ||
+        user.isSalesService5s;
   }
 
   DosAuditTrack get _effectiveTrack {
@@ -194,7 +203,12 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     }
     if (user.is5sUtilities || user.isUtilities) {
       return _tasks
-          .where((t) => t.slug == 'restroom' || t.slug == 'utilities')
+          .where(
+            (t) =>
+                t.slug == 'restroom' ||
+                t.slug.startsWith('restroom') ||
+                t.slug == 'utilities',
+          )
           .toList(growable: false);
     }
     if (user.isSalesService5s) {
@@ -251,10 +265,12 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     return _tasks;
   }
 
-  List<DateTime> get _overviewDays => [
-    for (var offset = -2; offset <= 2; offset++)
-      _today.add(Duration(days: offset)),
-  ];
+  List<DateTime> get _overviewDays {
+    final monday = _weekAnchor.subtract(
+      Duration(days: _weekAnchor.weekday - 1),
+    );
+    return [for (var i = 0; i < 7; i++) monday.add(Duration(days: i))];
+  }
 
   List<ChecklistCatalogItem> get _visibleTasks {
     final tasks = _trackFilteredTasks;
@@ -262,12 +278,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
     return tasks
         .where((task) {
-          final isOptional = _isOptionalChecklist(task);
           final status = _statusFor(task);
           return switch (_selectedFilter) {
-            _TaskFilter.todo => status == _TaskStatus.todo && !isOptional,
             _TaskFilter.inProgress => status == _TaskStatus.inProgress,
-            _TaskFilter.completed => status == _TaskStatus.completed,
             _TaskFilter.attention => (task.submission?.issues ?? 0) > 0,
             _TaskFilter.all => true,
           };
@@ -281,7 +294,17 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     _repository = widget.repository ?? ChecklistApiService();
     _today = DateUtils.dateOnly((widget.now ?? DateTime.now)());
     _selectedDate = _today;
+    _weekAnchor = _today;
     _scrollController = ScrollController()..addListener(_handleHomeScroll);
+    _utilitiesDeadlineTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted &&
+          widget.isActive &&
+          widget.repository == null &&
+          widget.now == null &&
+          UtilitiesMissedChecklistService.isUtilitiesUser(widget.user)) {
+        unawaited(_load(showSpinner: false));
+      }
+    });
     unawaited(_load());
   }
 
@@ -300,6 +323,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
       _repository = widget.repository ?? ChecklistApiService();
       unawaited(_load());
     } else if (oldWidget.user.id != widget.user.id ||
+        oldWidget.user.branch != widget.user.branch ||
         oldWidget.user.userType != widget.user.userType) {
       // Role-scoped dashboards may mount before the cached login profile has
       // finished loading. Refresh as soon as the authenticated role arrives.
@@ -314,6 +338,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
   @override
   void dispose() {
+    _utilitiesDeadlineTimer.cancel();
     _requestGeneration++;
     _scrollController.removeListener(_handleHomeScroll);
     _scrollController.dispose();
@@ -332,40 +357,24 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     }
 
     try {
-      final isToday = DateUtils.isSameDay(_selectedDate, _today);
-      if (isToday && (widget.user.is5sUtilities || widget.user.isUtilities)) {
-        final now = (widget.now ?? DateTime.now)();
-        final syncResult =
+      var tasks = await _repository.fetchCatalog(date: requestedDate);
+      if (!mounted || generation != _requestGeneration) return;
+      if (widget.repository == null &&
+          widget.isActive &&
+          widget.now == null &&
+          UtilitiesMissedChecklistService.isUtilitiesUser(widget.user) &&
+          requestedDate == _dateParameter(DateTime.now())) {
+        final sync =
             await UtilitiesMissedChecklistService.syncMissedUtilitiesChecklist(
               repository: _repository,
               user: widget.user,
-              now: now,
-              date: requestedDate,
+              catalog: tasks,
             );
-        if (syncResult != null && mounted && generation == _requestGeneration) {
-          _activeDueSlotKey = syncResult.activeDueSlot;
-          if (syncResult.autoSubmitted && syncResult.missedSlots.isNotEmpty) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Missed ${syncResult.formattedMissedSlots} Utilities inspection was automatically submitted as NO.',
-                    ),
-                    backgroundColor: GacColors.navy950,
-                    duration: const Duration(seconds: 4),
-                  ),
-                );
-              }
-            });
-          }
+        if (sync?.autoSubmitted == true) {
+          tasks = await _repository.fetchCatalog(date: requestedDate);
         }
-      } else {
-        _activeDueSlotKey = null;
+        if (!mounted || generation != _requestGeneration) return;
       }
-
-      final tasks = await _repository.fetchCatalog(date: requestedDate);
-      if (!mounted || generation != _requestGeneration) return;
       final catalog = tasks
           .where((t) => t.slug != 'dealer-operations-standards-subform')
           .toList(growable: false);
@@ -402,8 +411,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
               id: 11,
               slug: 'dealer-operations-standards-documentation',
               name: 'Dealer Operations Standards - Documentation',
-              description:
-                  'FY2025 Aftersales Standards Compliance Audit Documentation Sheet',
+              description: 'FY2025 Aftersales Standards Compliance Audit Documentation Sheet',
               version: 1,
               settings: const {'validation_mode': 'dos_documentation'},
               sectionCount: 3,
@@ -415,21 +423,27 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         }
       }
       var attentionUnavailable = false;
-      final verified = await Future.wait(merged.map((task) async {
-        if (task.submission == null) return task;
-        try {
-          final record = records[task.slug] ??
-              await _repository.fetchChecklist(task.slug, date: requestedDate);
-          return _withAttentionCount(
-            task,
-            checklistAttentionTargets(record, user).length,
-          );
-        } catch (_) {
-          // Unverified summary counts must never create attention links.
-          attentionUnavailable = true;
-          return _withAttentionCount(task, 0);
-        }
-      }));
+      final verified = await Future.wait(
+        merged.map((task) async {
+          if (task.submission == null) return task;
+          try {
+            final record =
+                records[task.slug] ??
+                await _repository.fetchChecklist(
+                  task.slug,
+                  date: requestedDate,
+                );
+            return _withAttentionCount(
+              task,
+              checklistAttentionTargets(record, user).length,
+            );
+          } catch (_) {
+            // Unverified summary counts must never create attention links.
+            attentionUnavailable = true;
+            return _withAttentionCount(task, 0);
+          }
+        }),
+      );
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _tasks = verified;
@@ -452,10 +466,114 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     }
   }
 
+  bool get _canNavigateMonthForward =>
+      _selectedDate.year < _today.year ||
+      (_selectedDate.year == _today.year && _selectedDate.month < _today.month);
+
+  bool get _canNavigateWeekForward {
+    final currentMonday = _today.subtract(Duration(days: _today.weekday - 1));
+    final selectedMonday = _selectedDate.subtract(
+      Duration(days: _selectedDate.weekday - 1),
+    );
+    return selectedMonday.isBefore(currentMonday);
+  }
+
   void _selectDate(DateTime date) {
+    if (date.isAfter(_today)) return;
     if (DateUtils.isSameDay(date, _selectedDate)) return;
     setState(() {
       _selectedDate = date;
+      _weekAnchor = date;
+      _selectedFilter = _TaskFilter.all;
+    });
+    unawaited(_load());
+  }
+
+  DateTime _addMonths(DateTime date, int deltaMonths) {
+    var year = date.year;
+    var month = date.month + deltaMonths;
+    while (month < 1) {
+      month += 12;
+      year -= 1;
+    }
+    while (month > 12) {
+      month -= 12;
+      year += 1;
+    }
+    final daysInMonth = DateUtils.getDaysInMonth(year, month);
+    final day = date.day > daysInMonth ? daysInMonth : date.day;
+    return DateTime(year, month, day);
+  }
+
+  void _navigateMonth(int delta) {
+    if (delta > 0 && !_canNavigateMonthForward) return;
+    var target = _addMonths(_selectedDate, delta);
+    if (target.isAfter(_today)) {
+      target = _today;
+    }
+    if (DateUtils.isSameDay(target, _selectedDate)) return;
+    setState(() {
+      _weekAnchor = target;
+      _selectedDate = target;
+      _selectedFilter = _TaskFilter.all;
+    });
+    unawaited(_load());
+  }
+
+  void _navigateWeek(int delta) {
+    if (delta > 0 && !_canNavigateWeekForward) return;
+    var target = _selectedDate.add(Duration(days: 7 * delta));
+    if (target.isAfter(_today)) {
+      target = _today;
+    }
+    if (DateUtils.isSameDay(target, _selectedDate)) return;
+    setState(() {
+      _weekAnchor = target;
+      _selectedDate = target;
+      _selectedFilter = _TaskFilter.all;
+    });
+    unawaited(_load());
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate.isAfter(_today) ? _today : _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: _today,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+              surface: GacColors.cardSurface,
+              onSurface: GacColors.textPrimary,
+              primary: GacColors.primary,
+              onPrimary: GacColors.white,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: GacColors.cardSurface,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null && mounted) {
+      if (picked.isAfter(_today)) return;
+      setState(() {
+        _weekAnchor = picked;
+        _selectedDate = picked;
+        _selectedFilter = _TaskFilter.all;
+      });
+      unawaited(_load());
+    }
+  }
+
+  void _goToToday() {
+    if (DateUtils.isSameDay(_selectedDate, _today)) return;
+    setState(() {
+      _weekAnchor = _today;
+      _selectedDate = _today;
       _selectedFilter = _TaskFilter.all;
     });
     unawaited(_load());
@@ -527,7 +645,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                         unreadNotifications: widget.unreadNotifications,
                       ),
                     ),
-                    if (_isDos) _buildTrackHeader(),
+                    if (_isDos || _is5sChecklistUser) _buildTrackHeader(),
                     SliverPadding(
                       key: const ValueKey('user-home-content-padding'),
                       padding: EdgeInsets.fromLTRB(
@@ -556,23 +674,52 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   }
 
   Widget _buildDashboard() {
+    final isNotToday = !DateUtils.isSameDay(_selectedDate, _today);
+    final isAttentionFilter = _selectedFilter == _TaskFilter.attention;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Select date',
-          style: TextStyle(
-            color: GacColors.textSecondary,
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.25,
-          ),
+        Row(
+          children: [
+            const Text(
+              'Select date',
+              style: TextStyle(
+                color: GacColors.textSecondary,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.25,
+              ),
+            ),
+            const Spacer(),
+            if (isNotToday) ...[
+              _TodayChip(onTap: _goToToday),
+              const SizedBox(width: 8),
+            ],
+            _CalendarButton(onTap: _pickDate),
+          ],
         ),
-        const SizedBox(height: 9),
+        const SizedBox(height: 8),
+        _DateNavigator(
+          weekAnchor: _weekAnchor,
+          onMonthBack: () => _navigateMonth(-1),
+          onMonthForward: _canNavigateMonthForward
+              ? () => _navigateMonth(1)
+              : null,
+          onWeekBack: () => _navigateWeek(-1),
+          onWeekForward: _canNavigateWeekForward
+              ? () => _navigateWeek(1)
+              : null,
+          onPickDate: _pickDate,
+          canMonthForward: _canNavigateMonthForward,
+          canWeekForward: _canNavigateWeekForward,
+        ),
+        const SizedBox(height: 8),
         _DatePickerRow(
           days: _overviewDays,
           selectedDate: _selectedDate,
           onChanged: _selectDate,
+          maxDate: _today,
         ),
         const SizedBox(height: 12),
         GacGlassSurface(
@@ -619,7 +766,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           children: [
             Expanded(
               child: Text(
-                DateUtils.isSameDay(_selectedDate, _today)
+                isAttentionFilter
+                    ? 'Attention needed'
+                    : DateUtils.isSameDay(_selectedDate, _today)
                     ? "Today's assigned tasks"
                     : 'Assigned tasks · ${_longDate(_selectedDate)}',
                 style: const TextStyle(
@@ -645,42 +794,40 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         else if (_error != null)
           _ErrorPanel(message: _error!, onRetry: _load)
         else ...[
-          if (_activeDueSlotKey != null &&
-              DateUtils.isSameDay(_selectedDate, _today) &&
-              (widget.user.is5sUtilities || widget.user.isUtilities)) ...[
-            _buildActiveSlotDueBanner(_activeDueSlotKey!),
-            const SizedBox(height: 14),
-          ],
           _OverviewPanel(tasks: _trackFilteredTasks, user: widget.user),
           const SizedBox(height: 14),
-          if (_visibleTasks.isEmpty)
-            _EmptyPanel(
-              hasAssignments: _trackFilteredTasks.isNotEmpty,
-              isAttentionFilter: _selectedFilter == _TaskFilter.attention,
-              attentionUnavailable: _attentionUnavailable,
-            )
+          if (isAttentionFilter)
+            if (_visibleTasks.isEmpty)
+              _EmptyPanel(
+                hasAssignments: _trackFilteredTasks.isNotEmpty,
+                isAttentionFilter: true,
+                attentionUnavailable: _attentionUnavailable,
+              )
+            else
+              _IssueSummary(
+                tasks: _visibleTasks,
+                onOpen: (task) => _openTask(task, attentionOnly: true),
+              )
+          else if (_visibleTasks.isEmpty)
+            _EmptyPanel(hasAssignments: _trackFilteredTasks.isNotEmpty)
           else
             for (var index = 0; index < _visibleTasks.length; index++) ...[
               _TaskCard(
                 task: _visibleTasks[index],
-                onOpen: () => _openTask(
-                  _visibleTasks[index],
-                  attentionOnly: _selectedFilter == _TaskFilter.attention,
-                ),
+                attentionMode:
+                    _selectedFilter == _TaskFilter.all &&
+                    (_visibleTasks[index].submission?.issues ?? 0) > 0,
+                onOpen: () {
+                  final task = _visibleTasks[index];
+                  unawaited(_openTask(task));
+                },
               ),
               if (index != _visibleTasks.length - 1) const SizedBox(height: 12),
             ],
-          if (_attentionUnavailable) ...[
+          if (isAttentionFilter && _attentionUnavailable) ...[
             const SizedBox(height: 12),
-            const Text('Some responses could not be checked. Refresh to verify attention items.'),
-          ],
-          if (_trackFilteredTasks.any(
-            (task) => (task.submission?.issues ?? 0) > 0,
-          )) ...[
-            const SizedBox(height: 20),
-            _IssueSummary(
-              tasks: _trackFilteredTasks,
-              onOpen: (task) => _openTask(task, attentionOnly: true),
+            const Text(
+              'Some responses could not be checked. Refresh to verify attention items.',
             ),
           ],
         ],
@@ -688,114 +835,29 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     );
   }
 
-  Widget _buildActiveSlotDueBanner(String slotKey) {
-    final slotLabel = UtilitiesChecklistSyncResult.formatSlotKey(slotKey);
-    final utilitiesTask = _tasks.where(_isUtilitiesChecklist).firstOrNull;
-
-    return Container(
-      key: const ValueKey('utilities-active-slot-banner'),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F2642),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: GacColors.amber600.withValues(alpha: 0.65),
-          width: 1.5,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x22F59E0B),
-            blurRadius: 12,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: GacColors.amber600.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.schedule_rounded,
-              color: GacColors.amber600,
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '$slotLabel INSPECTION DUE',
-                  style: const TextStyle(
-                    color: GacColors.amber600,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                const Text(
-                  'Please complete and submit your 5S Utilities inspection.',
-                  style: TextStyle(
-                    color: GacColors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          FilledButton(
-            key: const ValueKey('submit-active-slot-button'),
-            style: FilledButton.styleFrom(
-              backgroundColor: GacColors.amber600,
-              foregroundColor: const Color(0xFF081325),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            onPressed: utilitiesTask == null
-                ? null
-                : () => _openTask(utilitiesTask, initialSlotKey: slotKey),
-            child: const Text(
-              'SUBMIT',
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 12,
-                letterSpacing: 0.3,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   int _taskCount(_TaskFilter filter) {
     final tasks = _trackFilteredTasks;
     if (filter == _TaskFilter.all) return tasks.length;
+    if (filter == _TaskFilter.attention) {
+      return tasks.fold<int>(
+        0,
+        (sum, task) => sum + (task.submission?.issues ?? 0),
+      );
+    }
     return tasks.where((task) {
-      final isOptional = _isOptionalChecklist(task);
       final status = _statusFor(task);
       return switch (filter) {
-        _TaskFilter.todo => status == _TaskStatus.todo && !isOptional,
         _TaskFilter.inProgress => status == _TaskStatus.inProgress,
-        _TaskFilter.completed => status == _TaskStatus.completed,
         _TaskFilter.attention => (task.submission?.issues ?? 0) > 0,
         _TaskFilter.all => true,
       };
     }).length;
   }
 
-  ChecklistCatalogItem _withAttentionCount(ChecklistCatalogItem task, int count) {
+  ChecklistCatalogItem _withAttentionCount(
+    ChecklistCatalogItem task,
+    int count,
+  ) {
     final submission = task.submission;
     if (submission == null) return task;
     return task.copyWith(
@@ -866,14 +928,17 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     final submission = task.submission;
     final isUtilities = _isUtilitiesChecklist(task);
     final hasIssues = attentionOnly || (submission?.issues ?? 0) > 0;
-    final resumeTarget = !hasIssues &&
+    final resumeTarget =
+        !hasIssues &&
             submission != null &&
             (!submission.isSubmitted || isUtilities) &&
             (submission.effectiveAnsweredItems > 0 ||
                 (submission.completionPercentage ?? 0) > 0) &&
             !_isOptionalChecklist(task)
         ? _latestResumeTarget(
-            _visibleTasks.where((t) => !_isOptionalChecklist(t)).toList(growable: false),
+            _visibleTasks
+                .where((t) => !_isOptionalChecklist(t))
+                .toList(growable: false),
           )
         : null;
     final target = resumeTarget ?? task;
@@ -894,12 +959,17 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
     if (hasIssues) {
       try {
-        final record = await _repository.fetchChecklist(target.slug, date: auditDate);
+        final record = await _repository.fetchChecklist(
+          target.slug,
+          date: auditDate,
+        );
         if (!mounted || auditDate != _dateParameter(_selectedDate)) return;
         final targets = checklistAttentionTargets(record, widget.user);
         if (targets.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No responses currently need review.')),
+            const SnackBar(
+              content: Text('No responses currently need review.'),
+            ),
           );
           await _load(showSpinner: false);
           return;
@@ -911,7 +981,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
       } catch (_) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Unable to verify responses. Please try again.')),
+          const SnackBar(
+            content: Text('Unable to verify responses. Please try again.'),
+          ),
         );
         return;
       }
@@ -971,6 +1043,29 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   }
 
   Widget _buildTrackHeader() {
+    if (_is5sChecklistUser) {
+      final user = widget.user;
+      final String title;
+      final IconData icon;
+      if (user.is5sUtilities) {
+        title = '5S CHECKLIST — UTILITIES';
+        icon = Icons.cleaning_services_rounded;
+      } else if (user.is5sSales) {
+        title = '5S CHECKLIST — SALES';
+        icon = Icons.storefront_rounded;
+      } else if (user.is5sService) {
+        title = '5S CHECKLIST — SERVICE';
+        icon = Icons.car_repair_rounded;
+      } else {
+        title = '5S CHECKLIST — SALES & SERVICE';
+        icon = Icons.fact_check_rounded;
+      }
+
+      return SliverToBoxAdapter(
+        child: _buildStaticTrackHeader(title: title, icon: icon),
+      );
+    }
+
     final Widget headerContent;
     if (_canSwitchTrack) {
       headerContent = Container(
@@ -1014,41 +1109,48 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           ? Icons.car_repair_rounded
           : Icons.storefront_rounded;
 
-      headerContent = Container(
-        color: GacColors.canvas,
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
-            child: GacGlassSurface(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              borderRadius: 12,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(icon, color: GacColors.primary, size: 15),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      title,
-                      style: const TextStyle(
-                        color: GacColors.primary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.8,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
+      headerContent = _buildStaticTrackHeader(title: title, icon: icon);
     }
 
     return SliverToBoxAdapter(child: headerContent);
+  }
+
+  Widget _buildStaticTrackHeader({
+    required String title,
+    required IconData icon,
+  }) {
+    return Container(
+      color: GacColors.canvas,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: GacGlassSurface(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            borderRadius: 12,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: GacColors.primary, size: 15),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: GacColors.primary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.8,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildTrackPill({
@@ -1127,8 +1229,9 @@ class _OverviewPanel extends StatelessWidget {
     );
     final mandatoryTasks = tasks.where((t) => !_isOptionalChecklist(t));
     final countTasks = primaryDos.isNotEmpty ? primaryDos : mandatoryTasks;
-    final totalMandatoryCount =
-        primaryDos.isNotEmpty ? primaryDos.length : mandatoryTasks.length;
+    final totalMandatoryCount = primaryDos.isNotEmpty
+        ? primaryDos.length
+        : mandatoryTasks.length;
     final total = countTasks.fold<int>(0, (sum, task) {
       final submittedTotal = task.submission?.totalItems;
       return sum +
@@ -1141,8 +1244,8 @@ class _OverviewPanel extends StatelessWidget {
       (sum, task) => sum + (task.submission?.answeredItems ?? 0),
     );
 
-    final isUtilities = (user != null &&
-            (user!.is5sUtilities || user!.isUtilities)) ||
+    final isUtilities =
+        (user != null && (user!.is5sUtilities || user!.isUtilities)) ||
         (tasks.isNotEmpty && tasks.every(_isUtilitiesChecklist));
 
     final int completed;
@@ -1220,17 +1323,24 @@ class _OverviewPanel extends StatelessWidget {
 }
 
 class _TaskCard extends StatelessWidget {
-  const _TaskCard({required this.task, required this.onOpen});
+  const _TaskCard({
+    required this.task,
+    required this.onOpen,
+    this.attentionMode = false,
+  });
 
   final ChecklistCatalogItem task;
   final VoidCallback onOpen;
+  final bool attentionMode;
 
   @override
   Widget build(BuildContext context) {
     final isOptional = _isOptionalChecklist(task);
     final status = _statusFor(task);
     final isDone = status == _TaskStatus.completed;
-    final cardColor = isOptional && !isDone
+    final cardColor = attentionMode
+        ? GacColors.warning
+        : isOptional && !isDone
         ? const Color(0xFF06B6D4)
         : _statusColor(status);
     final submission = task.submission;
@@ -1268,11 +1378,14 @@ class _TaskCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(
-                        isOptional
+                        attentionMode
+                            ? Icons.error_outline_rounded
+                            : isOptional
                             ? Icons.description_rounded
-                            : (task.slug == 'restroom'
-                                ? Icons.wc_rounded
-                                : Icons.fact_check_outlined),
+                            : (task.slug == 'restroom' ||
+                                      task.slug.startsWith('restroom')
+                                  ? Icons.wc_rounded
+                                  : Icons.fact_check_outlined),
                         color: cardColor,
                       ),
                     ),
@@ -1302,7 +1415,10 @@ class _TaskCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _StatusBadge(status: status, isOptional: isOptional),
+                    if (attentionMode)
+                      const _AttentionBadge()
+                    else
+                      _StatusBadge(status: status, isOptional: isOptional),
                   ],
                 ),
                 if (task.description?.isNotEmpty == true) ...[
@@ -1355,7 +1471,7 @@ class _TaskCard extends StatelessWidget {
                       ),
                     const SizedBox(width: 8),
                     Text(
-                      _actionLabel(status, task),
+                      attentionMode ? 'REVIEW' : _actionLabel(status, task),
                       style: const TextStyle(
                         color: GacColors.primary,
                         fontSize: 10,
@@ -1390,72 +1506,220 @@ class _IssueSummary extends StatelessWidget {
     final affected = tasks
         .where((task) => (task.submission?.issues ?? 0) > 0)
         .toList(growable: false);
-    final total = affected.fold<int>(
-      0,
-      (sum, task) => sum + (task.submission?.issues ?? 0),
-    );
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Attention needed · $total',
-          style: const TextStyle(
-            color: GacColors.textPrimary,
-            fontSize: 16,
-            fontWeight: FontWeight.w900,
+        for (var index = 0; index < affected.length; index++) ...[
+          _TaskCard(
+            task: affected[index],
+            attentionMode: true,
+            onOpen: () => onOpen(affected[index]),
+          ),
+          if (index != affected.length - 1) const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+}
+
+class _CalendarButton extends StatelessWidget {
+  const _CalendarButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Open calendar to select date',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            color: GacColors.cardSurface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: GacColors.cardBorder),
+          ),
+          child: const Icon(
+            Icons.calendar_month_rounded,
+            size: 16,
+            color: GacColors.textSecondary,
           ),
         ),
-        const SizedBox(height: 10),
-        GacContentPanel(
-          borderRadius: 18,
-          clipBehavior: Clip.antiAlias,
-          child: Material(
-            color: Colors.transparent,
-            child: Column(
-              children: [
-                for (var index = 0; index < affected.length; index++) ...[
-                  ListTile(
-                    onTap: () => onOpen(affected[index]),
-                    leading: const CircleAvatar(
-                      radius: 13,
-                      backgroundColor: Color(0x242979FF),
-                      child: Icon(
-                        Icons.info_outline_rounded,
-                        color: GacColors.cyan,
-                        size: 16,
-                      ),
-                    ),
-                    title: Text(
-                      affected[index].name,
+      ),
+    );
+  }
+}
+
+class _DateNavigator extends StatelessWidget {
+  const _DateNavigator({
+    required this.weekAnchor,
+    required this.onMonthBack,
+    required this.onMonthForward,
+    required this.onWeekBack,
+    required this.onWeekForward,
+    required this.onPickDate,
+    this.canMonthForward = true,
+    this.canWeekForward = true,
+  });
+
+  final DateTime weekAnchor;
+  final VoidCallback onMonthBack;
+  final VoidCallback? onMonthForward;
+  final VoidCallback onWeekBack;
+  final VoidCallback? onWeekForward;
+  final VoidCallback onPickDate;
+  final bool canMonthForward;
+  final bool canWeekForward;
+
+  @override
+  Widget build(BuildContext context) {
+    final monthLabel =
+        '${_longMonths[weekAnchor.month - 1]} ${weekAnchor.year}';
+
+    return Row(
+      children: [
+        _NavArrowButton(
+          icon: Icons.chevron_left_rounded,
+          onTap: onMonthBack,
+          tooltip: 'Previous month',
+        ),
+        Flexible(
+          child: GestureDetector(
+            onTap: onPickDate,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      monthLabel,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                       style: const TextStyle(
                         color: GacColors.textPrimary,
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: FontWeight.w800,
+                        letterSpacing: 0.2,
                       ),
                     ),
-                    subtitle: Text(
-                      '${affected[index].submission!.issues} checklist response(s) need review.',
-                      style: const TextStyle(
-                        color: GacColors.textSecondary,
-                        fontSize: 10,
-                      ),
-                    ),
-                    trailing: const Icon(Icons.chevron_right_rounded),
                   ),
-                  if (index != affected.length - 1)
-                    const Divider(
-                      height: 1,
-                      indent: 16,
-                      endIndent: 16,
-                      color: GacColors.cardBorder,
-                    ),
+                  const SizedBox(width: 2),
+                  const Icon(
+                    Icons.arrow_drop_down_rounded,
+                    color: GacColors.textSecondary,
+                    size: 18,
+                  ),
                 ],
-              ],
+              ),
             ),
           ),
         ),
+        _NavArrowButton(
+          icon: Icons.chevron_right_rounded,
+          onTap: canMonthForward ? onMonthForward : null,
+          tooltip: 'Next month',
+          enabled: canMonthForward,
+        ),
+        const Spacer(),
+        _NavArrowButton(
+          icon: Icons.chevron_left_rounded,
+          onTap: onWeekBack,
+          tooltip: 'Previous week',
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 2),
+          child: Text(
+            'Week',
+            style: TextStyle(
+              color: GacColors.textSecondary,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        _NavArrowButton(
+          icon: Icons.chevron_right_rounded,
+          onTap: canWeekForward ? onWeekForward : null,
+          tooltip: 'Next week',
+          enabled: canWeekForward,
+        ),
       ],
+    );
+  }
+}
+
+class _NavArrowButton extends StatelessWidget {
+  const _NavArrowButton({
+    required this.icon,
+    required this.onTap,
+    required this.tooltip,
+    this.enabled = true,
+  });
+
+  final IconData icon;
+  final VoidCallback? onTap;
+  final String tooltip;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveColor = enabled
+        ? GacColors.textSecondary
+        : GacColors.textMuted.withValues(alpha: 0.25);
+
+    return Tooltip(
+      message: enabled ? tooltip : '',
+      child: Semantics(
+        button: enabled,
+        enabled: enabled,
+        label: enabled ? tooltip : '$tooltip (disabled)',
+        child: GestureDetector(
+          onTap: enabled ? onTap : null,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Icon(icon, color: effectiveColor, size: 20),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayChip extends StatelessWidget {
+  const _TodayChip({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Go to today',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          decoration: BoxDecoration(
+            color: GacColors.primary,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          child: const Text(
+            'Today',
+            style: TextStyle(
+              color: GacColors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1465,23 +1729,28 @@ class _DatePickerRow extends StatelessWidget {
     required this.days,
     required this.selectedDate,
     required this.onChanged,
+    required this.maxDate,
   });
 
   final List<DateTime> days;
   final DateTime selectedDate;
   final ValueChanged<DateTime> onChanged;
+  final DateTime maxDate;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
         for (var index = 0; index < days.length; index++) ...[
-          if (index > 0) const SizedBox(width: 7),
+          if (index > 0) const SizedBox(width: 5),
           Expanded(
             child: _DateButton(
               date: days[index],
               selected: DateUtils.isSameDay(days[index], selectedDate),
-              onTap: () => onChanged(days[index]),
+              disabled: days[index].isAfter(maxDate),
+              onTap: days[index].isAfter(maxDate)
+                  ? null
+                  : () => onChanged(days[index]),
             ),
           ),
         ],
@@ -1495,39 +1764,50 @@ class _DateButton extends StatelessWidget {
     required this.date,
     required this.selected,
     required this.onTap,
+    this.disabled = false,
   });
 
   final DateTime date;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool disabled;
 
   @override
   Widget build(BuildContext context) {
-    final textColor = selected ? GacColors.white : GacColors.textPrimary;
-    final secondary = selected
-        ? const Color(0xCCFFFFFF)
-        : GacColors.textSecondary;
+    final textColor = disabled
+        ? GacColors.textMuted.withValues(alpha: 0.3)
+        : (selected ? GacColors.white : GacColors.textPrimary);
+    final secondary = disabled
+        ? GacColors.textMuted.withValues(alpha: 0.2)
+        : (selected ? const Color(0xCCFFFFFF) : GacColors.textSecondary);
+
+    final backgroundColor = disabled
+        ? GacColors.cardSurface.withValues(alpha: 0.35)
+        : (selected ? GacColors.primary : GacColors.cardSurface);
+
+    final borderColor = disabled
+        ? GacColors.cardBorder.withValues(alpha: 0.25)
+        : (selected ? GacColors.primary : GacColors.cardBorder);
 
     return Semantics(
       key: ValueKey<String>('home-date-${_dateParameter(date)}'),
-      button: true,
+      button: !disabled,
+      enabled: !disabled,
       selected: selected,
-      label: _longDate(date),
+      label: disabled ? '${_longDate(date)} (future date)' : _longDate(date),
       child: Container(
         decoration: BoxDecoration(
-          color: selected ? GacColors.primary : GacColors.cardSurface,
+          color: backgroundColor,
           borderRadius: BorderRadius.circular(11),
-          border: Border.all(
-            color: selected ? GacColors.primary : GacColors.cardBorder,
-          ),
+          border: Border.all(color: borderColor),
         ),
         clipBehavior: Clip.antiAlias,
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: onTap,
+            onTap: disabled ? null : onTap,
             child: SizedBox(
-              height: 58,
+              height: 52,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -1539,16 +1819,16 @@ class _DateButton extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 3),
                   Text(
                     '${date.day}',
                     style: TextStyle(
                       color: textColor,
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   Text(
                     _shortWeekdays[date.weekday - 1],
                     style: TextStyle(
@@ -1582,10 +1862,13 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final countUnit = label == 'Attention needed'
+        ? (count == 1 ? 'issue' : 'issues')
+        : (count == 1 ? 'task' : 'tasks');
     return Semantics(
       button: true,
       selected: selected,
-      label: 'Filter $label, $count tasks',
+      label: 'Filter $label, $count $countUnit',
       child: Container(
         decoration: BoxDecoration(
           color: selected ? GacColors.primary : GacColors.cardSurface,
@@ -1628,7 +1911,9 @@ class _StatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final showOptional = isOptional && status != _TaskStatus.completed;
     final color = showOptional ? const Color(0xFF06B6D4) : _statusColor(status);
-    final label = showOptional ? 'OPTIONAL' : _statusLabel(status).toUpperCase();
+    final label = showOptional
+        ? 'OPTIONAL'
+        : _statusLabel(status).toUpperCase();
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
@@ -1640,6 +1925,30 @@ class _StatusBadge extends StatelessWidget {
         label,
         style: TextStyle(
           color: color,
+          fontSize: 8,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.45,
+        ),
+      ),
+    );
+  }
+}
+
+class _AttentionBadge extends StatelessWidget {
+  const _AttentionBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: GacColors.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Text(
+        'ATTENTION NEEDED',
+        style: TextStyle(
+          color: GacColors.warning,
           fontSize: 8,
           fontWeight: FontWeight.w900,
           letterSpacing: 0.45,
@@ -1775,18 +2084,18 @@ class _EmptyPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final message = isAttentionFilter
         ? (attentionUnavailable
-            ? 'Attention items could not be fully verified. Please refresh.'
-            : 'No checklists currently need attention.')
+              ? 'Attention items could not be fully verified. Please refresh.'
+              : 'No checklists currently need attention.')
         : (hasAssignments
-            ? 'No tasks match this status.'
-            : 'No tasks are assigned for this date.');
+              ? 'No tasks match this status.'
+              : 'No tasks are assigned for this date.');
     final icon = isAttentionFilter
         ? (attentionUnavailable
-            ? Icons.refresh_rounded
-            : Icons.check_circle_outline_rounded)
+              ? Icons.refresh_rounded
+              : Icons.check_circle_outline_rounded)
         : (hasAssignments
-            ? Icons.filter_alt_off_rounded
-            : Icons.assignment_turned_in_outlined);
+              ? Icons.filter_alt_off_rounded
+              : Icons.assignment_turned_in_outlined);
 
     return GacContentPanel(
       padding: const EdgeInsets.all(24),
@@ -1904,6 +2213,7 @@ bool _isOptionalChecklist(ChecklistCatalogItem task) {
 
 bool _isUtilitiesChecklist(ChecklistCatalogItem task) {
   return task.slug == 'restroom' ||
+      task.slug.startsWith('restroom') ||
       task.slug == 'utilities' ||
       task.settings['validation_mode'] == 'time_slots' ||
       task.categoryLabel == 'UTILITIES';
@@ -1914,7 +2224,7 @@ int _totalSlotsFor(ChecklistCatalogItem task) {
   if (rawSlots is List && rawSlots.isNotEmpty) {
     return rawSlots.length;
   }
-  return 9;
+  return UtilitiesMissedChecklistService.defaultUtilitiesSlots.length;
 }
 
 int _completedSlotsFor(ChecklistCatalogItem task) {
@@ -1946,11 +2256,13 @@ _TaskStatus _statusFor(ChecklistCatalogItem task) {
     return _TaskStatus.todo;
   }
 
-  // 5S Utilities checklist consists of 9 scheduled hourly inspections throughout the day.
-  // It remains in To-do until all 9 inspections are completed.
+  // Each submitted Utilities time slot advances the single daily checklist.
   if (_isUtilitiesChecklist(task)) {
     if (_isUtilitiesAllFinished(task)) {
       return _TaskStatus.completed;
+    }
+    if (_completedSlotsFor(task) > 0 || submission.hasStarted) {
+      return _TaskStatus.inProgress;
     }
     return _TaskStatus.todo;
   }
@@ -1969,9 +2281,7 @@ _TaskStatus _statusFor(ChecklistCatalogItem task) {
 
 String _filterLabel(_TaskFilter filter) => switch (filter) {
   _TaskFilter.all => 'All',
-  _TaskFilter.todo => 'To do',
   _TaskFilter.inProgress => 'In progress',
-  _TaskFilter.completed => 'Completed',
   _TaskFilter.attention => 'Attention needed',
 };
 
@@ -2019,8 +2329,8 @@ String _scheduleLabel(ChecklistCatalogItem task) {
     }
   }
 
-  return task.slug == 'restroom'
-      ? 'Hourly assigned inspection'
+  return _isUtilitiesChecklist(task)
+      ? 'Scheduled assigned inspection'
       : 'Daily assigned checklist';
 }
 

@@ -668,6 +668,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(find.text('5S CHECKLIST — UTILITIES'), findsOneWidget);
       expect(find.text('Restroom Checklist'), findsOneWidget);
       expect(find.text('Utilities Checklist'), findsOneWidget);
       expect(find.text('Sales Checklist'), findsNothing);
@@ -702,6 +703,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(find.text('5S CHECKLIST — SALES'), findsOneWidget);
       expect(find.text('Sales Checklist'), findsOneWidget);
       expect(find.text('Service Checklist'), findsNothing);
       expect(find.text('Restroom Checklist'), findsNothing);
@@ -736,6 +738,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(find.text('5S CHECKLIST — SERVICE'), findsOneWidget);
       expect(find.text('Service Checklist'), findsOneWidget);
       expect(find.text('Sales Checklist'), findsNothing);
       expect(find.text('Restroom Checklist'), findsNothing);

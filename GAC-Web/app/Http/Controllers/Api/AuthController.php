@@ -5,10 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Models\UserUsageEvent;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\PersonalAccessToken;
@@ -68,20 +70,22 @@ class AuthController extends Controller
 
     public function login(Request $request): JsonResponse
     {
+        $loginField = $request->has('username') ? 'username' : 'email';
         $credentials = $request->validate([
-            'email' => ['required', 'email'],
+            $loginField => ['required', 'string', 'max:255'],
             'password' => ['required', 'string'],
             'device_name' => ['nullable', 'string', 'max:100'],
             'notification_device_id' => ['nullable', 'uuid'],
         ]);
 
+        $username = trim((string) $credentials[$loginField]);
         $user = User::query()
-            ->where('email', strtolower(trim($credentials['email'])))
+            ->whereRaw('LOWER(email) = ?', [Str::lower($username)])
             ->first();
 
         if (! $user || ! Hash::check($credentials['password'], $user->password)) {
             throw ValidationException::withMessages([
-                'email' => ['The email or password is incorrect.'],
+                $loginField => ['The username or password is incorrect.'],
             ]);
         }
 
@@ -91,6 +95,12 @@ class AuthController extends Controller
                 : 'Your account is waiting for administrator approval.';
 
             return response()->json(['message' => $message], 403);
+        }
+
+        if ($user->hasAssignedChecklists() && ! $user->hasAnyAvailableAssignedChecklist()) {
+            return response()->json([
+                'message' => 'Your assigned checklist is currently unavailable for your dealer. Contact your system administrator.',
+            ], 403);
         }
 
         $token = $user->createToken(
@@ -104,6 +114,8 @@ class AuthController extends Controller
             PersonalAccessToken::where('name', $deviceName)->delete();
             $notificationToken = $user->createToken($deviceName, ['notifications:read'])->plainTextToken;
         }
+
+        UserUsageEvent::recordLogin($user, UserUsageEvent::CHANNEL_APP);
 
         return response()->json([
             'message' => 'Login successful.',

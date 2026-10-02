@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
+use App\Models\UserUsageEvent;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -34,11 +35,12 @@ class AuthenticatedSessionController extends Controller
             $request->session()->regenerateToken();
 
             throw ValidationException::withMessages([
-                'email' => 'Your account is not active. Please contact a compliance administrator.',
+                'username' => 'Your account is not active. Please contact a compliance administrator.',
             ]);
         }
 
         $request->session()->regenerate();
+        UserUsageEvent::recordLogin($request->user(), UserUsageEvent::CHANNEL_WEB);
 
         return redirect()->intended(route('dashboard', absolute: false));
     }

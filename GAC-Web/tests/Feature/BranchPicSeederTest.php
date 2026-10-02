@@ -16,7 +16,6 @@ class BranchPicSeederTest extends TestCase
         parent::setUp();
 
         config([
-            'gac.seeded_pic_accounts.email_domain' => 'pic.gateway.test',
             'gac.seeded_pic_accounts.initial_password' => 'Test-only-PIC-password!',
         ]);
     }
@@ -30,7 +29,7 @@ class BranchPicSeederTest extends TestCase
         $this->assertContains('Iligian', $branches);
 
         $this->seed(BranchPicSeeder::class);
-        $firstPasswordHash = User::where('email', 'makati.utilities@pic.gateway.test')
+        $firstPasswordHash = User::where('email', '5SUtilities.Makati')
             ->firstOrFail()
             ->password;
         $this->seed(BranchPicSeeder::class);
@@ -41,7 +40,7 @@ class BranchPicSeederTest extends TestCase
             ->get();
 
         $this->assertCount(98, $assignedPics);
-        $this->assertSame($firstPasswordHash, User::where('email', 'makati.utilities@pic.gateway.test')->firstOrFail()->password);
+        $this->assertSame($firstPasswordHash, User::where('email', '5SUtilities.Makati')->firstOrFail()->password);
 
         foreach ($branches as $branch) {
             $branchPics = $assignedPics->where('branch', $branch);
@@ -73,11 +72,9 @@ class BranchPicSeederTest extends TestCase
         $this->assertSame(User::PIC_ASSIGNMENT_SALES_SERVICE, $legacy->pic_assignment_type);
         $this->assertSame($passwordHash, $legacy->password);
         $this->assertSame('Existing Pasong Tamo PIC', $legacy->name);
-        $this->assertSame('pic@gateway.com', $legacy->email);
+        $this->assertSame('5SSalesService.PasongTamo', $legacy->email);
         $this->assertSame('active', $legacy->account_status);
-        $this->assertDatabaseMissing('users', [
-            'email' => 'pasong-tamo.sales-service@pic.gateway.test',
-        ]);
+        $this->assertSame(1, User::where('email', '5SSalesService.PasongTamo')->count());
         $this->assertSame(98, User::whereNotNull('pic_assignment_type')->count());
     }
 }

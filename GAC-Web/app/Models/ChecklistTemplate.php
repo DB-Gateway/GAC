@@ -40,8 +40,38 @@ class ChecklistTemplate extends Model
             return $resolved;
         }
 
-        if (strtolower(trim((string) $value)) === 'utilities') {
+        $strValue = strtolower(trim((string) $value));
+        if ($strValue === 'utilities') {
             return parent::resolveRouteBinding('restroom', $field);
+        }
+
+        if (preg_match('/^restroom-(\d+)-(male|female|pwd)$/i', trim((string) $value), $matches)) {
+            $restroomId = (int) $matches[1];
+            $gender = strtolower($matches[2]);
+            $baseTemplate = parent::resolveRouteBinding('restroom', $field);
+            if ($baseTemplate !== null) {
+                $restroom = BranchRestroom::find($restroomId);
+                if ($restroom !== null) {
+                    $template = clone $baseTemplate;
+                    $template->id = $baseTemplate->id;
+                    $template->slug = (string) $value;
+                    $template->name = $restroom->titleForGender($gender);
+                    $settings = is_array($template->settings) ? $template->settings : [];
+                    $settings['restroom_id'] = $restroom->id;
+                    $settings['restroom_name'] = $restroom->name;
+                    $settings['restroom_area'] = $restroom->area_type;
+                    $settings['restroom_gender'] = $gender;
+                    $settings['time_slots'] = [
+                        ['key' => '08:00', 'label' => '8 AM'],
+                        ['key' => '11:00', 'label' => '11 AM'],
+                        ['key' => '13:00', 'label' => '1 PM'],
+                        ['key' => '16:00', 'label' => '4 PM'],
+                    ];
+                    $template->settings = $settings;
+
+                    return $template;
+                }
+            }
         }
 
         return null;
