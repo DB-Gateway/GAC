@@ -9,7 +9,17 @@ workflows:
     scripts:
       - name: Boot an iPhone simulator and run GAC
         script: |
-          cd "$CM_BUILD_DIR/GAC-App"
+          set -euo pipefail
+
+          if [ -f "$CM_BUILD_DIR/pubspec.yaml" ]; then
+            APP_DIR="$CM_BUILD_DIR"
+          elif [ -f "$CM_BUILD_DIR/GAC-App/pubspec.yaml" ]; then
+            APP_DIR="$CM_BUILD_DIR/GAC-App"
+          else
+            echo "Could not find pubspec.yaml under CM_BUILD_DIR: $CM_BUILD_DIR"
+            exit 1
+          fi
+          cd "$APP_DIR"
 
           flutter pub get
 
